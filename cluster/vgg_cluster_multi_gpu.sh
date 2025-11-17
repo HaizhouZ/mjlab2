@@ -7,8 +7,8 @@
 #SBATCH --time=4-00:00:00
 #SBATCH --output=/rhome/itaouil/output/rl_training.log
 #SBATCH --partition=submit
-#SBATCH --gres=gpu:1
-#SBATCH --constraint="rtx_a6000"
+#SBATCH --gres=gpu:2
+#SBATCH --constraint="a100"
 #SBATCH --exclude=
 
 #eval "$(conda shell.bash hook)"
@@ -21,8 +21,11 @@ echo Running on $(hostname)
 echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
 nvidia-smi
 
-MUJOCO_GL=egl uv run train Mjlab-Tracking-Flat-Unitree-G1-Box-No-State-Estimation \
-  --motion-file motions/output/motion.npz \
-  --env.scene.num_envs 4096 \
-  --agent.max-iterations 30000 \
-  --device cuda:0
+MUJOCO_GL=egl uv run torchrun \
+  --nproc_per_node=2 \
+  --no_python \
+  train  Mjlab-Tracking-Flat-Unitree-G1-Box-No-State-Estimation\
+    --distributed True \
+    --motion-file motions/output/motion.npz \
+  --env.scene.num_envs 8192 \
+  --agent.max-iterations 30000
