@@ -373,6 +373,9 @@ def convert(
     contact_threshold: Distance threshold in meters for "distance" method (default: 0.05m = 5cm)
     output_name: Name for the Weights & Biases artifact (if None, upload is skipped)
   """
+  if output_name is None:
+    output_name = output_file.split("/")[-1].split(".")[0]
+  
   sim_cfg = SimulationCfg()
   sim_cfg.mujoco.timestep = 1.0 / float(output_fps)
 
@@ -703,7 +706,7 @@ def convert(
 
     COLLECTION = output_name
     run = wandb.init(
-      project="victor_npz_to_npz", name=COLLECTION, entity="gcbc_researchers"
+      project="victor_motions", name=COLLECTION, entity="ATARITUM"
     )
     print(f"[INFO]: Logging motion to wandb: {COLLECTION}")
     REGISTRY = "motions"
