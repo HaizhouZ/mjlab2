@@ -53,24 +53,33 @@ class MotionLoader:
 
     # Optional object arrays
     if "object_pos_w" in data and "object_quat_w" in data:
-      self._object_pos_w = torch.tensor(data["object_pos_w"], dtype=torch.float32, device=device)
-      self._object_quat_w = torch.tensor(data["object_quat_w"], dtype=torch.float32, device=device)
-      self._object_lin_vel_w = torch.tensor(data["object_lin_vel_w"], dtype=torch.float32, device=device)
-      self._object_ang_vel_w = torch.tensor(data["object_ang_vel_w"], dtype=torch.float32, device=device)
+      self._object_pos_w = torch.tensor(
+        data["object_pos_w"], dtype=torch.float32, device=device
+      )
+      self._object_quat_w = torch.tensor(
+        data["object_quat_w"], dtype=torch.float32, device=device
+      )
+      self._object_lin_vel_w = torch.tensor(
+        data["object_lin_vel_w"], dtype=torch.float32, device=device
+      )
+      self._object_ang_vel_w = torch.tensor(
+        data["object_ang_vel_w"], dtype=torch.float32, device=device
+      )
 
     if "contact_indicators" in data:
-      self._object_contact = torch.tensor(data["contact_indicators"], dtype=torch.bool, device=device)
+      self._object_contact = torch.tensor(
+        data["contact_indicators"], dtype=torch.bool, device=device
+      )
     else:
       self._object_contact = None
-    
+
     # Load contact_positions if available
     if "contact_positions" in data:
-      self._contact_positions = torch.tensor(data["contact_positions"], dtype=torch.float32, device=device)
+      self._contact_positions = torch.tensor(
+        data["contact_positions"], dtype=torch.float32, device=device
+      )
     else:
       self._contact_positions = None
-
-      
-
 
   @property
   def body_pos_w(self) -> torch.Tensor:
@@ -87,8 +96,9 @@ class MotionLoader:
   @property
   def body_ang_vel_w(self) -> torch.Tensor:
     return self._body_ang_vel_w[:, self._body_indexes]
-  
+
     # Object pose (global/world) at each time step
+
   @property
   def object_pos_w(self) -> torch.Tensor:
     if not hasattr(self, "_object_pos_w"):
@@ -204,11 +214,17 @@ class MotionCommand(CommandTerm):
       self.metrics["error_object_rot"] = torch.zeros(self.num_envs, device=self.device)
 
     # Contact indicator from motion data
-    self._object_contact = self.motion.object_contact  # (time_step_total, num_contacts) or None
-    self._contact_positions = self.motion.contact_positions  # (time_step_total, num_contacts, 3) or None
+    self._object_contact = (
+      self.motion.object_contact
+    )  # (time_step_total, num_contacts) or None
+    self._contact_positions = (
+      self.motion.contact_positions
+    )  # (time_step_total, num_contacts, 3) or None
     if self._object_contact is not None:
       # Initialize contact reference arrays
-      num_contacts = self._object_contact.shape[1] if self._object_contact.ndim > 1 else 1
+      num_contacts = (
+        self._object_contact.shape[1] if self._object_contact.ndim > 1 else 1
+      )
       self.ref_object_contact_future = torch.zeros(
         self.num_envs, 1, num_contacts, dtype=torch.bool, device=self.device
       )
@@ -223,7 +239,7 @@ class MotionCommand(CommandTerm):
     # # These will be set in _update_command based on object pose and offsets
     # contact_target_pos_offset = getattr(cfg, "contact_target_pos_offset", None)
     # contact_eef_pos_offset = getattr(cfg, "contact_eef_pos_offset", None)
-    
+
     # if contact_target_pos_offset is not None:
     #   # Convert list of lists to tensor
     #   if isinstance(contact_target_pos_offset, list):
@@ -239,7 +255,7 @@ class MotionCommand(CommandTerm):
     # else:
     #   self.contact_target_pos_offset = None
     #   self.contact_target_pos_w = None
-    
+
     # if contact_eef_pos_offset is not None:
     #   if isinstance(contact_eef_pos_offset, list):
     #     self.contact_eef_pos_offset = torch.tensor(
@@ -249,7 +265,6 @@ class MotionCommand(CommandTerm):
     #     self.contact_eef_pos_offset = contact_eef_pos_offset
     # else:
     #   self.contact_eef_pos_offset = None
-
 
   @property
   def command(self) -> torch.Tensor:
@@ -339,7 +354,7 @@ class MotionCommand(CommandTerm):
   @property
   def robot_anchor_ang_vel_w(self) -> torch.Tensor:
     return self.robot.data.body_link_ang_vel_w[:, self.robot_anchor_body_index]
-  
+
   @property
   def robot_eef_pos_w(self) -> torch.Tensor:
     return self.robot.data.body_link_pos_w[:, self.eef_body_indexes]
@@ -360,11 +375,19 @@ class MotionCommand(CommandTerm):
 
   @property
   def object_lin_vel_w(self) -> torch.Tensor:
-    return self.motion.object_lin_vel_w[self.time_steps] if self.motion.object_lin_vel_w is not None else None
+    return (
+      self.motion.object_lin_vel_w[self.time_steps]
+      if self.motion.object_lin_vel_w is not None
+      else None
+    )
 
   @property
   def object_ang_vel_w(self) -> torch.Tensor:
-    return self.motion.object_ang_vel_w[self.time_steps] if self.motion.object_ang_vel_w is not None else None
+    return (
+      self.motion.object_ang_vel_w[self.time_steps]
+      if self.motion.object_ang_vel_w is not None
+      else None
+    )
 
   @property
   def contact_positions(self) -> torch.Tensor | None:
@@ -375,7 +398,6 @@ class MotionCommand(CommandTerm):
     # Offset by env origins in x,y to align with robot placement
     # env_origins: (num_envs, 3), need to expand to (num_envs, 1, 3) for broadcasting
     return pos + self._env.scene.env_origins[:, None, :]
-
 
   def _update_metrics(self):
     self.metrics["error_anchor_pos"] = torch.norm(
@@ -420,11 +442,11 @@ class MotionCommand(CommandTerm):
           # Desired object pose from motion data
           desired_pos = self.object_pos_w  # (N, 3)
           desired_quat = self.object_quat_w  # (N, 4)
-          
+
           # Actual object pose from simulation
           actual_pos = box.data.body_link_pos_w[:, 0]  # (N, 3) root body
           actual_quat = box.data.body_link_quat_w[:, 0]  # (N, 4) root body
-          
+
           # Compute tracking errors
           self.metrics["error_object_pos"] = torch.norm(
             desired_pos - actual_pos, dim=-1
@@ -434,13 +456,20 @@ class MotionCommand(CommandTerm):
           )
         else:
           # Box entity doesn't exist, set metrics to zero
-          self.metrics["error_object_pos"] = torch.zeros(self.num_envs, device=self.device)
-          self.metrics["error_object_rot"] = torch.zeros(self.num_envs, device=self.device)
+          self.metrics["error_object_pos"] = torch.zeros(
+            self.num_envs, device=self.device
+          )
+          self.metrics["error_object_rot"] = torch.zeros(
+            self.num_envs, device=self.device
+          )
       except Exception:
         # If anything goes wrong, set metrics to zero
-        self.metrics["error_object_pos"] = torch.zeros(self.num_envs, device=self.device)
-        self.metrics["error_object_rot"] = torch.zeros(self.num_envs, device=self.device)
-
+        self.metrics["error_object_pos"] = torch.zeros(
+          self.num_envs, device=self.device
+        )
+        self.metrics["error_object_rot"] = torch.zeros(
+          self.num_envs, device=self.device
+        )
 
   def _adaptive_sampling(self, env_ids: torch.Tensor):
     episode_failed = self._env.termination_manager.terminated[env_ids]
@@ -571,13 +600,14 @@ class MotionCommand(CommandTerm):
       box_ang_vel = self.object_ang_vel_w[env_ids]
 
       box_state = torch.cat(
-      [
-        box_pos,
-        box_quat,
-        box_lin_vel,
-        box_ang_vel,
-      ],
-      dim=-1,)
+        [
+          box_pos,
+          box_quat,
+          box_lin_vel,
+          box_ang_vel,
+        ],
+        dim=-1,
+      )
 
       box.write_root_state_to_sim(box_state, env_ids=env_ids)
 
@@ -586,7 +616,6 @@ class MotionCommand(CommandTerm):
     self.robot.clear_state(env_ids=env_ids)
     if box is not None:
       box.clear_state(env_ids=env_ids)
-
 
   def _update_command(self):
     self.time_steps += 1
@@ -629,45 +658,16 @@ class MotionCommand(CommandTerm):
     if self._object_contact is not None:
       # Get contact indicator for current time steps
       # time_steps: (num_envs,), _object_contact: (time_step_total, num_contacts)
-      contact_at_timesteps = self._object_contact[self.time_steps]  # (num_envs, num_contacts)
+      contact_at_timesteps = self._object_contact[
+        self.time_steps
+      ]  # (num_envs, num_contacts)
       if contact_at_timesteps.ndim == 1:
         contact_at_timesteps = contact_at_timesteps.unsqueeze(1)  # (num_envs, 1)
       # Update future contact (for horizon=1, just current step)
-      self.ref_object_contact_future = contact_at_timesteps.unsqueeze(1)  # (num_envs, 1, num_contacts)
+      self.ref_object_contact_future = contact_at_timesteps.unsqueeze(
+        1
+      )  # (num_envs, 1, num_contacts)
       self.ref_object_contact = contact_at_timesteps  # (num_envs, num_contacts)
-
-    # # Reconstruct contact target positions in world frame from object pose and offsets
-    # if self.contact_target_pos_offset is not None and self._has_object:
-    #   object_pos_w = self.object_pos_w  # (num_envs, 3)
-    #   object_quat_w = self.object_quat_w  # (num_envs, 4)
-    #   # Expand offsets: (num_contacts, 3) -> (num_envs, num_contacts, 3)
-    #   offsets_expanded = self.contact_target_pos_offset.unsqueeze(0).expand(
-    #     self.num_envs, -1, -1
-    #   )  # (num_envs, num_contacts, 3)
-    #   # Apply quaternion rotation to offsets
-    #   offsets_rotated = quat_apply(
-    #     object_quat_w.unsqueeze(1).expand(-1, offsets_expanded.shape[1], -1),
-    #     offsets_expanded
-    #   )  # (num_envs, num_contacts, 3)
-    #   # Add to object position
-    #   self.contact_target_pos_w[:] = object_pos_w.unsqueeze(1) + offsets_rotated
-
-    # For box pushing tasks, we want the box to be pushed by the robot, not kinematically driven
-    # The ghost box will show the target trajectory, but the real box should respond to robot interaction
-    # Only drive the box if it's a non-physical visualization box
-    try:
-      box = self._env.scene.entities.get("box")  # type: ignore[attr-defined]
-    except Exception:
-      box = None
-    # Comment out kinematic driving to allow robot to push the box
-    # if box is not None and not box.data.is_fixed_base and hasattr(self.motion, "_object_pos_w"):
-    #   t = self.time_steps
-    #   # Build (N,7) pose from per-time arrays; clamp indices in range
-    #   t_clamped = torch.clamp(t, 0, self.motion.time_step_total - 1)
-    #   pos = self.motion.object_pos_w[t_clamped] + self._env.scene.env_origins
-    #   quat = self.motion.object_quat_w[t_clamped]
-    #   box.write_root_link_pose_to_sim(torch.cat([pos, quat], dim=-1))
-
 
   def _debug_vis_impl(self, visualizer: DebugVisualizer) -> None:
     """Draw ghost robot or frames based on visualization mode."""

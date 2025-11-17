@@ -38,10 +38,11 @@ def unitree_g1_tracking_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
     max_iterations=30_000,
   )
 
+
 def unitree_g1_tracking_ppo_runner_cfg_box() -> RslRlOnPolicyRunnerCfg:
   """Create RL runner configuration for Unitree G1 tracking task with a box."""
-  
+
   cfg = unitree_g1_tracking_ppo_runner_cfg()
   cfg.experiment_name = "g1_object_tracking"
-  
+
   return cfg

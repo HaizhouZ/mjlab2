@@ -4,12 +4,13 @@ from typing import TYPE_CHECKING, cast
 
 import torch
 
+from mjlab.entity import Entity
+from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.third_party.isaaclab.isaaclab.utils.math import (
   matrix_from_quat,
   subtract_frame_transforms,
 )
-from mjlab.entity import Entity
-from mjlab.managers.scene_entity_config import SceneEntityCfg
+
 from .commands import MotionCommand
 
 if TYPE_CHECKING:
@@ -69,40 +70,45 @@ def robot_body_ori_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
   mat = matrix_from_quat(ori_b)
   return mat[..., :2].reshape(mat.shape[0], -1)
 
-def object_pos_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
-    command = cast(MotionCommand, env.command_manager.get_term(command_name))
 
-    pos, _ = subtract_frame_transforms(
-      command.robot_anchor_pos_w,
-      command.robot_anchor_quat_w,
-      command.object_pos_w,
-      command.object_quat_w,
-    )
-    # breakpoint()
-    return pos.view(env.num_envs, -1)
-  
-def object_lin_vel_w(env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("box")) -> torch.Tensor:
+def object_pos_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
+  command = cast(MotionCommand, env.command_manager.get_term(command_name))
+
+  pos, _ = subtract_frame_transforms(
+    command.robot_anchor_pos_w,
+    command.robot_anchor_quat_w,
+    command.object_pos_w,
+    command.object_quat_w,
+  )
+  # breakpoint()
+  return pos.view(env.num_envs, -1)
+
+
+def object_lin_vel_w(env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
   object = env.scene[asset_cfg.name]
   return object.data.body_link_lin_vel_w[:, 0].view(env.num_envs, -1)
 
 
-def object_ang_vel_w(env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("box")) -> torch.Tensor:
+def object_ang_vel_w(env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
   object = env.scene[asset_cfg.name]
   return object.data.body_link_ang_vel_w[:, 0].view(env.num_envs, -1)
 
-def object_position_error(env: ManagerBasedRlEnv, command_name: str, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+
+def object_position_error(
+  env: ManagerBasedRlEnv, command_name: str, asset_cfg: SceneEntityCfg
+) -> torch.Tensor:
   """Compute the error between actual and desired object position.
-  
+
   This is crucial for box pushing - the robot needs to know how far the box
   is from where it should be to learn to push it correctly.
   """
-  
+
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
   box: Entity = env.scene[asset_cfg.name]
-  
+
   # Desired object position from motion data
   desired_pos = command.object_pos_w  # (N, 3)
-  
+
   # Actual object position from simulation
   actual_pos = box.data.body_link_pos_w[:, 0]  # (N, 3)
   # Position error: actual - desired
@@ -110,17 +116,15 @@ def object_position_error(env: ManagerBasedRlEnv, command_name: str, asset_cfg: 
   return error
 
 
-def object_orientation_error(env: ManagerBasedRlEnv, command_name: str, asset_cfg: SceneEntityCfg = SceneEntityCfg("box")) -> torch.Tensor:
+def object_orientation_error(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  asset_cfg: SceneEntityCfg,
+) -> torch.Tensor:
   """Compute the error between actual and desired object orientation."""
 
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
   box: Entity = env.scene[asset_cfg.name]
-  
-  # Desired object orientation from motion data
-  desired_quat = command.object_quat_w  # (N, 4)
-  
-  # Actual object orientation from simulation
-  actual_quat = box.data.body_link_quat_w[:, 0]  # (N, 4)
 
   _, ori = subtract_frame_transforms(
     command.object_pos_w,

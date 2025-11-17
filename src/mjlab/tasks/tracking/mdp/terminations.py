@@ -85,6 +85,7 @@ def bad_motion_body_pos_z_only(
   )
   return torch.any(error > threshold, dim=-1)
 
+
 def base_ang_vel_exceed(
   env: ManagerBasedRlEnv,
   threshold: float,

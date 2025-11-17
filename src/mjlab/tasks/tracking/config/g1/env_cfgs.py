@@ -1,20 +1,23 @@
 """Unitree G1 flat tracking environment configurations."""
 
-from mjlab.asset_zoo.robots import (
-  G1_ACTION_SCALE,
-  get_g1_robot_cfg,
-  get_box_cfg
-)
+import math
+
+import mjlab.tasks.tracking.mdp as mdp
+from mjlab.asset_zoo.robots import G1_ACTION_SCALE, get_box_cfg, get_g1_robot_cfg
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
-from mjlab.managers.manager_term_config import ObservationGroupCfg, RewardTermCfg, TerminationTermCfg, EventTermCfg, ObservationTermCfg
+from mjlab.managers.manager_term_config import (
+  EventTermCfg,
+  ObservationGroupCfg,
+  ObservationTermCfg,
+  RewardTermCfg,
+  TerminationTermCfg,
+)
+from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
 from mjlab.tasks.tracking.mdp import MotionCommandCfg
-import mjlab.tasks.tracking.mdp as mdp
 from mjlab.tasks.tracking.tracking_env_cfg import make_tracking_env_cfg
-from mjlab.managers.scene_entity_config import SceneEntityCfg
 
-import math
 _MAX_ANG_VEL = 500 * math.pi / 180.0  # [rad/s]
 
 
@@ -73,7 +76,6 @@ def unitree_g1_flat_tracking_env_cfg(
     "left_wrist_yaw_link",
     "right_wrist_yaw_link",
   )
-  
 
   cfg.viewer.body_name = "torso_link"
 
@@ -105,6 +107,7 @@ def unitree_g1_flat_tracking_env_cfg(
     motion_cmd.sampling_mode = "start"
 
   return cfg
+
 
 def unitree_g1_flat_tracking_env_cfg_box(
   has_state_estimation: bool = True,
@@ -142,10 +145,14 @@ def unitree_g1_flat_tracking_env_cfg_box(
     num_slots=3,
   )
 
-  cfg.scene.sensors = (self_collision_cfg, left_eef_contact_sensor, right_eef_contact_sensor)
+  cfg.scene.sensors = (
+    self_collision_cfg,
+    left_eef_contact_sensor,
+    right_eef_contact_sensor,
+  )
 
   ###
-  # Add Motion Offset Joint Position Action 
+  # Add Motion Offset Joint Position Action
   ###
   joint_pos_action = cfg.actions["joint_pos"]
   assert isinstance(joint_pos_action, JointPositionActionCfg)
@@ -154,41 +161,50 @@ def unitree_g1_flat_tracking_env_cfg_box(
   assert cfg.commands is not None
   motion_cmd = cfg.commands["motion"]
   assert isinstance(motion_cmd, MotionCommandCfg)
-  
+
   motion_cmd.eef_body_names = (
     "left_wrist_yaw_link",
     "right_wrist_yaw_link",
   )
-  
+
   ###
   # Object Tracking Reward Terms
   ###
   cfg.rewards["contact_match"] = RewardTermCfg(
     func=mdp.eef_contact_indicator_match,
     weight=1.25,
-    params={"command_name": "motion", 
-            "eef_body_names": motion_cmd.eef_body_names, 
-            "sensor_names": ["left_eef_contact", "right_eef_contact"],
-            "gain": 1.0,
-            "force_threshold": 10.0,
-            "force_penalty_std": 10.0,
-            },
+    params={
+      "command_name": "motion",
+      "eef_body_names": motion_cmd.eef_body_names,
+      "sensor_names": ["left_eef_contact", "right_eef_contact"],
+      "gain": 1.0,
+      "force_threshold": 10.0,
+      "force_penalty_std": 10.0,
+    },
   )
   cfg.rewards["object_global_pos"] = RewardTermCfg(
     func=mdp.object_global_position_error_exp,
     weight=1.2,
-    params={"command_name": "motion", "object_asset_cfg": SceneEntityCfg("box"), "std": 0.25},
+    params={
+      "command_name": "motion",
+      "object_asset_cfg": SceneEntityCfg("box"),
+      "std": 0.25,
+    },
   )
   cfg.rewards["object_global_ori"] = RewardTermCfg(
     func=mdp.object_global_orientation_error_exp,
     weight=0.5,
-    params={"command_name": "motion", "object_asset_cfg": SceneEntityCfg("box"), "std": 0.4},
+    params={
+      "command_name": "motion",
+      "object_asset_cfg": SceneEntityCfg("box"),
+      "std": 0.4,
+    },
   )
   cfg.rewards["bad_termination"] = RewardTermCfg(
     func=mdp.is_terminated,
     weight=-100.0,
   )
-  
+
   ###
   # Object Tracking Termination Terms
   ###
@@ -196,7 +212,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     func=mdp.base_ang_vel_exceed,
     params={"threshold": _MAX_ANG_VEL},
   )
-  
+
   ###
   # Object Tracking Event Terms
   ###
@@ -216,51 +232,47 @@ def unitree_g1_flat_tracking_env_cfg_box(
       },
     },
   )
-  
+
   cfg.events["hand_friction"] = EventTermCfg(
     func=mdp.randomize_field,
     mode="startup",
     params={
-      "asset_cfg": SceneEntityCfg("robot", geom_names=("left_wrist_collision", "right_wrist_collision")),
+      "asset_cfg": SceneEntityCfg(
+        "robot", geom_names=("left_wrist_collision", "right_wrist_collision")
+      ),
       "operation": "abs",
       "field": "geom_friction",
       "ranges": (0.3, 1.2),
     },
   )
-  
-  ### 
+
+  ###
   # Actor (Policy) Object Tracking Observation Terms
   ###
   cfg.observations["policy"].terms["object_global_pos"] = ObservationTermCfg(
-    func=mdp.object_pos_b,
-    params={"command_name": "motion"}
+    func=mdp.object_pos_b, params={"command_name": "motion"}
   )
   cfg.observations["policy"].terms["object_global_ori"] = ObservationTermCfg(
     func=mdp.object_orientation_error,
-    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")}
+    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
   )
-  
-  ### 
+
+  ###
   # Critic Object Tracking Observation Terms
   ###
   cfg.observations["critic"].terms["object_global_pos"] = ObservationTermCfg(
-    func=mdp.object_pos_b,
-    params={"command_name": "motion"}
+    func=mdp.object_pos_b, params={"command_name": "motion"}
   )
   cfg.observations["critic"].terms["object_global_ori"] = ObservationTermCfg(
     func=mdp.object_orientation_error,
-    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")}
+    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
   )
   cfg.observations["critic"].terms["object_lin_vel_w"] = ObservationTermCfg(
-    func=mdp.object_lin_vel_w,
-    params={"asset_cfg": SceneEntityCfg("box")}
+    func=mdp.object_lin_vel_w, params={"asset_cfg": SceneEntityCfg("box")}
   )
   cfg.observations["critic"].terms["object_ang_vel_w"] = ObservationTermCfg(
-    func=mdp.object_ang_vel_w,
-    params={"asset_cfg": SceneEntityCfg("box")}
+    func=mdp.object_ang_vel_w, params={"asset_cfg": SceneEntityCfg("box")}
   )
-  
-  
 
   # Modify observations if we don't have state estimation.
   if not has_state_estimation:

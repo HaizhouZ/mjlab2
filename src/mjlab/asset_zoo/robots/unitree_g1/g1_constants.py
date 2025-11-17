@@ -35,6 +35,7 @@ def get_spec() -> mujoco.MjSpec:
   spec.assets = get_assets(spec.meshdir)
   return spec
 
+
 def get_spec_box() -> mujoco.MjSpec:
   spec = mujoco.MjSpec()
   world = spec.worldbody
@@ -51,6 +52,7 @@ def get_spec_box() -> mujoco.MjSpec:
   # Slightly translucent color similar to user's cube
   geom.rgba = (0.2, 0.6, 0.8, 1.0)
   return spec
+
 
 ##
 # Actuator config.
