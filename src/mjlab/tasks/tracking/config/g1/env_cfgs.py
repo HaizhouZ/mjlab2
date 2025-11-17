@@ -67,6 +67,7 @@ def unitree_g1_flat_tracking_env_cfg(
     "left_wrist_yaw_link",
     "right_wrist_yaw_link",
   )
+  
 
   cfg.viewer.body_name = "torso_link"
 
@@ -159,6 +160,10 @@ def unitree_g1_flat_tracking_env_cfg_box(
     "left_wrist_yaw_link",
     "right_shoulder_roll_link",
     "right_elbow_link",
+    "right_wrist_yaw_link",
+  )
+  motion_cmd.eef_body_names = (
+    "left_wrist_yaw_link",
     "right_wrist_yaw_link",
   )
 

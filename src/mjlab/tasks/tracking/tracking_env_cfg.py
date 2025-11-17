@@ -155,6 +155,7 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
       motion_file="",
       anchor_body_name="",
       body_names=(),
+      eef_body_names=(),
     )
   }
 
