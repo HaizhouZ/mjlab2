@@ -235,11 +235,14 @@
                             mass="0.254576" diaginertia="0.000646113 0.000559993 0.000147566"/>
                           <joint name="left_wrist_yaw_joint" axis="0 0 1" range="-1.61443 1.61443"/>
                           <geom class="visual" mesh="left_wrist_yaw_link"/>
-                          <geom pos="0.0415 0.003 0" quat="1 0 0 0" class="visual" mesh="left_rubber_hand"
+                          <!-- <geom pos="0.0415 0.003 0" quat="1 0 0 0" class="visual" mesh="left_rubber_hand"
                             material="black"/>
                           <site name="left_palm" pos="0.08 0 0" size="0.01"/>
                           <geom name="left_hand_collision" class="collision" size="0.035" rgba=".2 .6 .2 .2"
-                            fromto="0.07 0 0 0.15 -0.02 0"/>
+                            fromto="0.07 0 0 0.15 -0.02 0"/> -->
+
+                          <!-- <geom name="left_hand_collision" class="collision" type="cylinder" size="0.028" rgba=".2 .6 .2 .2"
+                            fromto="0 0 0 0.0415 0 0"/> -->
                         </body>
                       </body>
                     </body>
@@ -287,11 +290,14 @@
                             mass="0.254576" diaginertia="0.000646113 0.000559993 0.000147566"/>
                           <joint name="right_wrist_yaw_joint" axis="0 0 1" range="-1.61443 1.61443"/>
                           <geom class="visual" mesh="right_wrist_yaw_link"/>
-                          <geom pos="0.0415 -0.003 0" quat="1 0 0 0" class="visual" mesh="right_rubber_hand"
+                          <!-- <geom pos="0.0415 -0.003 0" quat="1 0 0 0" class="visual" mesh="right_rubber_hand"
                             material="black"/>
                           <site name="right_palm" pos="0.08 0 0" size="0.01"/>
                           <geom name="right_hand_collision" class="collision" size="0.035" rgba=".2 .6 .2 .2"
-                            fromto="0.07 0 0 0.15 0.02 0"/>
+                            fromto="0.07 0 0 0.15 0.02 0"/> -->
+
+                          <!-- <geom name="right_hand_collision" class="collision" type="cylinder" size="0.028" rgba=".2 .6 .2 .2"
+                            fromto="0 0 0 0.0415 0 0"/> -->
                         </body>
                       </body>
                     </body>
@@ -311,9 +317,9 @@
     <exclude body1="pelvis" body2="left_hip_roll_link"/>
   </contact>
   <sensor>
-    <gyro name="imu_ang_vel" site="imu_in_pelvis"/>
-    <velocimeter name="imu_lin_vel" site="imu_in_pelvis"/>
-    <accelerometer name="imu_lin_acc" site="imu_in_pelvis"/>
-    <subtreeangmom name="root_angmom" body="pelvis"/>
+    <gyro name="imu_ang_vel" site="imu_in_torso"/>
+    <velocimeter name="imu_lin_vel" site="imu_in_torso"/>
+    <accelerometer name="imu_lin_acc" site="imu_in_torso"/>
+    <subtreeangmom name="root_angmom" body="torso_link"/>
   </sensor>
 </mujoco>
