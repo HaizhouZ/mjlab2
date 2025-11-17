@@ -374,7 +374,7 @@ def convert(
     output_name: Name for the Weights & Biases artifact (if None, upload is skipped)
   """
   if output_name is None:
-    output_name = output_file.split("/")[-1].split(".")[0]
+    output_name = "motion"
   
   sim_cfg = SimulationCfg()
   sim_cfg.mujoco.timestep = 1.0 / float(output_fps)
