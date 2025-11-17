@@ -379,6 +379,6 @@ def eef_contact_indicator_match(
   # Vectorized reward computation with force penalty
   # Reward = gain * sum(contact_detected * force_penalty) for each environment
   # The force_penalty multiplies the reward, reducing it when forces exceed threshold
-  reward = gain * (contact_detected.float() * force_penalty).sum(dim=1)  # (num_envs,)
+  reward = gain * (contact_detected.float() * force_penalty).mean(dim=1)  # (num_envs,)
   # print(reward)
   return reward

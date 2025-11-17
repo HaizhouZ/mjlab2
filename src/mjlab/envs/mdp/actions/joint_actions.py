@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import torch
 
@@ -125,5 +125,57 @@ class JointEffortAction(JointAction):
 
   def apply_actions(self) -> None:
     self._asset.set_joint_effort_target(
+      self._processed_actions, joint_ids=self._joint_ids
+    )
+
+
+class MotionTrackingJointPositionAction(JointAction):
+  def __init__(
+    self,
+    cfg: actions_config.MotionTrackingJointPositionActionCfg,
+    env: ManagerBasedRlEnv,
+  ):
+    super().__init__(cfg=cfg, env=env)
+
+    # Use offset from motion tracking command instead of fixed default offset
+    if cfg.use_default_offset:
+      # Get motion command from command manager
+      # Default command name is "motion" (can be made configurable if needed)
+      command_name = getattr(cfg, "command_name", "motion")
+
+      # Check if command manager exists and has the motion command
+      if hasattr(env, "command_manager") and env.command_manager is not None:
+        try:
+          from mjlab.tasks.tracking.mdp.commands import MotionCommand
+
+          motion_command: MotionCommand = cast(
+            MotionCommand, env.command_manager.get_term(command_name)
+          )
+          self._motion_command = motion_command
+        except (KeyError, AttributeError):
+          # Fallback to default offset if motion command not available
+          self._motion_command = None
+          self._offset = self._asset.data.default_joint_pos[:, self._joint_ids].clone()
+      else:
+        # Fallback to default offset if command manager not available
+        self._motion_command = None
+        self._offset = self._asset.data.default_joint_pos[:, self._joint_ids].clone()
+    else:
+      self._motion_command = None
+
+  def process_actions(self, actions: torch.Tensor):
+    # Update offset from motion tracking command if available
+    if self._motion_command is not None:
+      # Get current joint positions from motion command
+      motion_joint_pos = self._motion_command.joint_pos  # (num_envs, num_joints)
+      # Select the joints that this action uses
+      self._offset = motion_joint_pos[:, self._joint_ids].clone()
+
+    # Process actions with updated offset
+    self._raw_actions[:] = actions
+    self._processed_actions = self._raw_actions * self._scale + self._offset
+
+  def apply_actions(self):
+    self._asset.set_joint_position_target(
       self._processed_actions, joint_ids=self._joint_ids
     )

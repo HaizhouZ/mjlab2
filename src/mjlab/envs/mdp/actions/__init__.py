@@ -8,6 +8,9 @@ from mjlab.envs.mdp.actions.actions_config import (
 from mjlab.envs.mdp.actions.actions_config import (
   JointVelocityActionCfg as JointVelocityActionCfg,
 )
+from mjlab.envs.mdp.actions.actions_config import (
+  MotionTrackingJointPositionActionCfg as MotionTrackingJointPositionActionCfg,
+)
 from mjlab.envs.mdp.actions.joint_actions import JointAction as JointAction
 from mjlab.envs.mdp.actions.joint_actions import JointEffortAction as JointEffortAction
 from mjlab.envs.mdp.actions.joint_actions import (

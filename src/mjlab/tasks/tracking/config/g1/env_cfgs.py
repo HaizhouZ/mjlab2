@@ -5,7 +5,10 @@ import math
 import mjlab.tasks.tracking.mdp as mdp
 from mjlab.asset_zoo.robots import G1_ACTION_SCALE, get_box_cfg, get_g1_robot_cfg
 from mjlab.envs import ManagerBasedRlEnvCfg
-from mjlab.envs.mdp.actions import JointPositionActionCfg
+from mjlab.envs.mdp.actions import (
+  JointPositionActionCfg,
+  MotionTrackingJointPositionActionCfg,
+)
 from mjlab.managers.manager_term_config import (
   EventTermCfg,
   ObservationGroupCfg,
@@ -151,13 +154,6 @@ def unitree_g1_flat_tracking_env_cfg_box(
     right_eef_contact_sensor,
   )
 
-  ###
-  # Add Motion Offset Joint Position Action
-  ###
-  joint_pos_action = cfg.actions["joint_pos"]
-  assert isinstance(joint_pos_action, JointPositionActionCfg)
-  joint_pos_action.scale = G1_ACTION_SCALE
-
   assert cfg.commands is not None
   motion_cmd = cfg.commands["motion"]
   assert isinstance(motion_cmd, MotionCommandCfg)
@@ -165,6 +161,17 @@ def unitree_g1_flat_tracking_env_cfg_box(
   motion_cmd.eef_body_names = (
     "left_wrist_yaw_link",
     "right_wrist_yaw_link",
+  )
+
+  ###
+  # Motion Tracking Joint Position Action
+  ###
+  cfg.actions["joint_pos"] = MotionTrackingJointPositionActionCfg(
+    asset_name="robot",
+    actuator_names=(".*",),
+    scale=G1_ACTION_SCALE,
+    use_default_offset=True,
+    command_name="motion",
   )
 
   ###
@@ -184,7 +191,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   )
   cfg.rewards["object_global_pos"] = RewardTermCfg(
     func=mdp.object_global_position_error_exp,
-    weight=1.2,
+    weight=0.85,
     params={
       "command_name": "motion",
       "object_asset_cfg": SceneEntityCfg("box"),
@@ -193,7 +200,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   )
   cfg.rewards["object_global_ori"] = RewardTermCfg(
     func=mdp.object_global_orientation_error_exp,
-    weight=0.5,
+    weight=0.65,
     params={
       "command_name": "motion",
       "object_asset_cfg": SceneEntityCfg("box"),
