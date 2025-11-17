@@ -35,6 +35,22 @@ def get_spec() -> mujoco.MjSpec:
   spec.assets = get_assets(spec.meshdir)
   return spec
 
+def get_spec_box() -> mujoco.MjSpec:
+  spec = mujoco.MjSpec()
+  world = spec.worldbody
+  body = world.add_body(name="largebox_link")
+  body.pos = (0.35, 0.0, 0.115)
+  body.add_freejoint(name="largebox_freejoint")
+  geom = body.add_geom(
+    name="largebox_geom",
+    type=mujoco.mjtGeom.mjGEOM_BOX,
+    friction=(1.0, 0.005, 0.0001),
+    size=(0.1, 0.1, 0.115),
+    mass=0.6,
+  )
+  # Slightly translucent color similar to user's cube
+  geom.rgba = (0.2, 0.6, 0.8, 1.0)
+  return spec
 
 ##
 # Actuator config.
@@ -281,6 +297,17 @@ def get_g1_robot_cfg() -> EntityCfg:
     collisions=(FULL_COLLISION,),
     spec_fn=get_spec,
     articulation=G1_ARTICULATION,
+  )
+
+
+def get_box_cfg() -> EntityCfg:
+  """Get a fresh box configuration instance."""
+  return EntityCfg(
+    init_state=EntityCfg.InitialStateCfg(
+      pos=(0.35, 0.0, 0.115),
+      rot=(1.0, 0.0, 0.0, 0.0),
+    ),
+    spec_fn=get_spec_box,
   )
 
 
