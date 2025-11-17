@@ -24,6 +24,7 @@ class TrainConfig:
   env: Any
   agent: RslRlOnPolicyRunnerCfg
   registry_name: str | None = None
+  motion_file: str | None = None
   device: str = "cuda:0"
   video: bool = False
   video_length: int = 200
@@ -60,22 +61,31 @@ def run_train(task_id: str, cfg: TrainConfig) -> None:
   )
 
   if is_tracking_task:
-    if not cfg.registry_name:
-      raise ValueError("Must provide --registry-name for tracking tasks.")
-
-    # Check if the registry name includes alias, if not, append ":latest".
-    registry_name = cast(str, cfg.registry_name)
-    if ":" not in registry_name:
-      registry_name = registry_name + ":latest"
-    import wandb
-
-    api = wandb.Api()
-    artifact = api.artifact(registry_name)
-
     assert cfg.env.commands is not None
     motion_cmd = cfg.env.commands["motion"]
     assert isinstance(motion_cmd, MotionCommandCfg)
-    motion_cmd.motion_file = str(Path(artifact.download()) / "motion.npz")
+
+    if cfg.registry_name:
+      # Check if the registry name includes alias, if not, append ":latest".
+      registry_name = cast(str, cfg.registry_name)
+      if ":" not in registry_name:
+        registry_name = registry_name + ":latest"
+      import wandb
+
+      api = wandb.Api()
+      artifact = api.artifact(registry_name)
+      motion_cmd.motion_file = str(Path(artifact.download()) / "motion.npz")
+    elif cfg.motion_file is not None:
+      # motion_file provided via CLI: --motion-file /path/to/motion.npz
+      print(f"[INFO] Using local motion file: {cfg.motion_file}")
+      motion_cmd.motion_file = cfg.motion_file
+    elif getattr(motion_cmd, "motion_file", None) and motion_cmd.motion_file:
+      # motion_file already set in config
+      print(f"[INFO] Using motion file from config: {motion_cmd.motion_file}")
+    else:
+      raise ValueError(
+        "Must provide --registry-name or --motion-file for tracking tasks."
+      )
 
   # Enable NaN guard if requested.
   if cfg.enable_nan_guard:
