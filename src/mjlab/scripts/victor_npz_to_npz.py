@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any
 
 import mujoco
@@ -120,6 +121,7 @@ class TrajectoryNpzSimLoader:
     output_fps: int,
     device: torch.device | str,
     repeat_last_frame: int = 0,
+    repeat_first_frame: int = 0,
   ):
     self.input_file = input_file
     self.output_fps = int(output_fps)
@@ -127,9 +129,11 @@ class TrajectoryNpzSimLoader:
     self.device = device
     self.current_idx = 0
     self.repeat_last_frame = max(0, int(repeat_last_frame))
+    self.repeat_first_frame = max(0, int(repeat_first_frame))
 
     self._load()
     self._resample_to_output_fps_using_times()
+    self._repeat_first_frame()
     self._repeat_last_frame()
     self._compute_velocities_from_resampled()
 
@@ -317,6 +321,27 @@ class TrajectoryNpzSimLoader:
       oq = oq0 * (1 - blend.unsqueeze(1)) + oq1 * blend.unsqueeze(1)
       self.object_rots = _normalize_quat(oq)
 
+  def _repeat_first_frame(self) -> None:
+    """Prepend the first frame N times to extend the trajectory."""
+    if self.repeat_first_frame <= 0:
+      return
+
+    first_pos = self.motion_base_poss[:1].repeat(self.repeat_first_frame, 1)
+    first_rot = self.motion_base_rots[:1].repeat(self.repeat_first_frame, 1)
+    first_dof = self.motion_dof_poss[:1].repeat(self.repeat_first_frame, 1)
+
+    self.motion_base_poss = torch.cat([first_pos, self.motion_base_poss], dim=0)
+    self.motion_base_rots = torch.cat([first_rot, self.motion_base_rots], dim=0)
+    self.motion_dof_poss = torch.cat([first_dof, self.motion_dof_poss], dim=0)
+
+    if self.has_object:
+      first_obj_pos = self.object_poss[:1].repeat(self.repeat_first_frame, 1)
+      first_obj_rot = self.object_rots[:1].repeat(self.repeat_first_frame, 1)
+      self.object_poss = torch.cat([first_obj_pos, self.object_poss], dim=0)
+      self.object_rots = torch.cat([first_obj_rot, self.object_rots], dim=0)
+
+    self.output_frames += self.repeat_first_frame
+
   def _repeat_last_frame(self) -> None:
     """Append the last frame N times to extend the trajectory."""
     if self.repeat_last_frame <= 0:
@@ -388,13 +413,14 @@ class TrajectoryNpzSimLoader:
 
 def convert(
   input_file: str,
-  output_file: str,
+  output_dir: str,
+  output_name: str,
   output_fps: float = 50.0,
   device: str = "cuda:0",
   repeat_last_frame: int = 0,
+  repeat_first_frame: int = 0,
   contact_method: str = "distance",
   contact_threshold: float = 0.05,
-  output_name: str | None = None,
 ):
   """Convert dataset NPZ (qpos in x) to mjlab motion.npz using simulation states.
 
@@ -405,16 +431,19 @@ def convert(
 
   Args:
     input_file: Path to input NPZ file
-    output_file: Path to output NPZ file
+    output_dir: Base output directory
+    output_name: Name for the output (used to create motions/output/<output_name>/motion.npz)
     output_fps: Output frame rate
     device: Device to use for simulation
     repeat_last_frame: Number of times to repeat the last frame
+    repeat_first_frame: Number of times to repeat the first frame
     contact_method: Method to extract contacts - "mujoco" (preferred, uses physics) or "distance" (uses threshold)
     contact_threshold: Distance threshold in meters for "distance" method (default: 0.05m = 5cm)
-    output_name: Name for the Weights & Biases artifact (if None, upload is skipped)
   """
-  if output_name is None:
-    output_name = "motion"
+  # Construct output path: motions/output/<output_name>/motion.npz
+  output_path = Path(output_dir) / "motions" / "output" / output_name / "motion.npz"
+  output_path.parent.mkdir(parents=True, exist_ok=True)
+  output_file = str(output_path)
 
   sim_cfg = SimulationCfg()
   sim_cfg.mujoco.timestep = 1.0 / float(output_fps)
@@ -429,6 +458,7 @@ def convert(
     output_fps=int(round(output_fps)),
     device=sim.device,
     repeat_last_frame=repeat_last_frame,
+    repeat_first_frame=repeat_first_frame,
   )
 
   robot: Entity = scene["robot"]
@@ -778,56 +808,58 @@ def convert(
   )
   print(f"  All robot bodies: {robot.body_names}")
 
-  if output_name is not None:
-    print("Uploading to Weights & Biases...")
-    import wandb
+  print("Uploading to Weights & Biases...")
+  import wandb
 
-    COLLECTION = output_name
-    run = wandb.init(project="victor_motions", name=COLLECTION, entity="ATARITUM")
-    print(f"[INFO]: Logging motion to wandb: {COLLECTION}")
-    REGISTRY = "motions"
-    logged_artifact = run.log_artifact(
-      artifact_or_path=output_file, name=COLLECTION, type=REGISTRY
-    )
-    run.link_artifact(
-      artifact=logged_artifact,
-      target_path=f"wandb-registry-{REGISTRY}/{COLLECTION}",
-    )
-    print(f"[INFO]: Motion saved to wandb registry: {REGISTRY}/{COLLECTION}")
-    wandb.finish()
+  COLLECTION = output_name
+  run = wandb.init(project="victor_motions", name=COLLECTION, entity="ATARITUM")
+  print(f"[INFO]: Logging motion to wandb: {COLLECTION}")
+  REGISTRY = "motions"
+  logged_artifact = run.log_artifact(
+    artifact_or_path=output_file, name=COLLECTION, type=REGISTRY
+  )
+  run.link_artifact(
+    artifact=logged_artifact,
+    target_path=f"wandb-registry-{REGISTRY}/{COLLECTION}",
+  )
+  print(f"[INFO]: Motion saved to wandb registry: {REGISTRY}/{COLLECTION}")
+  wandb.finish()
 
 
 def main(
   input_file: str,
-  output_file: str,
+  output_dir: str,
+  output_name: str,
   output_fps: float = 50.0,
   device: str = "cuda:0",
   repeat_last_frame: int = 0,
+  repeat_first_frame: int = 0,
   contact_method: str = "distance",
   contact_threshold: float = 0.05,
-  output_name: str | None = None,
 ):
   """Convert trajectory NPZ file to mjlab motion format with contact extraction.
 
   Args:
     input_file: Path to input NPZ file
-    output_file: Path to output NPZ file
+    output_dir: Base output directory
+    output_name: Name for the output (used to create motions/output/<output_name>/motion.npz)
     output_fps: Output frame rate
     device: Device to use for simulation
     repeat_last_frame: Number of times to repeat the last frame
+    repeat_first_frame: Number of times to repeat the first frame
     contact_method: Method to extract contacts - "mujoco" (preferred) or "distance"
     contact_threshold: Distance threshold in meters for "distance" method
-    output_name: Name for the Weights & Biases artifact (if None, upload is skipped)
   """
   convert(
     input_file=input_file,
-    output_file=output_file,
+    output_dir=output_dir,
+    output_name=output_name,
     output_fps=output_fps,
     device=device,
     repeat_last_frame=repeat_last_frame,
+    repeat_first_frame=repeat_first_frame,
     contact_method=contact_method,
     contact_threshold=contact_threshold,
-    output_name=output_name,
   )
 
 
