@@ -38,13 +38,23 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
     self.body_quat_w = cmd.motion.body_quat_w.to("cpu")
     self.body_lin_vel_w = cmd.motion.body_lin_vel_w.to("cpu")
     self.body_ang_vel_w = cmd.motion.body_ang_vel_w.to("cpu")
+
+    self.has_object_data = hasattr(cmd.motion, "_object_pos_w")
+    if self.has_object_data:
+      self.object_pos_w = cmd.motion.object_pos_w.to("cpu")
+      self.object_quat_w = cmd.motion.object_quat_w.to("cpu")
+      self.object_lin_vel_w = cmd.motion.object_lin_vel_w.to("cpu")
+      self.object_ang_vel_w = cmd.motion.object_ang_vel_w.to("cpu")
+      self.contact_indicators = cmd.motion.object_contact.to("cpu")
+      self.contact_positions = cmd.motion.contact_positions.to("cpu")
+
     self.time_step_total: int = self.joint_pos.shape[0]
 
   def forward(self, x, time_step):  # pyright: ignore [reportIncompatibleMethodOverride]
     time_step_clamped = torch.clamp(
       time_step.long().squeeze(-1), max=self.time_step_total - 1
     )
-    return (
+    outputs = (
       self.actor(self.normalizer(x)),
       self.joint_pos[time_step_clamped],
       self.joint_vel[time_step_clamped],
@@ -54,10 +64,48 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
       self.body_ang_vel_w[time_step_clamped],
     )
 
+    # Only include object outputs if object data exists
+    if self.has_object_data:
+      return outputs + (
+        self.object_pos_w[time_step_clamped],
+        self.object_quat_w[time_step_clamped],
+        self.object_lin_vel_w[time_step_clamped],
+        self.object_ang_vel_w[time_step_clamped],
+        self.contact_indicators[time_step_clamped],
+        self.contact_positions[time_step_clamped],
+      )
+    else:
+      return outputs
+
   def export(self, path, filename):
     self.to("cpu")
     obs = torch.zeros(1, self.actor[0].in_features)
     time_step = torch.zeros(1, 1)
+
+    # Base output names (always included)
+    output_names = [
+      "actions",
+      "joint_pos",
+      "joint_vel",
+      "body_pos_w",
+      "body_quat_w",
+      "body_lin_vel_w",
+      "body_ang_vel_w",
+    ]
+
+    # Only include object outputs if object data exists
+    if self.has_object_data:
+      output_names.extend(
+        [
+          "object_pos_w",
+          "object_quat_w",
+          "object_lin_vel_w",
+          "object_ang_vel_w",
+          "contact_indicators",
+          "contact_positions",
+        ]
+      )
+
     torch.onnx.export(
       self,
       (obs, time_step),
@@ -66,15 +114,7 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
       opset_version=11,
       verbose=self.verbose,
       input_names=["obs", "time_step"],
-      output_names=[
-        "actions",
-        "joint_pos",
-        "joint_vel",
-        "body_pos_w",
-        "body_quat_w",
-        "body_lin_vel_w",
-        "body_ang_vel_w",
-      ],
+      output_names=output_names,
       dynamic_axes={},
       dynamo=False,
     )

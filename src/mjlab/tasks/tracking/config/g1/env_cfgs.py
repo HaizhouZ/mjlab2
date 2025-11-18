@@ -185,7 +185,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
       "eef_body_names": motion_cmd.eef_body_names,
       "sensor_names": ["left_eef_contact", "right_eef_contact"],
       "gain": 1.0,
-      "force_threshold": 10.0,
+      "force_threshold": 15.0,
       "force_penalty_std": 10.0,
     },
   )

@@ -15,6 +15,8 @@ from mjlab.rl import RslRlVecEnvWrapper
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg
 from mjlab.tasks.tracking.mdp import MotionCommandCfg
 from mjlab.tasks.tracking.rl import MotionTrackingOnPolicyRunner
+from mjlab.tasks.tracking.rl.exporter import export_motion_policy_as_onnx
+from mjlab.third_party.isaaclab.isaaclab_rl.rsl_rl.exporter import export_policy_as_onnx
 from mjlab.utils.os import get_wandb_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
 from mjlab.utils.wrappers import VideoRecorder
@@ -188,6 +190,35 @@ def run_play(task: str, cfg: PlayConfig):
       )
     runner.load(str(resume_path), map_location=device)
     policy = runner.get_inference_policy(device=device)
+
+    # Export policy as ONNX before running play
+    assert log_dir is not None  # log_dir is set in TRAINED_MODE block
+    onnx_path = str(log_dir)
+    onnx_filename = "policy.onnx"
+
+    # Get normalizer if it exists
+    if runner.alg.policy.actor_obs_normalization:
+      normalizer = runner.alg.policy.actor_obs_normalizer
+    else:
+      normalizer = None
+
+    print(f"[INFO]: Exporting policy as ONNX to {onnx_path}/{onnx_filename}")
+    if is_tracking_task:
+      export_motion_policy_as_onnx(
+        env.unwrapped,
+        runner.alg.policy,
+        normalizer=normalizer,
+        path=onnx_path,
+        filename=onnx_filename,
+      )
+    else:
+      export_policy_as_onnx(
+        runner.alg.policy,
+        normalizer=normalizer,
+        path=onnx_path,
+        filename=onnx_filename,
+      )
+    print("[INFO]: ONNX export completed")
 
   # Handle "auto" viewer selection.
   if cfg.viewer == "auto":
