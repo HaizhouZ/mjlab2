@@ -120,6 +120,9 @@ def unitree_g1_flat_tracking_env_cfg_box(
 
   cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_box_cfg()}
 
+  ###
+  # Contact Sensors
+  ###
   self_collision_cfg = ContactSensorCfg(
     name="self_collision",
     primary=ContactMatch(mode="subtree", pattern="pelvis", entity="robot"),
@@ -178,19 +181,19 @@ def unitree_g1_flat_tracking_env_cfg_box(
   ###
   cfg.rewards["contact_match"] = RewardTermCfg(
     func=mdp.eef_contact_indicator_match,
-    weight=1.25,
+    weight=2.0,
     params={
       "command_name": "motion",
       "eef_body_names": motion_cmd.eef_body_names,
       "sensor_names": ["left_eef_contact", "right_eef_contact"],
       "gain": 1.0,
-      "force_threshold": 15.0,
+      "force_threshold": 12.0,
       "force_penalty_std": 10.0,
     },
   )
   cfg.rewards["object_global_pos"] = RewardTermCfg(
     func=mdp.object_global_position_error_exp,
-    weight=0.85,
+    weight=1.0,
     params={
       "command_name": "motion",
       "object_asset_cfg": SceneEntityCfg("box"),
@@ -236,6 +239,17 @@ def unitree_g1_flat_tracking_env_cfg_box(
         "pitch": (-1.5, 1.5),
         "yaw": (-1.5, 1.5),
       },
+    },
+  )
+
+  cfg.events["object_mass"] = EventTermCfg(
+    func=mdp.randomize_field,
+    mode="startup",
+    params={
+      "asset_cfg": SceneEntityCfg("box"),
+      "operation": "scale",
+      "field": "body_mass",
+      "ranges": (0.6, 1.5),
     },
   )
 
@@ -299,11 +313,11 @@ def unitree_g1_flat_tracking_env_cfg_box(
     cfg.episode_length_s = int(1e9)
 
     cfg.observations["policy"].enable_corruption = False
-    cfg.events.pop("push_robot", None)
+    # cfg.events.pop("push_robot", None)
 
-    # Disable RSI randomization.
-    motion_cmd.pose_range = {}
-    motion_cmd.velocity_range = {}
+    # # Disable RSI randomization.
+    # motion_cmd.pose_range = {}
+    # motion_cmd.velocity_range = {}
 
     motion_cmd.sampling_mode = "start"
 

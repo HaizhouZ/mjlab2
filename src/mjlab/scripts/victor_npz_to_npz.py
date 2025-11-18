@@ -828,14 +828,14 @@ def convert(
 
 def main(
   input_file: str,
-  output_dir: str,
   output_name: str,
-  output_fps: float = 50.0,
-  device: str = "cuda:0",
   repeat_last_frame: int = 0,
   repeat_first_frame: int = 0,
-  contact_method: str = "distance",
+  output_fps: float = 50.0,
   contact_threshold: float = 0.05,
+  contact_method: str = "distance",
+  output_dir: str = "motions/output/",
+  device: str = "cuda:0",
 ):
   """Convert trajectory NPZ file to mjlab motion format with contact extraction.
 
@@ -849,6 +849,14 @@ def main(
     repeat_first_frame: Number of times to repeat the first frame
     contact_method: Method to extract contacts - "mujoco" (preferred) or "distance"
     contact_threshold: Distance threshold in meters for "distance" method
+
+  Example usage:
+    MUJOCO_GL=egl CUDA_VISIBLE_DEVICES=0 uv run src/mjlab/scripts/victor_npz_to_npz.py
+    --output-dir motions/output/
+    --output-fps 70
+    --repeat-last-frame 150 --repeat-first-frame 100
+    --input-file motions/input/time_x_u_traj_rl_format.npz
+    --output-name victor_object_repeated
   """
   convert(
     input_file=input_file,
