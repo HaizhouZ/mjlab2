@@ -15,7 +15,15 @@ from mjlab.rl import RslRlVecEnvWrapper
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg
 from mjlab.tasks.tracking.mdp import MotionCommandCfg
 from mjlab.tasks.tracking.rl import MotionTrackingOnPolicyRunner
-from mjlab.tasks.tracking.rl.exporter import export_motion_policy_as_onnx
+from mjlab.tasks.tracking.rl.exporter import (
+  attach_onnx_metadata as attach_tracking_onnx_metadata,
+)
+from mjlab.tasks.tracking.rl.exporter import (
+  export_motion_policy_as_onnx,
+)
+from mjlab.tasks.velocity.rl.exporter import (
+  attach_onnx_metadata as attach_velocity_onnx_metadata,
+)
 from mjlab.third_party.isaaclab.isaaclab_rl.rsl_rl.exporter import export_policy_as_onnx
 from mjlab.utils.os import get_wandb_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
@@ -219,6 +227,31 @@ def run_play(task: str, cfg: PlayConfig):
         filename=onnx_filename,
       )
     print("[INFO]: ONNX export completed")
+
+    # Attach ONNX metadata
+    # Use wandb_run_path if available, otherwise use log_dir name
+    if cfg.wandb_run_path is not None:
+      run_path = cfg.wandb_run_path
+    else:
+      # Use the log_dir name as fallback
+      run_path = str(log_dir.name) if log_dir else "unknown"
+
+    print(f"[INFO]: Attaching ONNX metadata (run_path: {run_path})")
+    if is_tracking_task:
+      attach_tracking_onnx_metadata(
+        env.unwrapped,
+        run_path,
+        path=onnx_path,
+        filename=onnx_filename,
+      )
+    else:
+      attach_velocity_onnx_metadata(
+        env.unwrapped,
+        run_path,
+        path=onnx_path,
+        filename=onnx_filename,
+      )
+    print("[INFO]: ONNX metadata attachment completed")
 
   # Handle "auto" viewer selection.
   if cfg.viewer == "auto":
