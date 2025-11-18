@@ -317,7 +317,8 @@ def eef_contact_indicator_match(
       found = sensor_data.found  # [num_envs, N]
       if found.dim() == 2:
         # Multiple slots: check if any slot has contact
-        has_contact = (found > 0).all(dim=1)  # [num_envs,] - True if any contact found
+        has_contact = (found > 0).any(dim=1)  # [num_envs,] - True if any contact found
+        # print(has_contact)
       else:
         # Single dimension: [num_envs]
         has_contact = found > 0  # [num_envs,] - True if contact found
