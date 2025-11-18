@@ -7,7 +7,6 @@ from mjlab.asset_zoo.robots import G1_ACTION_SCALE, get_box_cfg, get_g1_robot_cf
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import (
   JointPositionActionCfg,
-  MotionTrackingJointPositionActionCfg,
 )
 from mjlab.managers.manager_term_config import (
   EventTermCfg,
@@ -166,13 +165,13 @@ def unitree_g1_flat_tracking_env_cfg_box(
   ###
   # Motion Tracking Joint Position Action
   ###
-  cfg.actions["joint_pos"] = MotionTrackingJointPositionActionCfg(
-    asset_name="robot",
-    actuator_names=(".*",),
-    scale=G1_ACTION_SCALE,
-    use_default_offset=True,
-    command_name="motion",
-  )
+  # cfg.actions["joint_pos"] = MotionTrackingJointPositionActionCfg(
+  #   asset_name="robot",
+  #   actuator_names=(".*",),
+  #   scale=G1_ACTION_SCALE,
+  #   use_default_offset=True,
+  #   command_name="motion",
+  # )
 
   ###
   # Object Tracking Reward Terms
@@ -260,7 +259,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     func=mdp.object_pos_b, params={"command_name": "motion"}
   )
   cfg.observations["policy"].terms["object_global_ori"] = ObservationTermCfg(
-    func=mdp.object_orientation_error,
+    func=mdp.object_position_error,
     params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
   )
 
@@ -271,7 +270,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     func=mdp.object_pos_b, params={"command_name": "motion"}
   )
   cfg.observations["critic"].terms["object_global_ori"] = ObservationTermCfg(
-    func=mdp.object_orientation_error,
+    func=mdp.object_position_error,
     params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
   )
   cfg.observations["critic"].terms["object_lin_vel_w"] = ObservationTermCfg(
