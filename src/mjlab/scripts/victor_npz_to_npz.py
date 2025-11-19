@@ -1,4 +1,4 @@
-from pathlib import Path
+import os
 from typing import Any
 
 import mujoco
@@ -122,6 +122,7 @@ class TrajectoryNpzSimLoader:
     device: torch.device | str,
     repeat_last_frame: int = 0,
     repeat_first_frame: int = 0,
+    append_reverse: bool = False,
   ):
     self.input_file = input_file
     self.output_fps = int(output_fps)
@@ -130,11 +131,13 @@ class TrajectoryNpzSimLoader:
     self.current_idx = 0
     self.repeat_last_frame = max(0, int(repeat_last_frame))
     self.repeat_first_frame = max(0, int(repeat_first_frame))
+    self.append_reverse = bool(append_reverse)
 
     self._load()
     self._resample_to_output_fps_using_times()
     self._repeat_first_frame()
     self._repeat_last_frame()
+    self._append_reverse()
     self._compute_velocities_from_resampled()
 
   def _load(self) -> None:
@@ -363,6 +366,31 @@ class TrajectoryNpzSimLoader:
 
     self.output_frames += self.repeat_last_frame
 
+  def _append_reverse(self) -> None:
+    """Append the reversed motion trajectory at the end."""
+    if not self.append_reverse:
+      return
+
+    # Store original frame count before appending
+    original_frames = self.output_frames
+
+    # Reverse all motion data along the time dimension (dim=0)
+    reversed_pos = torch.flip(self.motion_base_poss, dims=[0])
+    reversed_rot = torch.flip(self.motion_base_rots, dims=[0])
+    reversed_dof = torch.flip(self.motion_dof_poss, dims=[0])
+
+    self.motion_base_poss = torch.cat([self.motion_base_poss, reversed_pos], dim=0)
+    self.motion_base_rots = torch.cat([self.motion_base_rots, reversed_rot], dim=0)
+    self.motion_dof_poss = torch.cat([self.motion_dof_poss, reversed_dof], dim=0)
+
+    if self.has_object:
+      reversed_obj_pos = torch.flip(self.object_poss, dims=[0])
+      reversed_obj_rot = torch.flip(self.object_rots, dims=[0])
+      self.object_poss = torch.cat([self.object_poss, reversed_obj_pos], dim=0)
+      self.object_rots = torch.cat([self.object_rots, reversed_obj_rot], dim=0)
+
+    self.output_frames += original_frames
+
   def _compute_velocities_from_resampled(self) -> None:
     # lin vel from pos derivative and ang vel from quaternion finite difference
     self.motion_base_lin_vels = torch.gradient(
@@ -419,6 +447,7 @@ def convert(
   device: str = "cuda:0",
   repeat_last_frame: int = 0,
   repeat_first_frame: int = 0,
+  append_reverse: bool = False,
   contact_method: str = "distance",
   contact_threshold: float = 0.05,
 ):
@@ -437,13 +466,14 @@ def convert(
     device: Device to use for simulation
     repeat_last_frame: Number of times to repeat the last frame
     repeat_first_frame: Number of times to repeat the first frame
+    append_reverse: If True, append the reversed motion trajectory at the end
     contact_method: Method to extract contacts - "mujoco" (preferred, uses physics) or "distance" (uses threshold)
     contact_threshold: Distance threshold in meters for "distance" method (default: 0.05m = 5cm)
   """
   # Construct output path: motions/output/<output_name>/motion.npz
-  output_path = Path(output_dir) / "motions" / "output" / output_name / "motion.npz"
-  output_path.parent.mkdir(parents=True, exist_ok=True)
-  output_file = str(output_path)
+  output_path = f"motions/output/{output_name}/motion.npz"
+  os.makedirs(os.path.dirname(output_path), exist_ok=True)
+  output_file = output_path
 
   sim_cfg = SimulationCfg()
   sim_cfg.mujoco.timestep = 1.0 / float(output_fps)
@@ -459,6 +489,7 @@ def convert(
     device=sim.device,
     repeat_last_frame=repeat_last_frame,
     repeat_first_frame=repeat_first_frame,
+    append_reverse=append_reverse,
   )
 
   robot: Entity = scene["robot"]
@@ -831,6 +862,7 @@ def main(
   output_name: str,
   repeat_last_frame: int = 0,
   repeat_first_frame: int = 0,
+  append_reverse: bool = False,
   output_fps: float = 50.0,
   contact_threshold: float = 0.05,
   contact_method: str = "distance",
@@ -847,6 +879,7 @@ def main(
     device: Device to use for simulation
     repeat_last_frame: Number of times to repeat the last frame
     repeat_first_frame: Number of times to repeat the first frame
+    append_reverse: If True, append the reversed motion trajectory at the end
     contact_method: Method to extract contacts - "mujoco" (preferred) or "distance"
     contact_threshold: Distance threshold in meters for "distance" method
 
@@ -857,6 +890,7 @@ def main(
     --repeat-last-frame 150 --repeat-first-frame 100
     --input-file motions/input/time_x_u_traj_rl_format.npz
     --output-name victor_object_repeated
+    --append-reverse
   """
   convert(
     input_file=input_file,
@@ -866,6 +900,7 @@ def main(
     device=device,
     repeat_last_frame=repeat_last_frame,
     repeat_first_frame=repeat_first_frame,
+    append_reverse=append_reverse,
     contact_method=contact_method,
     contact_threshold=contact_threshold,
   )
