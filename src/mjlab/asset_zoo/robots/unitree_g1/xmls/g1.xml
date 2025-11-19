@@ -46,7 +46,7 @@
     <mesh name="left_wrist_roll_link" file="left_wrist_roll_link.STL"/>
     <mesh name="left_wrist_pitch_link" file="left_wrist_pitch_link.STL"/>
     <mesh name="left_wrist_yaw_link" file="left_wrist_yaw_link.STL"/>
-    <mesh name="left_rubber_hand" file="left_rubber_hand.STL"/>
+    <mesh name="left_rubber_hand" file="left_rubber_hand.STL" scale="0.001 0.001 0.001"/>
     <mesh name="right_shoulder_pitch_link" file="right_shoulder_pitch_link.STL"/>
     <mesh name="right_shoulder_roll_link" file="right_shoulder_roll_link.STL"/>
     <mesh name="right_shoulder_yaw_link" file="right_shoulder_yaw_link.STL"/>
@@ -54,7 +54,7 @@
     <mesh name="right_wrist_roll_link" file="right_wrist_roll_link.STL"/>
     <mesh name="right_wrist_pitch_link" file="right_wrist_pitch_link.STL"/>
     <mesh name="right_wrist_yaw_link" file="right_wrist_yaw_link.STL"/>
-    <mesh name="right_rubber_hand" file="right_rubber_hand.STL"/>
+    <mesh name="right_rubber_hand" file="right_rubber_hand.STL" scale="0.001 0.001 0.001"/>
   </asset>
 
   <worldbody>
@@ -235,14 +235,12 @@
                             mass="0.254576" diaginertia="0.000646113 0.000559993 0.000147566"/>
                           <joint name="left_wrist_yaw_joint" axis="0 0 1" range="-1.61443 1.61443"/>
                           <geom class="visual" mesh="left_wrist_yaw_link"/>
-                          <!-- <geom pos="0.0415 0.003 0" quat="1 0 0 0" class="visual" mesh="left_rubber_hand"
-                            material="black"/>
-                          <site name="left_palm" pos="0.08 0 0" size="0.01"/>
-                          <geom name="left_hand_collision" class="collision" size="0.035" rgba=".2 .6 .2 .2"
-                            fromto="0.07 0 0 0.15 -0.02 0"/> -->
-
-                          <!-- <geom name="left_hand_collision" class="collision" type="cylinder" size="0.028" rgba=".2 .6 .2 .2"
-                            fromto="0 0 0 0.0415 0 0"/> -->
+                          <geom pos="0.1 -0.05 -0.05" quat="0.7071 0 -0.7071 0" class="visual" mesh="left_rubber_hand"/>
+                          <site name="left_palm" pos="0.1 0 0" size="0.01"/>
+                          <geom name="left_hand_collision_1" class="collision" type="cylinder" size="0.048" fromto="0.062 0 0 0.08 0 0"/>
+                          <geom name="left_hand_collision_2" class="collision" type="cylinder" size="0.043" fromto="0.08 0 0 0.09 0 0"/>
+                          <geom name="left_hand_collision_3" class="collision" type="cylinder" size="0.035" fromto="0.09 0 0 0.096 0 0"/>
+                          <geom name="left_hand_collision_4" class="collision" type="cylinder" size="0.025" fromto="0.096 0 0 0.0995 0 0"/>
                         </body>
                       </body>
                     </body>
@@ -290,14 +288,12 @@
                             mass="0.254576" diaginertia="0.000646113 0.000559993 0.000147566"/>
                           <joint name="right_wrist_yaw_joint" axis="0 0 1" range="-1.61443 1.61443"/>
                           <geom class="visual" mesh="right_wrist_yaw_link"/>
-                          <!-- <geom pos="0.0415 -0.003 0" quat="1 0 0 0" class="visual" mesh="right_rubber_hand"
-                            material="black"/>
-                          <site name="right_palm" pos="0.08 0 0" size="0.01"/>
-                          <geom name="right_hand_collision" class="collision" size="0.035" rgba=".2 .6 .2 .2"
-                            fromto="0.07 0 0 0.15 0.02 0"/> -->
-
-                          <!-- <geom name="right_hand_collision" class="collision" type="cylinder" size="0.028" rgba=".2 .6 .2 .2"
-                            fromto="0 0 0 0.0415 0 0"/> -->
+                          <geom pos="0.1 -0.05 -0.05" quat="0.7071 0 -0.7071 0" class="visual" mesh="right_rubber_hand"/>
+                          <site name="right_palm" pos="0.1 0 0" size="0.01"/>
+                          <geom name="right_hand_collision_1" class="collision" type="cylinder" size="0.048" fromto="0.062 0 0 0.08 0 0"/>
+                          <geom name="right_hand_collision_2" class="collision" type="cylinder" size="0.043" fromto="0.08 0 0 0.09 0 0"/>
+                          <geom name="right_hand_collision_3" class="collision" type="cylinder" size="0.035" fromto="0.09 0 0 0.096 0 0"/>
+                          <geom name="right_hand_collision_4" class="collision" type="cylinder" size="0.025" fromto="0.096 0 0 0.0995 0 0"/>
                         </body>
                       </body>
                     </body>
