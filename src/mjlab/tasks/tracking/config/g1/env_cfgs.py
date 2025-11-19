@@ -49,7 +49,7 @@ def unitree_g1_flat_tracking_env_cfg(
   assert cfg.commands is not None
   motion_cmd = cfg.commands["motion"]
   assert isinstance(motion_cmd, MotionCommandCfg)
-  motion_cmd.anchor_body_name = "torso_link"
+  motion_cmd.anchor_body_name = "pelvis"
   motion_cmd.body_names = (
     "pelvis",
     "left_hip_roll_link",
