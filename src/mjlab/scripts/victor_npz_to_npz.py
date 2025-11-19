@@ -10,7 +10,10 @@ from tqdm import tqdm
 from mjlab.entity import Entity
 from mjlab.scene import Scene
 from mjlab.sim.sim import Simulation, SimulationCfg
-from mjlab.tasks.tracking.config.g1.env_cfgs import unitree_g1_flat_tracking_env_cfg_box
+from mjlab.tasks.tracking.config.g1.env_cfgs import (
+  unitree_g1_flat_tracking_env_cfg,
+  unitree_g1_flat_tracking_env_cfg_box,
+)
 from mjlab.third_party.isaaclab.isaaclab.utils.math import (
   axis_angle_from_quat,
   quat_apply,
@@ -448,6 +451,7 @@ def convert(
   repeat_last_frame: int = 0,
   repeat_first_frame: int = 0,
   append_reverse: bool = False,
+  extract_object_states: bool = True,
   contact_method: str = "distance",
   contact_threshold: float = 0.05,
 ):
@@ -467,6 +471,7 @@ def convert(
     repeat_last_frame: Number of times to repeat the last frame
     repeat_first_frame: Number of times to repeat the first frame
     append_reverse: If True, append the reversed motion trajectory at the end
+    extract_object_states: If False, skip extracting object states and contact information
     contact_method: Method to extract contacts - "mujoco" (preferred, uses physics) or "distance" (uses threshold)
     contact_threshold: Distance threshold in meters for "distance" method (default: 0.05m = 5cm)
   """
@@ -477,8 +482,10 @@ def convert(
 
   sim_cfg = SimulationCfg()
   sim_cfg.mujoco.timestep = 1.0 / float(output_fps)
-
-  scene = Scene(unitree_g1_flat_tracking_env_cfg_box().scene, device=device)
+  if extract_object_states:
+    scene = Scene(unitree_g1_flat_tracking_env_cfg_box().scene, device=device)
+  else:
+    scene = Scene(unitree_g1_flat_tracking_env_cfg().scene, device=device)
   model = scene.compile()
   sim = Simulation(num_envs=1, cfg=sim_cfg, model=model, device=device)
   scene.initialize(sim.mj_model, sim.model, sim.data)
@@ -494,8 +501,10 @@ def convert(
 
   robot: Entity = scene["robot"]
   box: Entity | None = scene.entities.get("box") if hasattr(scene, "entities") else None
-  log_object = getattr(motion, "has_object", False) and (
-    box is not None and not box.data.is_fixed_base
+  log_object = (
+    extract_object_states
+    and getattr(motion, "has_object", False)
+    and (box is not None and not box.data.is_fixed_base)
   )
 
   # Extract ALL bodies - mjlab expects complete body data for all robot bodies
@@ -863,6 +872,7 @@ def main(
   repeat_last_frame: int = 0,
   repeat_first_frame: int = 0,
   append_reverse: bool = False,
+  extract_object_states: bool = True,
   output_fps: float = 50.0,
   contact_threshold: float = 0.05,
   contact_method: str = "distance",
@@ -880,6 +890,7 @@ def main(
     repeat_last_frame: Number of times to repeat the last frame
     repeat_first_frame: Number of times to repeat the first frame
     append_reverse: If True, append the reversed motion trajectory at the end
+    extract_object_states: If False, skip extracting object states and contact information
     contact_method: Method to extract contacts - "mujoco" (preferred) or "distance"
     contact_threshold: Distance threshold in meters for "distance" method
 
@@ -901,6 +912,7 @@ def main(
     repeat_last_frame=repeat_last_frame,
     repeat_first_frame=repeat_first_frame,
     append_reverse=append_reverse,
+    extract_object_states=extract_object_states,
     contact_method=contact_method,
     contact_threshold=contact_threshold,
   )
