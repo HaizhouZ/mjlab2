@@ -121,14 +121,16 @@ Train a Unitree G1 to mimic reference motions. mjlab uses
 > **Note**: For detailed motion preprocessing instructions, see the
 > [BeyondMimic documentation](https://github.com/HybridRobotics/whole_body_tracking/blob/main/README.md#motion-preprocessing--registry-setup).
 
+
 #### Train and Play
-
 ```bash
-MUJOCO_GL=egl uv run train Mjlab-Tracking-Flat-Unitree-G1 --registry-name your-org/motions/motion-name --env.scene.num-envs 4096
 
-uv run play Mjlab-Tracking-Flat-Unitree-G1 --wandb-run-path your-org/mjlab/run-id
+MUJOCO_GL=egl CUDA_VISIBLE_DEVICES=0 uv run train.py Mjlab-ObjectMotionTracking-Unitree-G1 \
+  --registry-name ataritum-org/wandb-registry-motions/victor_object_repeated_reverse \
+  --env.scene.num_envs 4096 \
+  --agent.max-iterations 30000 \
+  --device cuda:0
 ```
-
 ---
 
 ### 3. Sanity-check with Dummy Agents
