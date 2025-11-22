@@ -49,7 +49,7 @@ def unitree_g1_flat_tracking_env_cfg(
   assert cfg.commands is not None
   motion_cmd = cfg.commands["motion"]
   assert isinstance(motion_cmd, MotionCommandCfg)
-  motion_cmd.anchor_body_name = "pelvis"
+  motion_cmd.anchor_body_name = "torso_link"
   motion_cmd.body_names = (
     "pelvis",
     "left_hip_roll_link",
@@ -242,16 +242,16 @@ def unitree_g1_flat_tracking_env_cfg_box(
     },
   )
 
-  cfg.events["object_mass"] = EventTermCfg(
-    func=mdp.randomize_field,
-    mode="startup",
-    params={
-      "asset_cfg": SceneEntityCfg("box"),
-      "operation": "scale",
-      "field": "body_mass",
-      "ranges": (0.6, 1.5),
-    },
-  )
+  # cfg.events["object_mass"] = EventTermCfg(
+  #   func=mdp.randomize_field,
+  #   mode="startup",
+  #   params={
+  #     "asset_cfg": SceneEntityCfg("box"),
+  #     "operation": "scale",
+  #     "field": "body_mass",
+  #     "ranges": (0.6, 1.5),
+  #   },
+  # )
 
   cfg.events["hand_friction"] = EventTermCfg(
     func=mdp.randomize_field,
@@ -313,7 +313,8 @@ def unitree_g1_flat_tracking_env_cfg_box(
     cfg.episode_length_s = int(1e9)
 
     cfg.observations["policy"].enable_corruption = False
-    # cfg.events.pop("push_robot", None)
+    cfg.events.pop("push_robot", None)
+    cfg.events.pop("push_object", None)
 
     # # Disable RSI randomization.
     # motion_cmd.pose_range = {}
