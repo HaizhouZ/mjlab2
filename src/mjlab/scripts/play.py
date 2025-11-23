@@ -24,7 +24,7 @@ from mjlab.tasks.tracking.rl.exporter import (
 from mjlab.tasks.velocity.rl.exporter import (
   attach_onnx_metadata as attach_velocity_onnx_metadata,
 )
-from mjlab.third_party.isaaclab.isaaclab_rl.rsl_rl.exporter import export_policy_as_onnx
+from mjlab.utils.lab_api.rl.exporter import export_policy_as_onnx
 from mjlab.utils.os import get_wandb_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
 from mjlab.utils.wrappers import VideoRecorder
