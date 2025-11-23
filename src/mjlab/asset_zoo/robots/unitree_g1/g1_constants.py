@@ -234,6 +234,10 @@ KNEES_BENT_KEYFRAME = EntityCfg.InitialStateCfg(
     "left_shoulder_pitch_joint": 0.2,
     "right_shoulder_roll_joint": -0.2,
     "right_shoulder_pitch_joint": 0.2,
+    ".*_wrist_roll_joint": 0.0,
+    ".*_wrist_pitch_joint": 0.0,
+    "left_wrist_yaw_joint": -1.61 * 0.89,
+    "right_wrist_yaw_joint": 1.61 * 0.89,
   },
   joint_vel={".*": 0.0},
 )
