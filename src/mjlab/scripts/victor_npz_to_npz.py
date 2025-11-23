@@ -531,17 +531,18 @@ def convert(
   # The body_names in the config are used for tracking/observation, but motion files need all bodies
   print(f"Robot has {len(robot.body_names)} bodies: {robot.body_names}")
 
-  # End effector names for contact detection
-  eef_names = ["left_wrist_yaw_link", "right_wrist_yaw_link"]
+  # End effector site names for contact detection
+  eef_names = ["left_palm", "right_palm"]
 
-  # Get end effector body indices in robot.body_names
-  eef_indices = []
-  for eef_name in eef_names:
-    if eef_name in robot.body_names:
-      eef_indices.append(robot.body_names.index(eef_name))
-    else:
-      print(f"Warning: End effector '{eef_name}' not found in robot body names")
-      eef_indices.append(-1)
+  # Get end effector site indices in robot.site_names
+  eef_indices, eef_names_found = robot.find_sites(eef_names, preserve_order=True)
+  for i, eef_name in enumerate(eef_names):
+    if i >= len(eef_indices) or eef_indices[i] < 0:
+      print(f"Warning: End effector site '{eef_name}' not found in robot site names")
+      if i >= len(eef_indices):
+        eef_indices.append(-1)
+      else:
+        eef_indices[i] = -1
 
   # Store object size for distance method (will be set during first frame if using distance method)
   object_size_global = None
@@ -695,10 +696,11 @@ def convert(
       log["object_ang_vel_w"].append(obj_ang_vel)
 
       # Use distance threshold method (simpler fallback)
-      # Get end effector positions from body_pos_w
+      # Get end effector positions from site_pos_w
+      site_pos_w = robot.data.site_pos_w[0, :].cpu().numpy().copy()
       eef_positions = np.array(
         [
-          body_pos_w[idx] if idx >= 0 else np.array([np.nan, np.nan, np.nan])
+          site_pos_w[idx] if idx >= 0 else np.array([np.nan, np.nan, np.nan])
           for idx in eef_indices
         ]
       )
@@ -812,20 +814,10 @@ def convert(
       # Print diagnostic info for distance method if no contacts found
       if contact_method == "distance" and log["contact_indicators"].sum() == 0:
         print("\n⚠️  Diagnostic information (no contacts detected):")
-        # Sample a few frames to check distances
-        sample_frames = min(10, num_frames)
-        if sample_frames > 0 and "body_pos_w" in log and "object_pos_w" in log:
-          print(f"  Sample frame analysis (first {sample_frames} frames):")
-          for frame_idx in range(sample_frames):
-            for i, eef_name in enumerate(eef_names):
-              if i < len(eef_indices) and eef_indices[i] >= 0:
-                try:
-                  eef_pos = log["body_pos_w"][frame_idx, eef_indices[i]]
-                  obj_pos = log["object_pos_w"][frame_idx]
-                  dist = np.linalg.norm(eef_pos - obj_pos)
-                  print(f"    Frame {frame_idx}, {eef_name}: distance = {dist:.4f}m")
-                except (IndexError, KeyError):
-                  pass
+        print(
+          "  Note: End effector positions are extracted from palm sites, not body positions."
+        )
+        print("  Check that palm sites are correctly positioned in the robot model.")
 
       print("\nPer-end-effector contact statistics:")
       for i, eef_name in enumerate(eef_names):
