@@ -320,6 +320,12 @@ def get_box_cfg() -> EntityCfg:
   )
 
 
+CONSTANT_ACTION_SCALE = 0.0
+CONST_JOINT_NAMES = [
+  ".*_wrist_pitch_joint",
+  ".*_wrist_yaw_joint",
+  ".*_wrist_roll_joint",
+]
 G1_ACTION_SCALE: dict[str, float] = {}
 for a in G1_ARTICULATION.actuators:
   assert isinstance(a, BuiltinPositionActuatorCfg)
@@ -328,7 +334,10 @@ for a in G1_ARTICULATION.actuators:
   names = a.joint_names_expr
   assert e is not None
   for n in names:
-    G1_ACTION_SCALE[n] = 0.25 * e / s
+    if n in CONST_JOINT_NAMES:
+      G1_ACTION_SCALE[n] = CONSTANT_ACTION_SCALE
+    else:
+      G1_ACTION_SCALE[n] = 0.25 * e / s
 
 
 if __name__ == "__main__":
