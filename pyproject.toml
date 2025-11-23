@@ -6,7 +6,7 @@ build-backend = "uv_build"
 name = "mjlab"
 version = "0.1.0"
 license = "Apache-2.0"
-license-files = ["LICENSE", "src/mjlab/third_party/isaaclab/LICENSE"]
+license-files = ["LICENSE"]
 readme = { file = "README.md", content-type = "text/markdown" }
 authors = [
     {name = "The MjLab Developers"},
@@ -33,13 +33,14 @@ requires-python = ">=3.10,<3.14"
 dependencies = [
     "prettytable",
     "tqdm",
-    "tyro>=0.10.0a5",
+    "tyro>=0.10.0a6",
     "torch>=2.7.0",
+    "torchrunx>=0.3.4",
     "warp-lang",
     "mujoco-warp",
     "mujoco<=3.3.8",
     "trimesh>=4.8.3",
-    "viser>=1.0.15",
+    "viser>=1.0.16",
     "moviepy",
     "tensordict",
     "rsl-rl-lib",
@@ -111,7 +112,7 @@ torch = { index = "pytorch-cu128", extra = "cu128", marker = "sys_platform != 'd
 src = ["src"]  # Helpful for recognizing first-party imports.
 indent-width = 2
 exclude = [
-  "src/mjlab/third_party",
+  "src/mjlab/utils/lab_api",
   "typings",
 ]
 
@@ -121,7 +122,7 @@ ignore = ["B011"]
 
 [tool.pyright]
 pythonVersion = "3.10"
-ignore = ["./typings", "./src/mjlab/third_party"]
+ignore = ["./typings", "./src/mjlab/utils/lab_api"]
 stubPath = "typings"
 
 [tool.ty.environment]
@@ -129,7 +130,7 @@ extra-paths = ["typings"]
 
 [tool.ty.src]
 include = ["src", "tests"]
-exclude = ["src/mjlab/third_party", "typings"]
+exclude = ["src/mjlab/utils/lab_api", "typings"]
 
 [tool.pytest.ini_options]
 markers = [

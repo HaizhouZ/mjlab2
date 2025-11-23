@@ -7,7 +7,7 @@ import torch
 from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactData, ContactSensor
-from mjlab.third_party.isaaclab.isaaclab.utils.math import quat_error_magnitude
+from mjlab.utils.lab_api.math import quat_error_magnitude
 
 from .commands import MotionCommand
 

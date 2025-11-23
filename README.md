@@ -6,7 +6,10 @@
   <img alt="tests" src="https://github.com/mujocolab/mjlab/actions/workflows/ci.yml/badge.svg" />
 </p>
 
-mjlab combines [Isaac Lab](https://github.com/isaac-sim/IsaacLab)'s proven API with best-in-class [MuJoCo](https://github.com/google-deepmind/mujoco_warp) physics to provide lightweight, modular abstractions for RL robotics research and sim-to-real deployment.
+mjlab combines [Isaac Lab](https://github.com/isaac-sim/IsaacLab)'s proven API
+with best-in-class [MuJoCo](https://github.com/google-deepmind/mujoco_warp)
+physics to provide lightweight, modular abstractions for RL robotics research
+and sim-to-real deployment.
 
 > ⚠️ **BETA PREVIEW** mjlab is in active development. Expect **breaking
 > changes** and **missing features** during the beta phase. There is **no stable
@@ -72,18 +75,15 @@ For full setup instructions, see the [Installation Guide](docs/installation_guid
 Train a Unitree G1 humanoid to follow velocity commands on flat terrain:
 
 ```bash
-MUJOCO_GL=egl uv run train Mjlab-Velocity-Flat-Unitree-G1 --env.scene.num-envs 4096
+uv run train Mjlab-Velocity-Flat-Unitree-G1 --env.scene.num-envs 4096
 ```
 
-**Multi-GPU Training:** Scale to N GPUs using `torchrun`:
+**Multi-GPU Training:** Scale to multiple GPUs using `--gpu-ids`:
 
 ```bash
-MUJOCO_GL=egl uv run torchrun \
-  --nproc_per_node=N \
-  --no_python \
-  train Mjlab-Velocity-Flat-Unitree-G1 \
-    --distributed True \
-    --env.scene.num-envs 4096
+uv run train Mjlab-Velocity-Flat-Unitree-G1 \
+  --gpu-ids 0 1 \
+  --env.scene.num-envs 4096
 ```
 
 See the [Distributed Training guide](docs/api/distributed_training.md) for details.
@@ -124,9 +124,10 @@ Train a Unitree G1 to mimic reference motions. mjlab uses
 
 #### Train and Play
 ```bash
+uv run train Mjlab-Tracking-Flat-Unitree-G1 --registry-name your-org/motions/motion-name --env.scene.num-envs 4096
 
-MUJOCO_GL=egl CUDA_VISIBLE_DEVICES=0 uv run train.py Mjlab-ObjectMotionTracking-Unitree-G1 \
-  --registry-name ataritum-org/wandb-registry-motions/victor_object_repeated_reverse \
+uv run train Mjlab-ObjectMotionTracking-Unitree-G1 \
+  --registry-name ataritum-org/wandb-registry-motions/victor_object_repeated \
   --env.scene.num_envs 4096 \
   --agent.max-iterations 30000 \
   --device cuda:0
@@ -180,15 +181,15 @@ mjlab is licensed under the [Apache License, Version 2.0](LICENSE).
 
 ### Third-Party Code
 
-The `third_party/` directory contains files from external projects, each with
-its own license:
+Some portions of mjlab are forked from external projects:
 
-- **isaaclab/** — [NVIDIA Isaac Lab](https://github.com/isaac-sim/IsaacLab)
-  ([BSD-3-Clause](src/mjlab/third_party/isaaclab/LICENSE))
+- **`src/mjlab/utils/lab_api/`** — Utilities forked from [NVIDIA Isaac
+  Lab](https://github.com/isaac-sim/IsaacLab) (BSD-3-Clause license, see file
+  headers)
+- **`src/mjlab/asset_zoo/robots/unitree_go1/assets/walk_these_ways/`** — Actuator network from [walk-these-ways](https://github.com/Improbable-AI/walk-these-ways) (MIT license, see asset README)
 
-When distributing or modifying mjlab, comply with:
-1. The Apache-2.0 license for mjlab’s original code
-2. The respective licenses in `third_party/`
+Forked components retain their original licenses (BSD-3-Clause for lab_api, MIT
+for walk-these-ways). See file headers and asset READMEs for details.
 
 ---
 
