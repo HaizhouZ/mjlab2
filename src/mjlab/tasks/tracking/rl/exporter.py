@@ -4,6 +4,10 @@ from typing import cast
 import torch
 
 from mjlab.envs import ManagerBasedRlEnv
+from mjlab.envs.mdp.actions import (
+  JointPositionActionCfg,
+  MotionTrackingJointPositionActionCfg,
+)
 from mjlab.rl.exporter_utils import (
   attach_metadata_to_onnx,
   get_base_metadata,
@@ -168,5 +172,17 @@ def attach_onnx_metadata(
       "body_names": list(motion_term_cfg.body_names),
     }
   )
+
+  # Determine use_motion_offset based on action configuration
+  joint_pos_action = env.cfg.actions.get("joint_pos")
+  if isinstance(joint_pos_action, MotionTrackingJointPositionActionCfg):
+    use_motion_offset = True
+  elif isinstance(joint_pos_action, JointPositionActionCfg):
+    use_motion_offset = False
+  else:
+    # Default to False if action type is unknown
+    use_motion_offset = False
+
+  metadata["use_motion_offset"] = use_motion_offset
 
   attach_metadata_to_onnx(onnx_path, metadata)
