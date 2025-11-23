@@ -44,10 +44,22 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
     if self.has_object_data:
       self.object_pos_w = cmd.motion.object_pos_w.to("cpu")
       self.object_quat_w = cmd.motion.object_quat_w.to("cpu")
-      self.object_lin_vel_w = cmd.motion.object_lin_vel_w.to("cpu")
-      self.object_ang_vel_w = cmd.motion.object_ang_vel_w.to("cpu")
-      self.contact_indicators = cmd.motion.object_contact.to("cpu")
-      self.contact_positions = cmd.motion.contact_positions.to("cpu")
+      object_lin_vel_w = cmd.motion.object_lin_vel_w
+      self.object_lin_vel_w = (
+        object_lin_vel_w.to("cpu") if object_lin_vel_w is not None else None
+      )
+      object_ang_vel_w = cmd.motion.object_ang_vel_w
+      self.object_ang_vel_w = (
+        object_ang_vel_w.to("cpu") if object_ang_vel_w is not None else None
+      )
+      object_contact = cmd.motion.object_contact
+      self.contact_indicators = (
+        object_contact.to("cpu") if object_contact is not None else None
+      )
+      contact_positions = cmd.motion.contact_positions
+      self.contact_positions = (
+        contact_positions.to("cpu") if contact_positions is not None else None
+      )
 
     self.time_step_total: int = self.joint_pos.shape[0]
 
@@ -67,14 +79,23 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
 
     # Only include object outputs if object data exists
     if self.has_object_data:
-      return outputs + (
+      object_outputs = (
         self.object_pos_w[time_step_clamped],
         self.object_quat_w[time_step_clamped],
-        self.object_lin_vel_w[time_step_clamped],
-        self.object_ang_vel_w[time_step_clamped],
-        self.contact_indicators[time_step_clamped],
-        self.contact_positions[time_step_clamped],
+        self.object_lin_vel_w[time_step_clamped]
+        if self.object_lin_vel_w is not None
+        else torch.zeros(len(time_step_clamped), 3),
+        self.object_ang_vel_w[time_step_clamped]
+        if self.object_ang_vel_w is not None
+        else torch.zeros(len(time_step_clamped), 3),
+        self.contact_indicators[time_step_clamped]
+        if self.contact_indicators is not None
+        else torch.zeros(len(time_step_clamped), dtype=torch.bool),
+        self.contact_positions[time_step_clamped]
+        if self.contact_positions is not None
+        else torch.zeros(len(time_step_clamped), 2, 3),
       )
+      return outputs + object_outputs
     else:
       return outputs
 

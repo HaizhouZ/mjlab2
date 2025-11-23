@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import mujoco
+import numpy as np
 
 from mjlab import MJLAB_SRC_PATH
 from mjlab.actuator import BuiltinPositionActuatorCfg
@@ -40,7 +41,7 @@ def get_spec_box() -> mujoco.MjSpec:
   spec = mujoco.MjSpec()
   world = spec.worldbody
   body = world.add_body(name="largebox_link")
-  body.pos = (0.35, 0.0, 0.115)
+  body.pos = np.array([0.35, 0.0, 0.115], dtype=np.float64)
   body.add_freejoint(name="largebox_freejoint")
   geom = body.add_geom(
     name="largebox_geom",
@@ -50,7 +51,7 @@ def get_spec_box() -> mujoco.MjSpec:
     mass=0.6,
   )
   # Slightly translucent color similar to user's cube
-  geom.rgba = (0.2, 0.6, 0.8, 1.0)
+  geom.rgba = np.array([0.2, 0.6, 0.8, 1.0], dtype=np.float32)
   return spec
 
 

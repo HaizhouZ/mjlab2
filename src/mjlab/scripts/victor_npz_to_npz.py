@@ -140,8 +140,9 @@ class TrajectoryNpzSimLoader:
     self._resample_to_output_fps_using_times()
     self._repeat_first_frame()
     self._repeat_last_frame()
-    self._append_reverse()
+    # Compute velocities before appending reverse so we can properly reverse and negate them
     self._compute_velocities_from_resampled()
+    self._append_reverse()
 
   def _load(self) -> None:
     data = np.load(self.input_file, allow_pickle=True)
@@ -370,10 +371,15 @@ class TrajectoryNpzSimLoader:
     self.output_frames += self.repeat_last_frame
 
   def _append_reverse(self) -> None:
-    """Append the reversed motion trajectory at the end."""
+    """Append the reversed motion trajectory at the end.
+
+    Reverses positions, rotations, and velocities. Velocities are negated
+    because the motion is going backwards. The last frame of the original
+    trajectory becomes the first frame of the reversed trajectory (duplicate),
+    which creates a smooth transition.
+    """
     if not self.append_reverse:
       return
-
     # Store original frame count before appending
     original_frames = self.output_frames
 
@@ -382,9 +388,23 @@ class TrajectoryNpzSimLoader:
     reversed_rot = torch.flip(self.motion_base_rots, dims=[0])
     reversed_dof = torch.flip(self.motion_dof_poss, dims=[0])
 
+    # Reverse and negate velocities (velocities should point in opposite direction)
+    reversed_lin_vel = -torch.flip(self.motion_base_lin_vels, dims=[0])
+    reversed_ang_vel = -torch.flip(self.motion_base_ang_vels, dims=[0])
+    reversed_dof_vel = -torch.flip(self.motion_dof_vels, dims=[0])
+
     self.motion_base_poss = torch.cat([self.motion_base_poss, reversed_pos], dim=0)
     self.motion_base_rots = torch.cat([self.motion_base_rots, reversed_rot], dim=0)
     self.motion_dof_poss = torch.cat([self.motion_dof_poss, reversed_dof], dim=0)
+
+    # Append reversed and negated velocities
+    self.motion_base_lin_vels = torch.cat(
+      [self.motion_base_lin_vels, reversed_lin_vel], dim=0
+    )
+    self.motion_base_ang_vels = torch.cat(
+      [self.motion_base_ang_vels, reversed_ang_vel], dim=0
+    )
+    self.motion_dof_vels = torch.cat([self.motion_dof_vels, reversed_dof_vel], dim=0)
 
     if self.has_object:
       reversed_obj_pos = torch.flip(self.object_poss, dims=[0])
@@ -621,11 +641,22 @@ def convert(
       obj_pos_slice[:, :2] += scene.env_origins[:, :2]
 
       obj_pose = torch.cat([obj_pos_slice, curr_obj_rot_motion], dim=-1)
+      assert (
+        box is not None
+      )  # Type narrowing: box is guaranteed to be not None when log_object is True
       box.write_root_link_pose_to_sim(obj_pose)
 
       # Store current position for next iteration
       prev_obj_pos_motion = curr_obj_pos_motion[0].clone()
       prev_obj_rot_motion = curr_obj_rot_motion[0].clone()
+
+      # Initialize velocities for this frame (always defined in both branches above)
+      obj_lin_vel_motion_frame = obj_lin_vel_motion
+      obj_ang_vel_motion_frame = obj_ang_vel_motion
+    else:
+      # Initialize dummy values when log_object is False (shouldn't be used)
+      obj_lin_vel_motion_frame = torch.zeros(3, device=device, dtype=torch.float32)
+      obj_ang_vel_motion_frame = torch.zeros(3, device=device, dtype=torch.float32)
 
     sim.forward()
     scene.update(sim.mj_model.opt.timestep)
@@ -647,6 +678,9 @@ def convert(
 
     if log_object:
       # Get object position from simulation (after setting pose and forward step)
+      assert (
+        box is not None
+      )  # Type narrowing: box is guaranteed to be not None when log_object is True
       curr_obj_pos = box.data.body_link_pos_w[0, 0].cpu().numpy().copy()
       curr_obj_rot = box.data.body_link_quat_w[0, 0].cpu().numpy().copy()
 
@@ -654,8 +688,8 @@ def convert(
       log["object_quat_w"].append(curr_obj_rot)
 
       # Use velocities computed from motion data (computed earlier in the loop)
-      obj_lin_vel = obj_lin_vel_motion.cpu().numpy()
-      obj_ang_vel = obj_ang_vel_motion.cpu().numpy()
+      obj_lin_vel = obj_lin_vel_motion_frame.cpu().numpy()
+      obj_ang_vel = obj_ang_vel_motion_frame.cpu().numpy()
 
       log["object_lin_vel_w"].append(obj_lin_vel)
       log["object_ang_vel_w"].append(obj_ang_vel)
@@ -676,16 +710,15 @@ def convert(
         object_body_names = ["largebox_link", "box", "object"]
         object_body_id = -1
         for body_name in object_body_names:
-          object_body_id = mujoco.mj_name2id(
-            sim.mj_model, mujoco.mjtObj.mjOBJ_BODY, body_name
-          )
-          if object_body_id >= 0:
+          body_id = mujoco.mj_name2id(sim.mj_model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+          if body_id >= 0:
+            object_body_id = int(body_id)
             break
 
         if object_body_id >= 0:
           # Find geoms belonging to this body
           for geom_id in range(sim.mj_model.ngeom):
-            if sim.mj_model.geom_bodyid[geom_id] == object_body_id:
+            if int(sim.mj_model.geom_bodyid[geom_id]) == object_body_id:
               # Check if it's a box geometry
               if sim.mj_model.geom_type[geom_id] == mujoco.mjtGeom.mjGEOM_BOX:
                 object_size = sim.mj_model.geom_size[geom_id].copy()  # Half-extents
@@ -697,9 +730,10 @@ def convert(
           try:
             geom_ids = box.indexing.geom_ids
             if len(geom_ids) > 0:
-              geom_id = (
+              geom_id_val = (
                 geom_ids[0].item() if hasattr(geom_ids[0], "item") else int(geom_ids[0])
               )
+              geom_id = int(geom_id_val)  # Ensure it's an int for indexing
               if sim.mj_model.geom_type[geom_id] == mujoco.mjtGeom.mjGEOM_BOX:
                 object_size = sim.mj_model.geom_size[geom_id].copy()
           except Exception:

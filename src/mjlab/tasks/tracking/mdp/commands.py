@@ -374,7 +374,7 @@ class MotionCommand(CommandTerm):
     return self.motion.object_quat_w[self.time_steps]
 
   @property
-  def object_lin_vel_w(self) -> torch.Tensor:
+  def object_lin_vel_w(self) -> torch.Tensor | None:
     return (
       self.motion.object_lin_vel_w[self.time_steps]
       if self.motion.object_lin_vel_w is not None
@@ -382,7 +382,7 @@ class MotionCommand(CommandTerm):
     )
 
   @property
-  def object_ang_vel_w(self) -> torch.Tensor:
+  def object_ang_vel_w(self) -> torch.Tensor | None:
     return (
       self.motion.object_ang_vel_w[self.time_steps]
       if self.motion.object_ang_vel_w is not None
@@ -596,8 +596,16 @@ class MotionCommand(CommandTerm):
       # Pose from motion object state (already includes per-env origin offset via object_pos_w)
       box_pos = self.object_pos_w[env_ids]
       box_quat = self.object_quat_w[env_ids]
-      box_lin_vel = self.object_lin_vel_w[env_ids]
-      box_ang_vel = self.object_ang_vel_w[env_ids]
+      box_lin_vel = (
+        self.object_lin_vel_w[env_ids]
+        if self.object_lin_vel_w is not None
+        else torch.zeros(len(env_ids), 3, device=self.device)
+      )
+      box_ang_vel = (
+        self.object_ang_vel_w[env_ids]
+        if self.object_ang_vel_w is not None
+        else torch.zeros(len(env_ids), 3, device=self.device)
+      )
 
       box_state = torch.cat(
         [

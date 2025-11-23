@@ -193,8 +193,9 @@ def visualize_contacts(
 
   # Add contact visualization sites to the scene spec before compilation
   contact_site_ids = []
-  if show_contact_markers and has_contacts:
-    num_eefs = contact_indicators.shape[1] if has_contacts else 0
+  num_eefs = 0
+  if show_contact_markers and has_contacts and contact_indicators is not None:
+    num_eefs = contact_indicators.shape[1]
     print(f"Adding {num_eefs} contact visualization sites...")
     for eef_idx in range(num_eefs):
       eef_name = eef_names[eef_idx] if eef_idx < len(eef_names) else f"eef_{eef_idx}"
@@ -336,7 +337,12 @@ def visualize_contacts(
       mujoco.mj_forward(mj_model, mj_data)
 
       # Update contact visualization sites
-      if show_contact_markers and has_contacts:
+      if (
+        show_contact_markers
+        and has_contacts
+        and contact_indicators is not None
+        and contact_positions is not None
+      ):
         for eef_idx in range(num_eefs):
           if eef_idx < len(contact_site_indices) and contact_site_indices[eef_idx] >= 0:
             site_id = contact_site_indices[eef_idx]
@@ -357,7 +363,11 @@ def visualize_contacts(
               mj_model.site_rgba[site_id, 3] = 0.0  # Make transparent
 
         # Print contact info periodically (every 50 frames to avoid spam)
-        if frame_idx % 50 == 0:
+        if (
+          frame_idx % 50 == 0
+          and contact_indicators is not None
+          and contact_positions is not None
+        ):
           contact_info = []
           for eef_idx in range(num_eefs):
             if contact_indicators[frame_idx, eef_idx]:
