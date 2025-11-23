@@ -140,7 +140,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="box"),
     fields=("found", "force", "pos"),
     reduce="netforce",
-    num_slots=5,
+    num_slots=3,
   )
 
   right_eef_contact_sensor = ContactSensorCfg(
@@ -149,7 +149,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="box"),
     fields=("found", "force", "pos"),
     reduce="netforce",
-    num_slots=5,
+    num_slots=3,
   )
 
   cfg.scene.sensors = (
