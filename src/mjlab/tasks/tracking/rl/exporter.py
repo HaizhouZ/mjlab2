@@ -166,12 +166,6 @@ def attach_onnx_metadata(
   motion_term = env.command_manager.get_term("motion")
   assert isinstance(motion_term, MotionCommand)
   motion_term_cfg = motion_term.cfg
-  metadata.update(
-    {
-      "anchor_body_name": motion_term_cfg.anchor_body_name,
-      "body_names": list(motion_term_cfg.body_names),
-    }
-  )
 
   # Determine use_motion_offset based on action configuration
   joint_pos_action = env.cfg.actions.get("joint_pos")
@@ -183,6 +177,11 @@ def attach_onnx_metadata(
     # Default to False if action type is unknown
     use_motion_offset = False
 
-  metadata["use_motion_offset"] = use_motion_offset
-
+  metadata.update(
+    {
+      "anchor_body_name": motion_term_cfg.anchor_body_name,
+      "body_names": list(motion_term_cfg.body_names),
+      "use_motion_offset": use_motion_offset,
+    }
+  )
   attach_metadata_to_onnx(onnx_path, metadata)
