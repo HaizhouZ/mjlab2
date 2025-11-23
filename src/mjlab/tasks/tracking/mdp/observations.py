@@ -6,7 +6,7 @@ import torch
 
 from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
-from mjlab.third_party.isaaclab.isaaclab.utils.math import (
+from mjlab.utils.lab_api.math import (
   matrix_from_quat,
   subtract_frame_transforms,
 )
@@ -131,6 +131,20 @@ def object_orientation_error(
     command.object_quat_w,
     box.data.body_link_pos_w[:, 0],
     box.data.body_link_quat_w[:, 0],
+  )
+  mat = matrix_from_quat(ori)
+  # breakpoint()
+  return mat[..., :2].reshape(mat.shape[0], -1)
+
+
+def object_ori_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
+  command = cast(MotionCommand, env.command_manager.get_term(command_name))
+
+  _, ori = subtract_frame_transforms(
+    command.robot_anchor_pos_w,
+    command.robot_anchor_quat_w,
+    command.object_pos_w,
+    command.object_quat_w,
   )
   mat = matrix_from_quat(ori)
   # breakpoint()

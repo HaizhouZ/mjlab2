@@ -20,6 +20,7 @@ from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
 from mjlab.tasks.tracking.mdp import MotionCommandCfg
 from mjlab.tasks.tracking.tracking_env_cfg import make_tracking_env_cfg
+from mjlab.utils.noise import UniformNoiseCfg as Unoise
 
 _MAX_ANG_VEL = 500 * math.pi / 180.0  # [rad/s]
 
@@ -139,7 +140,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="box"),
     fields=("found", "force", "pos"),
     reduce="netforce",
-    num_slots=3,
+    num_slots=5,
   )
 
   right_eef_contact_sensor = ContactSensorCfg(
@@ -148,7 +149,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="box"),
     fields=("found", "force", "pos"),
     reduce="netforce",
-    num_slots=3,
+    num_slots=5,
   )
 
   cfg.scene.sensors = (
@@ -182,7 +183,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   ###
   cfg.rewards["contact_match"] = RewardTermCfg(
     func=mdp.eef_contact_indicator_match,
-    weight=1.2,
+    weight=1.25,
     params={
       "command_name": "motion",
       "eef_body_names": motion_cmd.eef_body_names,
@@ -275,6 +276,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   )
   cfg.observations["policy"].terms["object_global_ori"] = ObservationTermCfg(
     func=mdp.object_position_error,
+    noise=Unoise(n_min=-0.05, n_max=0.05),
     params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
   )
 
@@ -282,17 +284,30 @@ def unitree_g1_flat_tracking_env_cfg_box(
   # Critic Object Tracking Observation Terms
   ###
   cfg.observations["critic"].terms["object_global_pos"] = ObservationTermCfg(
-    func=mdp.object_pos_b, params={"command_name": "motion"}
+    func=mdp.object_pos_b, history_length=10, params={"command_name": "motion"}
   )
   cfg.observations["critic"].terms["object_global_ori"] = ObservationTermCfg(
-    func=mdp.object_position_error,
-    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
+    func=mdp.object_ori_b, history_length=10, params={"command_name": "motion"}
   )
   cfg.observations["critic"].terms["object_lin_vel_w"] = ObservationTermCfg(
-    func=mdp.object_lin_vel_w, params={"asset_cfg": SceneEntityCfg("box")}
+    func=mdp.object_lin_vel_w,
+    history_length=10,
+    params={"asset_cfg": SceneEntityCfg("box")},
   )
   cfg.observations["critic"].terms["object_ang_vel_w"] = ObservationTermCfg(
-    func=mdp.object_ang_vel_w, params={"asset_cfg": SceneEntityCfg("box")}
+    func=mdp.object_ang_vel_w,
+    history_length=10,
+    params={"asset_cfg": SceneEntityCfg("box")},
+  )
+  cfg.observations["critic"].terms["object_pos_error"] = ObservationTermCfg(
+    func=mdp.object_position_error,
+    history_length=10,
+    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
+  )
+  cfg.observations["critic"].terms["object_ori_error"] = ObservationTermCfg(
+    func=mdp.object_orientation_error,
+    history_length=10,
+    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
   )
 
   # Modify observations if we don't have state estimation.
