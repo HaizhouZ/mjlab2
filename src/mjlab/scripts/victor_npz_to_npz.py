@@ -144,119 +144,141 @@ class TrajectoryNpzSimLoader:
     self._compute_velocities_from_resampled()
     self._append_reverse()
 
-  def _load(self) -> None:
-    data = np.load(self.input_file, allow_pickle=True)
+  def _load_ilyass_pickle(self, file_path: str):
+    """Load Ilyass-format pickle containing:
+       fps, root_pos, root_rot(xyzw), dof_pos, object_pos, object_rot(xyzw)
+    """
 
-    # Check if this is Victor format or standard format
+    import pickle
+
+    with open(file_path, "rb") as f:
+        data = pickle.load(f)
+
+    required_keys = [
+        "fps",
+        "root_pos",
+        "root_rot",
+        "dof_pos",
+        "object_pos",
+        "object_rot",
+    ]
+    for k in required_keys:
+        if k not in data:
+            raise ValueError(f"Missing key '{k}' in Ilyass pickle")
+
+    # Extract
+    root_pos = np.asarray(data["root_pos"], dtype=np.float32)  # (T, 3)
+    root_rot_xyzw = np.asarray(data["root_rot"], dtype=np.float32)  # (T, 4)
+    dof_pos = np.asarray(data["dof_pos"], dtype=np.float32)  # (T, 29)
+    obj_pos = np.asarray(data["object_pos"], dtype=np.float32)  # (T, 3)
+    obj_rot_xyzw = np.asarray(data["object_rot"], dtype=np.float32)  # (T, 4)
+    fps = int(data["fps"])
+
+    T = root_pos.shape[0]
+
+    # Build artificial time array
+    times_np = np.arange(T, dtype=np.float32) * (1.0 / fps)
+
+    # Convert xyzw → wxyz
+    root_rot_wxyz = root_rot_xyzw[:, [3, 0, 1, 2]]
+    obj_rot_wxyz = obj_rot_xyzw[:, [3, 0, 1, 2]]
+
+    # Store internally in the same format as the Standard NPZ loader
+    self.input_times_np = times_np
+    self.input_times = torch.from_numpy(times_np).to(self.device)
+    self.input_frames = T
+
+    self.motion_base_poss_input = torch.from_numpy(root_pos).to(self.device)
+    self.motion_base_rots_input = _normalize_quat(
+        torch.from_numpy(root_rot_wxyz).to(self.device)
+    )
+    self.motion_dof_poss_input = torch.from_numpy(dof_pos).to(self.device)
+
+    # Object is always present in this format
+    self.has_object = True
+    self.object_pos_input = torch.from_numpy(obj_pos).to(self.device)
+    self.object_rots_input = _normalize_quat(
+        torch.from_numpy(obj_rot_wxyz).to(self.device)
+    )
+
+    # Timing info
+    self.duration = float(times_np[-1] - times_np[0]) if T > 1 else 0.0
+    self.input_dt = float(self.duration / max(1, T - 1)) if T > 1 else 1.0 / fps
+    self.input_fps = fps
+
+
+  def _load(self) -> None:
+    """Unified loader for Victor NPZ, Standard NPZ, and Ilyass PKL formats."""
+
+    # Automatically detect pickle format
+    if self.input_file.endswith(".pkl"):
+        print("[Loader] Detected Ilyass pickle format.")
+        return self._load_ilyass_pickle(self.input_file)
+
+    # Otherwise load NPZ
+    data = np.load(self.input_file, allow_pickle=True)
+    print("[Loader] Detected NPZ format.")
+
+    # Victor format
     is_victor_format = "base_xyz_quat" in data and "actuator_pos" in data
 
     if is_victor_format:
-      # Victor format: separate arrays for base and actuator data
-      assert "time" in data, f"Key 'time' not found in {self.input_file}"
-      times_np = data["time"].astype(np.float32)
+        print("[Loader] Using Victor format loader.")
+        times_np = data["time"].astype(np.float32)
 
-      # Load base pose (xyz + quat)
-      base_xyz_quat = data["base_xyz_quat"].astype(
-        np.float32
-      )  # (T, 7): [x, y, z, qw, qx, qy, qz]
-      assert base_xyz_quat.shape[1] == 7, (
-        f"base_xyz_quat must have 7 columns, got {base_xyz_quat.shape}"
-      )
+        base_xyz_quat = data["base_xyz_quat"].astype(np.float32)
+        actuator_pos = data["actuator_pos"].astype(np.float32)
 
-      # Load actuator positions
-      actuator_pos = data["actuator_pos"].astype(np.float32)  # (T, 29)
-      assert actuator_pos.shape[1] == 29, (
-        f"actuator_pos must have 29 columns, got {actuator_pos.shape}"
-      )
+        T = times_np.shape[0]
+        self.input_times_np = times_np
+        self.input_times = torch.from_numpy(times_np).to(self.device)
 
-      T = times_np.shape[0]
-      assert base_xyz_quat.shape[0] == T, "base_xyz_quat length must match time length"
-      assert actuator_pos.shape[0] == T, "actuator_pos length must match time length"
-
-      self.input_times_np = times_np
-      self.input_times = torch.from_numpy(times_np).to(self.device)
-
-      # Extract base position and rotation
-      self.motion_base_poss_input = torch.from_numpy(base_xyz_quat[:, 0:3]).to(
-        self.device
-      )  # xyz
-      self.motion_base_rots_input = _normalize_quat(
-        torch.from_numpy(base_xyz_quat[:, 3:7]).to(self.device)  # quat (w, x, y, z)
-      )
-      self.motion_dof_poss_input = torch.from_numpy(actuator_pos).to(self.device)
-
-      # Check for object data
-      self.has_object = False
-      if "obj_0_xyz_quat" in data:
-        obj_xyz_quat = data["obj_0_xyz_quat"].astype(np.float32)  # (T, 7)
-        assert obj_xyz_quat.shape == (T, 7), (
-          f"obj_0_xyz_quat must be shape ({T}, 7), got {obj_xyz_quat.shape}"
+        self.motion_base_poss_input = torch.from_numpy(
+            base_xyz_quat[:, 0:3]
+        ).to(self.device)
+        self.motion_base_rots_input = _normalize_quat(
+            torch.from_numpy(base_xyz_quat[:, 3:7]).to(self.device)
         )
-        self.has_object = True
-        self.object_pos_input = torch.from_numpy(obj_xyz_quat[:, 0:3]).to(self.device)
-        self.object_rots_input = _normalize_quat(
-          torch.from_numpy(obj_xyz_quat[:, 3:7]).to(self.device)
-        )
+        self.motion_dof_poss_input = torch.from_numpy(actuator_pos).to(self.device)
+
+        self.has_object = False
+        if "obj_0_xyz_quat" in data:
+            obj = data["obj_0_xyz_quat"].astype(np.float32)
+            self.has_object = True
+            self.object_pos_input = torch.from_numpy(obj[:, 0:3]).to(self.device)
+            self.object_rots_input = _normalize_quat(
+                torch.from_numpy(obj[:, 3:7]).to(self.device)
+            )
+
     else:
-      # Standard format: single 'x' array
-      assert "x" in data, f"Key 'x' not found in {self.input_file}"
-      x_np = data["x"]
-      assert x_np.ndim == 2 and x_np.shape[1] in (71, 84), (
-        f"x must be (T,71) or (T,84); got {x_np.shape}"
-      )
-
-      assert "time" in data, f"Key 'time' not found in {self.input_file}"
-      times_np = data["time"].astype(np.float32)
-      assert times_np.ndim == 1 and times_np.shape[0] == x_np.shape[0], (
-        "times must be 1D and match x length"
-      )
-
-      self.input_times_np = times_np
-      self.input_times = torch.from_numpy(times_np).to(self.device)
-
-      T = x_np.shape[0]
-      rs = torch.from_numpy(x_np.astype(np.float32)).to(self.device)
-
-      # Use only qpos portions: [pos(3), quat wxyz(4), joint pos(29)]
-      # New format (T,84) has x = (qpos(43), qvel(41)). Legacy (T,71) keeps only qpos fields.
-      self.motion_base_poss_input = rs[:, 0:3]
-      self.motion_base_rots_input = _normalize_quat(rs[:, 3:7])
-      self.motion_dof_poss_input = rs[:, 7:36]
-
-      # Optional object
-      # Priority: if x has embedded object in qpos (shape 84), use that; otherwise fallback to separate 'object_states'
-      self.has_object = False
-      if x_np.shape[1] == 84:
-        # x = (qpos(43), qvel(41)) where:
-        # qpos[0:7] - first 7 entries (base pos(3) + base quat(4))
-        # qpos[7:36] - next 29 entries (joint positions)
-        # qpos[36:40] = obj_quat_wxyz (4 values: w, x, y, z)
-        # qpos[40:43] = obj_pos (3 values: x, y, z)
-        self.has_object = True
-        self.object_rots_input = _normalize_quat(rs[:, 36:40])
-        self.object_pos_input = rs[:, 40:43]
-        assert self.object_rots_input.shape == (T, 4), (
-          f"object_rots_input shape mismatch: expected ({T}, 4), got {self.object_rots_input.shape}"
+        print("[Loader] Using Standard NPZ format loader.")
+        assert "x" in data, (
+            f"Key 'x' not found in standard NPZ file: {self.input_file}"
         )
-        assert self.object_pos_input.shape == (T, 3), (
-          f"object_pos_input shape mismatch: expected ({T}, 3), got {self.object_pos_input.shape}"
-        )
-      elif "object_states" in data:
-        obj_np = data["object_states"].astype(np.float32)
-        assert obj_np.ndim == 2 and obj_np.shape[0] == T and obj_np.shape[1] == 7, (
-          "object_states must be shape (T,7)"
-        )
-        self.has_object = True
-        self.object_pos_input = torch.from_numpy(obj_np[:, 0:3]).to(self.device)
-        self.object_rots_input = _normalize_quat(
-          torch.from_numpy(obj_np[:, 3:7]).to(self.device)
-        )
+        x_np = data["x"].astype(np.float32)
 
-    T = len(self.input_times_np)
-    self.input_frames = int(T)
-    self.duration = (
-      float(self.input_times_np[-1] - self.input_times_np[0]) if T > 1 else 0.0
-    )
+        times_np = data["time"].astype(np.float32)
+        T = x_np.shape[0]
+
+        self.input_times_np = times_np
+        self.input_times = torch.from_numpy(times_np).to(self.device)
+
+        rs = torch.from_numpy(x_np).to(self.device)
+
+        self.motion_base_poss_input = rs[:, 0:3]
+        self.motion_base_rots_input = _normalize_quat(rs[:, 3:7])
+        self.motion_dof_poss_input = rs[:, 7:36]
+
+        # Optional embedded object: identical to your previous code
+        self.has_object = False
+        if x_np.shape[1] >= 43:  # qpos(43) → includes object (quat + pos)
+            self.has_object = True
+            self.object_rots_input = _normalize_quat(rs[:, 36:40])
+            self.object_pos_input = rs[:, 40:43]
+
+    # Timing setup for all formats
+    self.input_frames = T
+    self.duration = float(times_np[-1] - times_np[0]) if T > 1 else 0.0
     self.input_dt = float(self.duration / max(1, T - 1)) if T > 1 else self.output_dt
     self.input_fps = int(round(1.0 / max(1e-8, self.input_dt)))
 
