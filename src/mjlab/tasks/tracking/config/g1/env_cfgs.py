@@ -136,7 +136,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
 
   left_eef_contact_sensor = ContactSensorCfg(
     name="left_eef_contact",
-    primary=ContactMatch(mode="geom", pattern="left_wrist_collision", entity="robot"),
+    primary=ContactMatch(mode="geom", pattern="left_hand_collision", entity="robot"),
     secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="box"),
     fields=("found", "force", "pos"),
     reduce="netforce",
@@ -145,7 +145,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
 
   right_eef_contact_sensor = ContactSensorCfg(
     name="right_eef_contact",
-    primary=ContactMatch(mode="geom", pattern="right_wrist_collision", entity="robot"),
+    primary=ContactMatch(mode="geom", pattern="right_hand_collision", entity="robot"),
     secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="box"),
     fields=("found", "force", "pos"),
     reduce="netforce",
