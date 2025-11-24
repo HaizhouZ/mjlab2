@@ -326,9 +326,9 @@ def get_box_cfg() -> EntityCfg:
 
 CONSTANT_ACTION_SCALE = 0.0
 CONST_JOINT_NAMES = [
-  ".*_wrist_pitch_joint",
-  ".*_wrist_yaw_joint",
-  ".*_wrist_roll_joint",
+  # ".*_wrist_pitch_joint",
+  # ".*_wrist_yaw_joint",
+  # ".*_wrist_roll_joint",
 ]
 G1_ACTION_SCALE: dict[str, float] = {}
 for a in G1_ARTICULATION.actuators:
