@@ -281,11 +281,11 @@ def unitree_g1_flat_tracking_env_cfg_box(
     noise=Unoise(n_min=-0.05, n_max=0.05),
     params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
   )
-  # cfg.observations["policy"].terms["object_ori_error"] = ObservationTermCfg(
-  #   func=mdp.object_orientation_error,
-  #   noise=Unoise(n_min=-0.05, n_max=0.05),
-  #   params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
-  # )
+  cfg.observations["policy"].terms["object_ori_error"] = ObservationTermCfg(
+    func=mdp.object_orientation_error,
+    noise=Unoise(n_min=-0.05, n_max=0.05),
+    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
+  )
 
   ###
   # Critic Object Tracking Observation Terms
