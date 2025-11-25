@@ -183,7 +183,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   ###
   cfg.rewards["contact_match"] = RewardTermCfg(
     func=mdp.eef_contact_indicator_match,
-    weight=1.25,
+    weight=1.0,
     params={
       "command_name": "motion",
       "eef_body_names": motion_cmd.eef_body_names,
@@ -195,7 +195,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   )
   cfg.rewards["object_global_pos"] = RewardTermCfg(
     func=mdp.object_global_position_error_exp,
-    weight=1.25,
+    weight=1.0,
     params={
       "command_name": "motion",
       "object_asset_cfg": SceneEntityCfg("box"),
@@ -204,11 +204,11 @@ def unitree_g1_flat_tracking_env_cfg_box(
   )
   cfg.rewards["object_global_ori"] = RewardTermCfg(
     func=mdp.object_global_orientation_error_exp,
-    weight=0.65,
+    weight=0.8,
     params={
       "command_name": "motion",
       "object_asset_cfg": SceneEntityCfg("box"),
-      "std": 0.4,
+      "std": 0.3,
     },
   )
   cfg.rewards["bad_termination"] = RewardTermCfg(
@@ -272,10 +272,17 @@ def unitree_g1_flat_tracking_env_cfg_box(
   # Actor (Policy) Object Tracking Observation Terms
   ###
   cfg.observations["policy"].terms["object_global_pos"] = ObservationTermCfg(
-    func=mdp.object_pos_b, params={"command_name": "motion"}
+    func=mdp.object_pos_b,
+    noise=Unoise(n_min=-0.1, n_max=0.1),
+    params={"command_name": "motion"},
   )
-  cfg.observations["policy"].terms["object_global_ori"] = ObservationTermCfg(
+  cfg.observations["policy"].terms["object_pos_error"] = ObservationTermCfg(
     func=mdp.object_position_error,
+    noise=Unoise(n_min=-0.05, n_max=0.05),
+    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
+  )
+  cfg.observations["policy"].terms["object_ori_error"] = ObservationTermCfg(
+    func=mdp.object_orientation_error,
     noise=Unoise(n_min=-0.05, n_max=0.05),
     params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
   )
