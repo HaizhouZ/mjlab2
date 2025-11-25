@@ -136,7 +136,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
 
   left_eef_contact_sensor = ContactSensorCfg(
     name="left_eef_contact",
-    primary=ContactMatch(mode="geom", pattern="left_hand_collision", entity="robot"),
+    primary=ContactMatch(mode="geom", pattern="left_wrist_collision", entity="robot"),
     secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="box"),
     fields=("found", "force", "pos"),
     reduce="netforce",
@@ -145,7 +145,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
 
   right_eef_contact_sensor = ContactSensorCfg(
     name="right_eef_contact",
-    primary=ContactMatch(mode="geom", pattern="right_hand_collision", entity="robot"),
+    primary=ContactMatch(mode="geom", pattern="right_wrist_collision", entity="robot"),
     secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="box"),
     fields=("found", "force", "pos"),
     reduce="netforce",
@@ -281,11 +281,11 @@ def unitree_g1_flat_tracking_env_cfg_box(
     noise=Unoise(n_min=-0.05, n_max=0.05),
     params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
   )
-  cfg.observations["policy"].terms["object_ori_error"] = ObservationTermCfg(
-    func=mdp.object_orientation_error,
-    noise=Unoise(n_min=-0.05, n_max=0.05),
-    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
-  )
+  # cfg.observations["policy"].terms["object_ori_error"] = ObservationTermCfg(
+  #   func=mdp.object_orientation_error,
+  #   noise=Unoise(n_min=-0.05, n_max=0.05),
+  #   params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
+  # )
 
   ###
   # Critic Object Tracking Observation Terms
