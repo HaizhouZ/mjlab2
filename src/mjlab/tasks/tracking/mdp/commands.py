@@ -1390,6 +1390,13 @@ class MultiMotionCommand(CommandTerm):
       self.body_quat_relative_w, self.robot_body_quat_w
     ).mean(dim=-1)
 
+    self.metrics["error_body_lin_vel"] = torch.norm(
+      self.body_lin_vel_w - self.robot_body_lin_vel_w, dim=-1
+    ).mean(dim=-1)
+    self.metrics["error_body_ang_vel"] = torch.norm(
+      self.body_ang_vel_w - self.robot_body_ang_vel_w, dim=-1
+    ).mean(dim=-1)
+
     self.metrics["error_joint_pos"] = torch.norm(
       self.joint_pos - self.robot_joint_pos, dim=-1
     )
