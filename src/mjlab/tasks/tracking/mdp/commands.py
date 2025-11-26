@@ -696,6 +696,14 @@ class MotionCommand(CommandTerm):
       )
       qpos[joint_q_adr] = self.joint_pos[visualizer.env_idx].cpu().numpy()
 
+      box = self._env.scene.entities.get("box")
+      if box is not None:
+        box_free_joint_q_adr = box.indexing.free_joint_q_adr.cpu().numpy()
+        target_pos = self.object_pos_w[visualizer.env_idx].cpu().numpy()
+        target_quat = self.object_quat_w[visualizer.env_idx].cpu().numpy()
+        qpos[box_free_joint_q_adr[:3]] = target_pos
+        qpos[box_free_joint_q_adr[3:7]] = target_quat
+
       visualizer.add_ghost_mesh(qpos, model=self._ghost_model)
 
     elif self.cfg.viz.mode == "frames":
