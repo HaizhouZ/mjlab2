@@ -1140,11 +1140,19 @@ class MultiMotionCommand(CommandTerm):
     # Get max time steps for adaptive sampling (use max across all motions)
     max_time_steps = self.motion_loader.time_step_totals.max().item()
     self.bin_count = int(max_time_steps // (1 / env.step_dt)) + 1
+    # Maintain separate failure distributions for each motion
+    # Shape: (num_motions, bin_count)
     self.bin_failed_count = torch.zeros(
-      self.bin_count, dtype=torch.float, device=self.device
+      self.motion_loader.num_motions,
+      self.bin_count,
+      dtype=torch.float,
+      device=self.device,
     )
     self._current_bin_failed = torch.zeros(
-      self.bin_count, dtype=torch.float, device=self.device
+      self.motion_loader.num_motions,
+      self.bin_count,
+      dtype=torch.float,
+      device=self.device,
     )
     self.kernel = torch.tensor(
       [self.cfg.adaptive_lambda**i for i in range(self.cfg.adaptive_kernel_size)],
@@ -1421,37 +1429,71 @@ class MultiMotionCommand(CommandTerm):
   def _adaptive_sampling(self, env_ids: torch.Tensor):
     episode_failed = self._env.termination_manager.terminated[env_ids]
     if torch.any(episode_failed):
-      # Get time step totals for each env's motion
-      env_time_step_totals = self.motion_loader.get_time_step_total(
-        self.motion_indices[env_ids]
+      # Get motion indices and time steps for failed episodes
+      failed_env_ids = env_ids[episode_failed]
+      failed_motion_indices = self.motion_indices[failed_env_ids]
+      failed_time_steps = self.time_steps[failed_env_ids]
+
+      # Get time step totals for each failed env's motion
+      failed_env_time_step_totals = self.motion_loader.get_time_step_total(
+        failed_motion_indices
       )
+
+      # Compute bin indices for failed episodes
       current_bin_index = torch.clamp(
-        (self.time_steps[env_ids] * self.bin_count)
-        // torch.clamp(env_time_step_totals, min=1),
+        (failed_time_steps * self.bin_count)
+        // torch.clamp(failed_env_time_step_totals, min=1),
         0,
         self.bin_count - 1,
       )
-      fail_bins = current_bin_index[episode_failed]
-      self._current_bin_failed[:] = torch.bincount(fail_bins, minlength=self.bin_count)
 
-    sampling_probabilities = (
+      # Vectorized update: use scatter_add_ to update all motions at once
+      # Create linear indices: motion_idx * bin_count + bin_idx
+      linear_indices = failed_motion_indices * self.bin_count + current_bin_index
+      # Count occurrences of each (motion, bin) pair
+      counts = torch.bincount(
+        linear_indices, minlength=self.motion_loader.num_motions * self.bin_count
+      )
+      # Reshape and add to _current_bin_failed
+      self._current_bin_failed += counts.view(
+        self.motion_loader.num_motions, self.bin_count
+      ).float()
+
+    # Get motion indices for environments that need resampling
+    resample_motion_indices = self.motion_indices[env_ids]
+
+    # Pre-compute sampling probabilities for all motions at once (vectorized)
+    # Shape: (num_motions, bin_count)
+    all_sampling_probabilities = (
       self.bin_failed_count + self.cfg.adaptive_uniform_ratio / float(self.bin_count)
     )
-    sampling_probabilities = torch.nn.functional.pad(
-      sampling_probabilities.unsqueeze(0).unsqueeze(0),
+    # Pad for convolution: (num_motions, 1, bin_count + kernel_size - 1)
+    all_sampling_probabilities_padded = torch.nn.functional.pad(
+      all_sampling_probabilities.unsqueeze(1),
       (0, self.cfg.adaptive_kernel_size - 1),
       mode="replicate",
     )
-    sampling_probabilities = torch.nn.functional.conv1d(
-      sampling_probabilities, self.kernel.view(1, 1, -1)
-    ).view(-1)
+    # Apply convolution to all motions at once: (num_motions, 1, bin_count)
+    all_sampling_probabilities = torch.nn.functional.conv1d(
+      all_sampling_probabilities_padded, self.kernel.view(1, 1, -1)
+    ).squeeze(1)  # (num_motions, bin_count)
 
-    sampling_probabilities = sampling_probabilities / sampling_probabilities.sum()
-
-    sampled_bins = torch.multinomial(
-      sampling_probabilities, len(env_ids), replacement=True
+    # Normalize each motion's distribution
+    all_sampling_probabilities = (
+      all_sampling_probabilities / all_sampling_probabilities.sum(dim=1, keepdim=True)
     )
-    # Get time step totals for each env's motion
+
+    # Sample from the appropriate distribution for each environment (fully vectorized)
+    # Get probabilities for each env's motion: (len(env_ids), bin_count)
+    env_sampling_probabilities = all_sampling_probabilities[resample_motion_indices]
+
+    # Sample all at once - multinomial supports different distributions per row
+    # Shape: (len(env_ids),) - one sample per environment
+    sampled_bins = torch.multinomial(
+      env_sampling_probabilities, num_samples=1, replacement=True
+    ).squeeze(1)
+
+    # Convert sampled bins to time steps for each environment
     env_time_step_totals = self.motion_loader.get_time_step_total(
       self.motion_indices[env_ids]
     )
@@ -1461,9 +1503,25 @@ class MultiMotionCommand(CommandTerm):
       * (env_time_step_totals - 1)
     ).long()
 
-    H = -(sampling_probabilities * (sampling_probabilities + 1e-12).log()).sum()
+    # Compute metrics using average across all motions (for reporting)
+    avg_sampling_probabilities = self.bin_failed_count.mean(
+      dim=0
+    ) + self.cfg.adaptive_uniform_ratio / float(self.bin_count)
+    avg_sampling_probabilities = torch.nn.functional.pad(
+      avg_sampling_probabilities.unsqueeze(0).unsqueeze(0),
+      (0, self.cfg.adaptive_kernel_size - 1),
+      mode="replicate",
+    )
+    avg_sampling_probabilities = torch.nn.functional.conv1d(
+      avg_sampling_probabilities, self.kernel.view(1, 1, -1)
+    ).view(-1)
+    avg_sampling_probabilities = (
+      avg_sampling_probabilities / avg_sampling_probabilities.sum()
+    )
+
+    H = -(avg_sampling_probabilities * (avg_sampling_probabilities + 1e-12).log()).sum()
     H_norm = H / math.log(self.bin_count)
-    pmax, imax = sampling_probabilities.max(dim=0)
+    pmax, imax = avg_sampling_probabilities.max(dim=0)
     self.metrics["sampling_entropy"][:] = H_norm
     self.metrics["sampling_top1_prob"][:] = pmax
     self.metrics["sampling_top1_bin"][:] = imax.float() / self.bin_count
@@ -1621,6 +1679,8 @@ class MultiMotionCommand(CommandTerm):
     )
 
     if self.cfg.sampling_mode == "adaptive":
+      # Update each motion's failure distribution separately
+      # bin_failed_count and _current_bin_failed are shape (num_motions, bin_count)
       self.bin_failed_count = (
         self.cfg.adaptive_alpha * self._current_bin_failed
         + (1 - self.cfg.adaptive_alpha) * self.bin_failed_count
