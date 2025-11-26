@@ -146,25 +146,25 @@ class TrajectoryNpzSimLoader:
 
   def _load_ilyass_pickle(self, file_path: str):
     """Load Ilyass-format pickle containing:
-       fps, root_pos, root_rot(xyzw), dof_pos, object_pos, object_rot(xyzw)
+    fps, root_pos, root_rot(xyzw), dof_pos, object_pos, object_rot(xyzw)
     """
 
     import pickle
 
     with open(file_path, "rb") as f:
-        data = pickle.load(f)
+      data = pickle.load(f)
 
     required_keys = [
-        "fps",
-        "root_pos",
-        "root_rot",
-        "dof_pos",
-        "object_pos",
-        "object_rot",
+      "fps",
+      "root_pos",
+      "root_rot",
+      "dof_pos",
+      "object_pos",
+      "object_rot",
     ]
     for k in required_keys:
-        if k not in data:
-            raise ValueError(f"Missing key '{k}' in Ilyass pickle")
+      if k not in data:
+        raise ValueError(f"Missing key '{k}' in Ilyass pickle")
 
     # Extract
     root_pos = np.asarray(data["root_pos"], dtype=np.float32)  # (T, 3)
@@ -190,7 +190,7 @@ class TrajectoryNpzSimLoader:
 
     self.motion_base_poss_input = torch.from_numpy(root_pos).to(self.device)
     self.motion_base_rots_input = _normalize_quat(
-        torch.from_numpy(root_rot_wxyz).to(self.device)
+      torch.from_numpy(root_rot_wxyz).to(self.device)
     )
     self.motion_dof_poss_input = torch.from_numpy(dof_pos).to(self.device)
 
@@ -198,7 +198,7 @@ class TrajectoryNpzSimLoader:
     self.has_object = True
     self.object_pos_input = torch.from_numpy(obj_pos).to(self.device)
     self.object_rots_input = _normalize_quat(
-        torch.from_numpy(obj_rot_wxyz).to(self.device)
+      torch.from_numpy(obj_rot_wxyz).to(self.device)
     )
 
     # Timing info
@@ -206,14 +206,13 @@ class TrajectoryNpzSimLoader:
     self.input_dt = float(self.duration / max(1, T - 1)) if T > 1 else 1.0 / fps
     self.input_fps = fps
 
-
   def _load(self) -> None:
     """Unified loader for Victor NPZ, Standard NPZ, and Ilyass PKL formats."""
 
     # Automatically detect pickle format
     if self.input_file.endswith(".pkl"):
-        print("[Loader] Detected Ilyass pickle format.")
-        return self._load_ilyass_pickle(self.input_file)
+      print("[Loader] Detected Ilyass pickle format.")
+      return self._load_ilyass_pickle(self.input_file)
 
     # Otherwise load NPZ
     data = np.load(self.input_file, allow_pickle=True)
@@ -223,58 +222,56 @@ class TrajectoryNpzSimLoader:
     is_victor_format = "base_xyz_quat" in data and "actuator_pos" in data
 
     if is_victor_format:
-        print("[Loader] Using Victor format loader.")
-        times_np = data["time"].astype(np.float32)
+      print("[Loader] Using Victor format loader.")
+      times_np = data["time"].astype(np.float32)
 
-        base_xyz_quat = data["base_xyz_quat"].astype(np.float32)
-        actuator_pos = data["actuator_pos"].astype(np.float32)
+      base_xyz_quat = data["base_xyz_quat"].astype(np.float32)
+      actuator_pos = data["actuator_pos"].astype(np.float32)
 
-        T = times_np.shape[0]
-        self.input_times_np = times_np
-        self.input_times = torch.from_numpy(times_np).to(self.device)
+      T = times_np.shape[0]
+      self.input_times_np = times_np
+      self.input_times = torch.from_numpy(times_np).to(self.device)
 
-        self.motion_base_poss_input = torch.from_numpy(
-            base_xyz_quat[:, 0:3]
-        ).to(self.device)
-        self.motion_base_rots_input = _normalize_quat(
-            torch.from_numpy(base_xyz_quat[:, 3:7]).to(self.device)
+      self.motion_base_poss_input = torch.from_numpy(base_xyz_quat[:, 0:3]).to(
+        self.device
+      )
+      self.motion_base_rots_input = _normalize_quat(
+        torch.from_numpy(base_xyz_quat[:, 3:7]).to(self.device)
+      )
+      self.motion_dof_poss_input = torch.from_numpy(actuator_pos).to(self.device)
+
+      self.has_object = False
+      if "obj_0_xyz_quat" in data:
+        obj = data["obj_0_xyz_quat"].astype(np.float32)
+        self.has_object = True
+        self.object_pos_input = torch.from_numpy(obj[:, 0:3]).to(self.device)
+        self.object_rots_input = _normalize_quat(
+          torch.from_numpy(obj[:, 3:7]).to(self.device)
         )
-        self.motion_dof_poss_input = torch.from_numpy(actuator_pos).to(self.device)
-
-        self.has_object = False
-        if "obj_0_xyz_quat" in data:
-            obj = data["obj_0_xyz_quat"].astype(np.float32)
-            self.has_object = True
-            self.object_pos_input = torch.from_numpy(obj[:, 0:3]).to(self.device)
-            self.object_rots_input = _normalize_quat(
-                torch.from_numpy(obj[:, 3:7]).to(self.device)
-            )
 
     else:
-        print("[Loader] Using Standard NPZ format loader.")
-        assert "x" in data, (
-            f"Key 'x' not found in standard NPZ file: {self.input_file}"
-        )
-        x_np = data["x"].astype(np.float32)
+      print("[Loader] Using Standard NPZ format loader.")
+      assert "x" in data, f"Key 'x' not found in standard NPZ file: {self.input_file}"
+      x_np = data["x"].astype(np.float32)
 
-        times_np = data["time"].astype(np.float32)
-        T = x_np.shape[0]
+      times_np = data["time"].astype(np.float32)
+      T = x_np.shape[0]
 
-        self.input_times_np = times_np
-        self.input_times = torch.from_numpy(times_np).to(self.device)
+      self.input_times_np = times_np
+      self.input_times = torch.from_numpy(times_np).to(self.device)
 
-        rs = torch.from_numpy(x_np).to(self.device)
+      rs = torch.from_numpy(x_np).to(self.device)
 
-        self.motion_base_poss_input = rs[:, 0:3]
-        self.motion_base_rots_input = _normalize_quat(rs[:, 3:7])
-        self.motion_dof_poss_input = rs[:, 7:36]
+      self.motion_base_poss_input = rs[:, 0:3]
+      self.motion_base_rots_input = _normalize_quat(rs[:, 3:7])
+      self.motion_dof_poss_input = rs[:, 7:36]
 
-        # Optional embedded object: identical to your previous code
-        self.has_object = False
-        if x_np.shape[1] >= 43:  # qpos(43) → includes object (quat + pos)
-            self.has_object = True
-            self.object_rots_input = _normalize_quat(rs[:, 36:40])
-            self.object_pos_input = rs[:, 40:43]
+      # Optional embedded object: identical to your previous code
+      self.has_object = False
+      if x_np.shape[1] >= 43:  # qpos(43) → includes object (quat + pos)
+        self.has_object = True
+        self.object_rots_input = _normalize_quat(rs[:, 36:40])
+        self.object_pos_input = rs[:, 40:43]
 
     # Timing setup for all formats
     self.input_frames = T
@@ -554,13 +551,22 @@ def convert(
   print(f"Robot has {len(robot.body_names)} bodies: {robot.body_names}")
 
   # End effector site names for contact detection
-  eef_names = ["left_palm", "right_palm"]
+  # eef_names = ["left_palm", "right_palm"]
+  # # Get end effector site indices in robot.site_names
+  # eef_indices, eef_names_found = robot.find_sites(eef_names, preserve_order=True)
+  # for i, eef_name in enumerate(eef_names):
+  #   if i >= len(eef_indices) or eef_indices[i] < 0:
+  #     print(f"Warning: End effector site '{eef_name}' not found in robot site names")
+  #     if i >= len(eef_indices):
+  #       eef_indices.append(-1)
+  #     else:
+  #       eef_indices[i] = -1
 
-  # Get end effector site indices in robot.site_names
-  eef_indices, eef_names_found = robot.find_sites(eef_names, preserve_order=True)
+  eef_names = ["left_wrist_yaw_link", "right_wrist_yaw_link"]
+  eef_indices, eef_names_found = robot.find_bodies(eef_names, preserve_order=True)
   for i, eef_name in enumerate(eef_names):
     if i >= len(eef_indices) or eef_indices[i] < 0:
-      print(f"Warning: End effector site '{eef_name}' not found in robot site names")
+      print(f"Warning: End effector body '{eef_name}' not found in robot body names")
       if i >= len(eef_indices):
         eef_indices.append(-1)
       else:
