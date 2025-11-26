@@ -12,7 +12,7 @@ from mjlab.rl.exporter_utils import (
   attach_metadata_to_onnx,
   get_base_metadata,
 )
-from mjlab.tasks.tracking.mdp import MotionCommand
+from mjlab.tasks.tracking.mdp import MotionCommand, MultiMotionCommand
 from mjlab.utils.lab_api.rl.exporter import _OnnxPolicyExporter
 
 
@@ -35,35 +35,70 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
     self, env: ManagerBasedRlEnv, actor_critic, normalizer=None, verbose=False
   ):
     super().__init__(actor_critic, normalizer, verbose)
-    cmd = cast(MotionCommand, env.command_manager.get_term("motion"))
+    cmd = env.command_manager.get_term("motion")
 
-    self.joint_pos = cmd.motion.joint_pos.to("cpu")
-    self.joint_vel = cmd.motion.joint_vel.to("cpu")
-    self.body_pos_w = cmd.motion.body_pos_w.to("cpu")
-    self.body_quat_w = cmd.motion.body_quat_w.to("cpu")
-    self.body_lin_vel_w = cmd.motion.body_lin_vel_w.to("cpu")
-    self.body_ang_vel_w = cmd.motion.body_ang_vel_w.to("cpu")
+    # Handle both MotionCommand and MultiMotionCommand
+    if isinstance(cmd, MultiMotionCommand):
+      # For MultiMotionCommand, use the first motion from the loader
+      # Access the actual motion data (not padded) from the first motion
+      first_motion = cmd.motion_loader.motions[0]
+      self.joint_pos = first_motion.joint_pos.to("cpu")
+      self.joint_vel = first_motion.joint_vel.to("cpu")
+      self.body_pos_w = first_motion.body_pos_w.to("cpu")
+      self.body_quat_w = first_motion.body_quat_w.to("cpu")
+      self.body_lin_vel_w = first_motion.body_lin_vel_w.to("cpu")
+      self.body_ang_vel_w = first_motion.body_ang_vel_w.to("cpu")
 
-    self.has_object_data = hasattr(cmd.motion, "_object_pos_w")
-    if self.has_object_data:
-      self.object_pos_w = cmd.motion.object_pos_w.to("cpu")
-      self.object_quat_w = cmd.motion.object_quat_w.to("cpu")
-      object_lin_vel_w = cmd.motion.object_lin_vel_w
-      self.object_lin_vel_w = (
-        object_lin_vel_w.to("cpu") if object_lin_vel_w is not None else None
-      )
-      object_ang_vel_w = cmd.motion.object_ang_vel_w
-      self.object_ang_vel_w = (
-        object_ang_vel_w.to("cpu") if object_ang_vel_w is not None else None
-      )
-      object_contact = cmd.motion.object_contact
-      self.contact_indicators = (
-        object_contact.to("cpu") if object_contact is not None else None
-      )
-      contact_positions = cmd.motion.contact_positions
-      self.contact_positions = (
-        contact_positions.to("cpu") if contact_positions is not None else None
-      )
+      self.has_object_data = hasattr(first_motion, "_object_pos_w")
+      if self.has_object_data:
+        self.object_pos_w = first_motion.object_pos_w.to("cpu")
+        self.object_quat_w = first_motion.object_quat_w.to("cpu")
+        object_lin_vel_w = first_motion.object_lin_vel_w
+        self.object_lin_vel_w = (
+          object_lin_vel_w.to("cpu") if object_lin_vel_w is not None else None
+        )
+        object_ang_vel_w = first_motion.object_ang_vel_w
+        self.object_ang_vel_w = (
+          object_ang_vel_w.to("cpu") if object_ang_vel_w is not None else None
+        )
+        object_contact = first_motion.object_contact
+        self.contact_indicators = (
+          object_contact.to("cpu") if object_contact is not None else None
+        )
+        contact_positions = first_motion.contact_positions
+        self.contact_positions = (
+          contact_positions.to("cpu") if contact_positions is not None else None
+        )
+    else:
+      # Original MotionCommand handling
+      cmd = cast(MotionCommand, cmd)
+      self.joint_pos = cmd.motion.joint_pos.to("cpu")
+      self.joint_vel = cmd.motion.joint_vel.to("cpu")
+      self.body_pos_w = cmd.motion.body_pos_w.to("cpu")
+      self.body_quat_w = cmd.motion.body_quat_w.to("cpu")
+      self.body_lin_vel_w = cmd.motion.body_lin_vel_w.to("cpu")
+      self.body_ang_vel_w = cmd.motion.body_ang_vel_w.to("cpu")
+
+      self.has_object_data = hasattr(cmd.motion, "_object_pos_w")
+      if self.has_object_data:
+        self.object_pos_w = cmd.motion.object_pos_w.to("cpu")
+        self.object_quat_w = cmd.motion.object_quat_w.to("cpu")
+        object_lin_vel_w = cmd.motion.object_lin_vel_w
+        self.object_lin_vel_w = (
+          object_lin_vel_w.to("cpu") if object_lin_vel_w is not None else None
+        )
+        object_ang_vel_w = cmd.motion.object_ang_vel_w
+        self.object_ang_vel_w = (
+          object_ang_vel_w.to("cpu") if object_ang_vel_w is not None else None
+        )
+        object_contact = cmd.motion.object_contact
+        self.contact_indicators = (
+          object_contact.to("cpu") if object_contact is not None else None
+        )
+        contact_positions = cmd.motion.contact_positions
+        self.contact_positions = (
+          contact_positions.to("cpu") if contact_positions is not None else None
+        )
 
     self.time_step_total: int = self.joint_pos.shape[0]
 
@@ -164,8 +199,12 @@ def attach_onnx_metadata(
 
   # Add tracking-specific metadata.
   motion_term = env.command_manager.get_term("motion")
-  assert isinstance(motion_term, MotionCommand)
-  motion_term_cfg = motion_term.cfg
+  # Handle both MotionCommand and MultiMotionCommand
+  if isinstance(motion_term, MultiMotionCommand):
+    motion_term_cfg = motion_term.cfg
+  else:
+    assert isinstance(motion_term, MotionCommand)
+    motion_term_cfg = motion_term.cfg
 
   # Determine use_motion_offset based on action configuration
   joint_pos_action = env.cfg.actions.get("joint_pos")
