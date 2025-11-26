@@ -46,3 +46,12 @@ def unitree_g1_tracking_ppo_runner_cfg_box() -> RslRlOnPolicyRunnerCfg:
   cfg.experiment_name = "g1_object_tracking"
 
   return cfg
+
+
+def unitree_g1_tracking_ppo_runner_cfg_multitracking_box() -> RslRlOnPolicyRunnerCfg:
+  """Create RL runner configuration for Unitree G1 multi-tracking task with a box."""
+
+  cfg = unitree_g1_tracking_ppo_runner_cfg_box()
+  cfg.experiment_name = "g1_object_multitracking"
+
+  return cfg

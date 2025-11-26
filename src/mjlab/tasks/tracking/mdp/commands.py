@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import copy
 import math
+import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import mujoco
@@ -138,6 +140,319 @@ class MotionLoader:
     if not hasattr(self, "_contact_positions") or self._contact_positions is None:
       return None
     return self._contact_positions
+
+
+class MultiMotionLoader:
+  """Loader for multiple motion files that can be selected per environment."""
+
+  def __init__(
+    self,
+    motion_dir: str,
+    traj_name_patterns: list[str],
+    body_indexes: torch.Tensor,
+    device: str = "cpu",
+  ) -> None:
+    """Initialize multi-motion loader.
+
+    Args:
+      motion_dir: Base directory containing trajectory subdirectories
+      traj_name_patterns: List of regex patterns to match trajectory names. Use ".*" to match all.
+      body_indexes: Body indices to extract from motion data
+      device: Device to load tensors on
+    """
+    motion_dir_path = Path(motion_dir)
+    if not motion_dir_path.exists():
+      raise ValueError(f"Motion directory does not exist: {motion_dir}")
+
+    # Find all trajectory directories
+    traj_dirs = []
+    if ".*" in traj_name_patterns:
+      # Match all directories
+      traj_dirs = [
+        d
+        for d in motion_dir_path.iterdir()
+        if d.is_dir() and (d / "motion.npz").exists()
+      ]
+    else:
+      # Match based on regex patterns
+      for pattern in traj_name_patterns:
+        regex = re.compile(pattern)
+        matching_dirs = [
+          d
+          for d in motion_dir_path.iterdir()
+          if d.is_dir() and regex.match(d.name) and (d / "motion.npz").exists()
+        ]
+        traj_dirs.extend(matching_dirs)
+
+    if not traj_dirs:
+      raise ValueError(
+        f"No matching trajectories found in {motion_dir} with patterns {traj_name_patterns}"
+      )
+
+    # Remove duplicates and sort for reproducibility
+    traj_dirs = sorted(set(traj_dirs), key=lambda x: x.name)
+
+    # Load all motions
+    self.motions: list[MotionLoader] = []
+    self.traj_names: list[str] = []
+    for traj_dir in traj_dirs:
+      motion_file = traj_dir / "motion.npz"
+      try:
+        motion = MotionLoader(str(motion_file), body_indexes, device=device)
+        self.motions.append(motion)
+        self.traj_names.append(traj_dir.name)
+      except Exception as e:
+        print(f"Warning: Failed to load motion from {motion_file}: {e}")
+        continue
+
+    if not self.motions:
+      raise ValueError(f"No valid motions loaded from {motion_dir}")
+
+    self.num_motions = len(self.motions)
+    self.device = device
+    self._body_indexes = body_indexes
+
+    # Store max time steps for each motion
+    self.time_step_totals = torch.tensor(
+      [m.time_step_total for m in self.motions], dtype=torch.long, device=device
+    )
+    self.max_time_steps = int(self.time_step_totals.max().item())
+
+    # Check if any motion has object data
+    self._has_object = any(hasattr(m, "_object_pos_w") for m in self.motions)
+    self._has_contact = any(m.object_contact is not None for m in self.motions)
+    self._has_contact_positions = any(
+      m.contact_positions is not None for m in self.motions
+    )
+
+    # Get shapes from first motion to determine tensor dimensions
+    first_motion = self.motions[0]
+    num_bodies = len(body_indexes)
+    num_joints = first_motion.joint_pos.shape[1]
+
+    # Determine shapes for optional fields
+    num_contacts = 1
+    if self._has_contact:
+      for motion in self.motions:
+        if motion.object_contact is not None:
+          num_contacts = (
+            motion.object_contact.shape[1] if motion.object_contact.ndim > 1 else 1
+          )
+          break
+
+    # Create batched tensors by padding all motions to max_time_steps
+    # Shape: (num_motions, max_time_steps, ...)
+    self._batched_joint_pos = torch.zeros(
+      self.num_motions,
+      self.max_time_steps,
+      num_joints,
+      dtype=torch.float32,
+      device=device,
+    )
+    self._batched_joint_vel = torch.zeros(
+      self.num_motions,
+      self.max_time_steps,
+      num_joints,
+      dtype=torch.float32,
+      device=device,
+    )
+    self._batched_body_pos_w = torch.zeros(
+      self.num_motions,
+      self.max_time_steps,
+      num_bodies,
+      3,
+      dtype=torch.float32,
+      device=device,
+    )
+    self._batched_body_quat_w = torch.zeros(
+      self.num_motions,
+      self.max_time_steps,
+      num_bodies,
+      4,
+      dtype=torch.float32,
+      device=device,
+    )
+    self._batched_body_lin_vel_w = torch.zeros(
+      self.num_motions,
+      self.max_time_steps,
+      num_bodies,
+      3,
+      dtype=torch.float32,
+      device=device,
+    )
+    self._batched_body_ang_vel_w = torch.zeros(
+      self.num_motions,
+      self.max_time_steps,
+      num_bodies,
+      3,
+      dtype=torch.float32,
+      device=device,
+    )
+
+    # Optional object tensors
+    if self._has_object:
+      self._batched_object_pos_w = torch.zeros(
+        self.num_motions, self.max_time_steps, 3, dtype=torch.float32, device=device
+      )
+      self._batched_object_quat_w = torch.zeros(
+        self.num_motions, self.max_time_steps, 4, dtype=torch.float32, device=device
+      )
+      self._batched_object_quat_w[:, :, 0] = 1.0  # Initialize with identity quaternion
+      self._batched_object_lin_vel_w = torch.zeros(
+        self.num_motions, self.max_time_steps, 3, dtype=torch.float32, device=device
+      )
+      self._batched_object_ang_vel_w = torch.zeros(
+        self.num_motions, self.max_time_steps, 3, dtype=torch.float32, device=device
+      )
+    else:
+      self._batched_object_pos_w = None
+      self._batched_object_quat_w = None
+      self._batched_object_lin_vel_w = None
+      self._batched_object_ang_vel_w = None
+
+    # Optional contact tensors
+    if self._has_contact:
+      self._batched_object_contact = torch.zeros(
+        self.num_motions,
+        self.max_time_steps,
+        num_contacts,
+        dtype=torch.bool,
+        device=device,
+      )
+    else:
+      self._batched_object_contact = None
+
+    if self._has_contact_positions:
+      self._batched_contact_positions = torch.zeros(
+        self.num_motions,
+        self.max_time_steps,
+        num_contacts,
+        3,
+        dtype=torch.float32,
+        device=device,
+      )
+    else:
+      self._batched_contact_positions = None
+
+    # Fill batched tensors by copying data from each motion
+    for i, motion in enumerate(self.motions):
+      t = motion.time_step_total
+      self._batched_joint_pos[i, :t] = motion.joint_pos
+      self._batched_joint_vel[i, :t] = motion.joint_vel
+      self._batched_body_pos_w[i, :t] = motion.body_pos_w
+      self._batched_body_quat_w[i, :t] = motion.body_quat_w
+      self._batched_body_lin_vel_w[i, :t] = motion.body_lin_vel_w
+      self._batched_body_ang_vel_w[i, :t] = motion.body_ang_vel_w
+
+      if self._has_object and self._batched_object_pos_w is not None:
+        if hasattr(motion, "_object_pos_w"):
+          self._batched_object_pos_w[i, :t] = motion.object_pos_w
+          if self._batched_object_quat_w is not None:
+            self._batched_object_quat_w[i, :t] = motion.object_quat_w
+          if (
+            motion.object_lin_vel_w is not None
+            and self._batched_object_lin_vel_w is not None
+          ):
+            self._batched_object_lin_vel_w[i, :t] = motion.object_lin_vel_w
+          if (
+            motion.object_ang_vel_w is not None
+            and self._batched_object_ang_vel_w is not None
+          ):
+            self._batched_object_ang_vel_w[i, :t] = motion.object_ang_vel_w
+
+      if (
+        self._has_contact
+        and self._batched_object_contact is not None
+        and motion.object_contact is not None
+      ):
+        self._batched_object_contact[i, :t] = motion.object_contact
+
+      if (
+        self._has_contact_positions
+        and self._batched_contact_positions is not None
+        and motion.contact_positions is not None
+      ):
+        self._batched_contact_positions[i, :t] = motion.contact_positions
+
+  def get_motion_data(
+    self,
+    motion_indices: torch.Tensor,
+    time_steps: torch.Tensor,
+    field_name: str,
+  ) -> torch.Tensor:
+    """Get motion data for specified environments using pure tensor operations.
+
+    Args:
+      motion_indices: (num_envs,) tensor of motion indices
+      time_steps: (num_envs,) tensor of time steps
+      field_name: Name of the field to retrieve (e.g., 'joint_pos', 'body_pos_w')
+
+    Returns:
+      Tensor of shape (num_envs, ...) with motion data
+    """
+    # Clamp time steps to valid range for each motion
+    max_times = self.time_step_totals[motion_indices] - 1
+    time_steps_clamped = torch.minimum(time_steps, max_times)
+    time_steps_clamped = torch.clamp(time_steps_clamped, min=0)
+
+    # Use advanced indexing: batched_data[motion_indices, time_steps_clamped]
+    # This is fully vectorized with no loops
+    if field_name == "joint_pos":
+      return self._batched_joint_pos[motion_indices, time_steps_clamped]
+    elif field_name == "joint_vel":
+      return self._batched_joint_vel[motion_indices, time_steps_clamped]
+    elif field_name == "body_pos_w":
+      return self._batched_body_pos_w[motion_indices, time_steps_clamped]
+    elif field_name == "body_quat_w":
+      return self._batched_body_quat_w[motion_indices, time_steps_clamped]
+    elif field_name == "body_lin_vel_w":
+      return self._batched_body_lin_vel_w[motion_indices, time_steps_clamped]
+    elif field_name == "body_ang_vel_w":
+      return self._batched_body_ang_vel_w[motion_indices, time_steps_clamped]
+    elif field_name == "object_pos_w":
+      if self._batched_object_pos_w is None:
+        num_envs = motion_indices.shape[0]
+        return torch.zeros(num_envs, 3, dtype=torch.float32, device=self.device)
+      return self._batched_object_pos_w[motion_indices, time_steps_clamped]
+    elif field_name == "object_quat_w":
+      if self._batched_object_quat_w is None:
+        num_envs = motion_indices.shape[0]
+        quat = torch.zeros(num_envs, 4, dtype=torch.float32, device=self.device)
+        quat[:, 0] = 1.0
+        return quat
+      return self._batched_object_quat_w[motion_indices, time_steps_clamped]
+    elif field_name == "object_lin_vel_w":
+      if self._batched_object_lin_vel_w is None:
+        num_envs = motion_indices.shape[0]
+        return torch.zeros(num_envs, 3, dtype=torch.float32, device=self.device)
+      return self._batched_object_lin_vel_w[motion_indices, time_steps_clamped]
+    elif field_name == "object_ang_vel_w":
+      if self._batched_object_ang_vel_w is None:
+        num_envs = motion_indices.shape[0]
+        return torch.zeros(num_envs, 3, dtype=torch.float32, device=self.device)
+      return self._batched_object_ang_vel_w[motion_indices, time_steps_clamped]
+    elif field_name == "object_contact":
+      if self._batched_object_contact is None:
+        num_envs = motion_indices.shape[0]
+        # Default to 1 contact if not available
+        num_contacts = 1
+        return torch.zeros(num_envs, num_contacts, dtype=torch.bool, device=self.device)
+      return self._batched_object_contact[motion_indices, time_steps_clamped]
+    elif field_name == "contact_positions":
+      if self._batched_contact_positions is None:
+        num_envs = motion_indices.shape[0]
+        # Default to 1 contact if not available
+        num_contacts = 1
+        return torch.zeros(
+          num_envs, num_contacts, 3, dtype=torch.float32, device=self.device
+        )
+      return self._batched_contact_positions[motion_indices, time_steps_clamped]
+    else:
+      raise ValueError(f"Unknown field name: {field_name}")
+
+  def get_time_step_total(self, motion_indices: torch.Tensor) -> torch.Tensor:
+    """Get time step totals for specified motion indices."""
+    return self.time_step_totals[motion_indices]
 
 
 class MotionCommand(CommandTerm):
@@ -760,6 +1075,652 @@ class MotionCommandCfg(CommandTermCfg):
   eef_body_names: tuple[str, ...]
   asset_name: str
   class_type: type[CommandTerm] = MotionCommand
+  pose_range: dict[str, tuple[float, float]] = field(default_factory=dict)
+  velocity_range: dict[str, tuple[float, float]] = field(default_factory=dict)
+  joint_position_range: tuple[float, float] = (-0.52, 0.52)
+  adaptive_kernel_size: int = 1
+  adaptive_lambda: float = 0.8
+  adaptive_uniform_ratio: float = 0.1
+  adaptive_alpha: float = 0.001
+  sampling_mode: Literal["adaptive", "uniform", "start"] = "adaptive"
+
+  @dataclass
+  class VizCfg:
+    mode: Literal["ghost", "frames"] = "ghost"
+    ghost_color: tuple[float, float, float, float] = (0.5, 0.7, 0.5, 0.5)
+
+  viz: VizCfg = field(default_factory=VizCfg)
+
+
+class MultiMotionCommand(CommandTerm):
+  cfg: MultiMotionCommandCfg
+  _env: ManagerBasedRlEnv
+
+  def __init__(self, cfg: MultiMotionCommandCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+    self.robot: Entity = env.scene[cfg.asset_name]
+    self.robot_anchor_body_index = self.robot.body_names.index(
+      self.cfg.anchor_body_name
+    )
+    self.motion_anchor_body_index = self.cfg.body_names.index(self.cfg.anchor_body_name)
+    self.body_indexes = torch.tensor(
+      self.robot.find_bodies(self.cfg.body_names, preserve_order=True)[0],
+      dtype=torch.long,
+      device=self.device,
+    )
+    self.eef_body_indexes = torch.tensor(
+      self.robot.find_bodies(self.cfg.eef_body_names, preserve_order=True)[0],
+      dtype=torch.long,
+      device=self.device,
+    )
+
+    # Load multiple motions
+    self.motion_loader = MultiMotionLoader(
+      motion_dir=self.cfg.motion_dir,
+      traj_name_patterns=self.cfg.traj_name_patterns,
+      body_indexes=self.body_indexes,
+      device=self.device,
+    )
+
+    # Randomly assign motions to each environment
+    self.motion_indices = torch.randint(
+      0, self.motion_loader.num_motions, (self.num_envs,), device=self.device
+    )
+
+    self.time_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+    self.body_pos_relative_w = torch.zeros(
+      self.num_envs, len(cfg.body_names), 3, device=self.device
+    )
+    self.body_quat_relative_w = torch.zeros(
+      self.num_envs, len(cfg.body_names), 4, device=self.device
+    )
+    self.body_quat_relative_w[:, :, 0] = 1.0
+
+    # Get max time steps for adaptive sampling (use max across all motions)
+    max_time_steps = self.motion_loader.time_step_totals.max().item()
+    self.bin_count = int(max_time_steps // (1 / env.step_dt)) + 1
+    self.bin_failed_count = torch.zeros(
+      self.bin_count, dtype=torch.float, device=self.device
+    )
+    self._current_bin_failed = torch.zeros(
+      self.bin_count, dtype=torch.float, device=self.device
+    )
+    self.kernel = torch.tensor(
+      [self.cfg.adaptive_lambda**i for i in range(self.cfg.adaptive_kernel_size)],
+      device=self.device,
+    )
+    self.kernel = self.kernel / self.kernel.sum()
+
+    self.metrics["error_anchor_pos"] = torch.zeros(self.num_envs, device=self.device)
+    self.metrics["error_anchor_rot"] = torch.zeros(self.num_envs, device=self.device)
+    self.metrics["error_anchor_lin_vel"] = torch.zeros(
+      self.num_envs, device=self.device
+    )
+    self.metrics["error_anchor_ang_vel"] = torch.zeros(
+      self.num_envs, device=self.device
+    )
+    self.metrics["error_body_pos"] = torch.zeros(self.num_envs, device=self.device)
+    self.metrics["error_body_rot"] = torch.zeros(self.num_envs, device=self.device)
+    self.metrics["error_joint_pos"] = torch.zeros(self.num_envs, device=self.device)
+    self.metrics["error_joint_vel"] = torch.zeros(self.num_envs, device=self.device)
+    self.metrics["sampling_entropy"] = torch.zeros(self.num_envs, device=self.device)
+    self.metrics["sampling_top1_prob"] = torch.zeros(self.num_envs, device=self.device)
+    self.metrics["sampling_top1_bin"] = torch.zeros(self.num_envs, device=self.device)
+
+    # Ghost model created lazily on first visualization
+    self._ghost_model: mujoco.MjModel | None = None
+    self._ghost_color = np.array(cfg.viz.ghost_color, dtype=np.float32)
+
+    # Object tracking metrics - only if object exists in motion data
+    self._has_object = self.motion_loader._has_object
+    if self._has_object:
+      self.metrics["error_object_pos"] = torch.zeros(self.num_envs, device=self.device)
+      self.metrics["error_object_rot"] = torch.zeros(self.num_envs, device=self.device)
+
+    # Contact indicator from motion data
+    self._has_contact = self.motion_loader._has_contact
+    self._has_contact_positions = self.motion_loader._has_contact_positions
+    if self._has_contact:
+      # Get contact shape from first motion that has contacts
+      for motion in self.motion_loader.motions:
+        if motion.object_contact is not None:
+          num_contacts = (
+            motion.object_contact.shape[1] if motion.object_contact.ndim > 1 else 1
+          )
+          self.ref_object_contact_future = torch.zeros(
+            self.num_envs, 1, num_contacts, dtype=torch.bool, device=self.device
+          )
+          self.ref_object_contact = torch.zeros(
+            self.num_envs, num_contacts, dtype=torch.bool, device=self.device
+          )
+          break
+    else:
+      self.ref_object_contact_future = None
+      self.ref_object_contact = None
+
+  @property
+  def command(self) -> torch.Tensor:
+    return torch.cat([self.joint_pos, self.joint_vel], dim=1)
+
+  @property
+  def joint_pos(self) -> torch.Tensor:
+    return self.motion_loader.get_motion_data(
+      self.motion_indices, self.time_steps, "joint_pos"
+    )
+
+  @property
+  def joint_vel(self) -> torch.Tensor:
+    return self.motion_loader.get_motion_data(
+      self.motion_indices, self.time_steps, "joint_vel"
+    )
+
+  @property
+  def body_pos_w(self) -> torch.Tensor:
+    return (
+      self.motion_loader.get_motion_data(
+        self.motion_indices, self.time_steps, "body_pos_w"
+      )
+      + self._env.scene.env_origins[:, None, :]
+    )
+
+  @property
+  def body_quat_w(self) -> torch.Tensor:
+    return self.motion_loader.get_motion_data(
+      self.motion_indices, self.time_steps, "body_quat_w"
+    )
+
+  @property
+  def body_lin_vel_w(self) -> torch.Tensor:
+    return self.motion_loader.get_motion_data(
+      self.motion_indices, self.time_steps, "body_lin_vel_w"
+    )
+
+  @property
+  def body_ang_vel_w(self) -> torch.Tensor:
+    return self.motion_loader.get_motion_data(
+      self.motion_indices, self.time_steps, "body_ang_vel_w"
+    )
+
+  @property
+  def anchor_pos_w(self) -> torch.Tensor:
+    body_pos = self.motion_loader.get_motion_data(
+      self.motion_indices, self.time_steps, "body_pos_w"
+    )
+    return body_pos[:, self.motion_anchor_body_index] + self._env.scene.env_origins
+
+  @property
+  def anchor_quat_w(self) -> torch.Tensor:
+    body_quat = self.motion_loader.get_motion_data(
+      self.motion_indices, self.time_steps, "body_quat_w"
+    )
+    return body_quat[:, self.motion_anchor_body_index]
+
+  @property
+  def anchor_lin_vel_w(self) -> torch.Tensor:
+    body_lin_vel = self.motion_loader.get_motion_data(
+      self.motion_indices, self.time_steps, "body_lin_vel_w"
+    )
+    return body_lin_vel[:, self.motion_anchor_body_index]
+
+  @property
+  def anchor_ang_vel_w(self) -> torch.Tensor:
+    body_ang_vel = self.motion_loader.get_motion_data(
+      self.motion_indices, self.time_steps, "body_ang_vel_w"
+    )
+    return body_ang_vel[:, self.motion_anchor_body_index]
+
+  @property
+  def robot_joint_pos(self) -> torch.Tensor:
+    return self.robot.data.joint_pos
+
+  @property
+  def robot_joint_vel(self) -> torch.Tensor:
+    return self.robot.data.joint_vel
+
+  @property
+  def robot_body_pos_w(self) -> torch.Tensor:
+    return self.robot.data.body_link_pos_w[:, self.body_indexes]
+
+  @property
+  def robot_body_quat_w(self) -> torch.Tensor:
+    return self.robot.data.body_link_quat_w[:, self.body_indexes]
+
+  @property
+  def robot_body_lin_vel_w(self) -> torch.Tensor:
+    return self.robot.data.body_link_lin_vel_w[:, self.body_indexes]
+
+  @property
+  def robot_body_ang_vel_w(self) -> torch.Tensor:
+    return self.robot.data.body_link_ang_vel_w[:, self.body_indexes]
+
+  @property
+  def robot_anchor_pos_w(self) -> torch.Tensor:
+    return self.robot.data.body_link_pos_w[:, self.robot_anchor_body_index]
+
+  @property
+  def robot_anchor_quat_w(self) -> torch.Tensor:
+    return self.robot.data.body_link_quat_w[:, self.robot_anchor_body_index]
+
+  @property
+  def robot_anchor_lin_vel_w(self) -> torch.Tensor:
+    return self.robot.data.body_link_lin_vel_w[:, self.robot_anchor_body_index]
+
+  @property
+  def robot_anchor_ang_vel_w(self) -> torch.Tensor:
+    return self.robot.data.body_link_ang_vel_w[:, self.robot_anchor_body_index]
+
+  @property
+  def robot_eef_pos_w(self) -> torch.Tensor:
+    return self.robot.data.body_link_pos_w[:, self.eef_body_indexes]
+
+  @property
+  def robot_eef_quat_w(self) -> torch.Tensor:
+    return self.robot.data.body_link_quat_w[:, self.eef_body_indexes]
+
+  @property
+  def object_pos_w(self) -> torch.Tensor:
+    pos = self.motion_loader.get_motion_data(
+      self.motion_indices, self.time_steps, "object_pos_w"
+    )
+    return pos + self._env.scene.env_origins
+
+  @property
+  def object_quat_w(self) -> torch.Tensor:
+    return self.motion_loader.get_motion_data(
+      self.motion_indices, self.time_steps, "object_quat_w"
+    )
+
+  @property
+  def object_lin_vel_w(self) -> torch.Tensor | None:
+    data = self.motion_loader.get_motion_data(
+      self.motion_indices, self.time_steps, "object_lin_vel_w"
+    )
+    # Check if any motion has object lin vel
+    if torch.all(data == 0):
+      return None
+    return data
+
+  @property
+  def object_ang_vel_w(self) -> torch.Tensor | None:
+    data = self.motion_loader.get_motion_data(
+      self.motion_indices, self.time_steps, "object_ang_vel_w"
+    )
+    # Check if any motion has object ang vel
+    if torch.all(data == 0):
+      return None
+    return data
+
+  @property
+  def contact_positions(self) -> torch.Tensor | None:
+    """Contact positions for current timestep (world frame). Shape: (num_envs, num_contacts, 3)"""
+    if not self._has_contact_positions:
+      return None
+    pos = self.motion_loader.get_motion_data(
+      self.motion_indices, self.time_steps, "contact_positions"
+    )
+    return pos + self._env.scene.env_origins[:, None, :]
+
+  def _update_metrics(self):
+    self.metrics["error_anchor_pos"] = torch.norm(
+      self.anchor_pos_w - self.robot_anchor_pos_w, dim=-1
+    )
+    self.metrics["error_anchor_rot"] = quat_error_magnitude(
+      self.anchor_quat_w, self.robot_anchor_quat_w
+    )
+    self.metrics["error_anchor_lin_vel"] = torch.norm(
+      self.anchor_lin_vel_w - self.robot_anchor_lin_vel_w, dim=-1
+    )
+    self.metrics["error_anchor_ang_vel"] = torch.norm(
+      self.anchor_ang_vel_w - self.robot_anchor_ang_vel_w, dim=-1
+    )
+
+    self.metrics["error_body_pos"] = torch.norm(
+      self.body_pos_relative_w - self.robot_body_pos_w, dim=-1
+    ).mean(dim=-1)
+    self.metrics["error_body_rot"] = quat_error_magnitude(
+      self.body_quat_relative_w, self.robot_body_quat_w
+    ).mean(dim=-1)
+
+    self.metrics["error_joint_pos"] = torch.norm(
+      self.joint_pos - self.robot_joint_pos, dim=-1
+    )
+    self.metrics["error_joint_vel"] = torch.norm(
+      self.joint_vel - self.robot_joint_vel, dim=-1
+    )
+
+    if self._has_object:
+      try:
+        box = self._env.scene.entities.get("box")  # type: ignore[attr-defined]
+        if box is not None:
+          desired_pos = self.object_pos_w
+          desired_quat = self.object_quat_w
+          actual_pos = box.data.body_link_pos_w[:, 0]
+          actual_quat = box.data.body_link_quat_w[:, 0]
+          self.metrics["error_object_pos"] = torch.norm(
+            desired_pos - actual_pos, dim=-1
+          )
+          self.metrics["error_object_rot"] = quat_error_magnitude(
+            desired_quat, actual_quat
+          )
+        else:
+          self.metrics["error_object_pos"] = torch.zeros(
+            self.num_envs, device=self.device
+          )
+          self.metrics["error_object_rot"] = torch.zeros(
+            self.num_envs, device=self.device
+          )
+      except Exception:
+        self.metrics["error_object_pos"] = torch.zeros(
+          self.num_envs, device=self.device
+        )
+        self.metrics["error_object_rot"] = torch.zeros(
+          self.num_envs, device=self.device
+        )
+
+  def _adaptive_sampling(self, env_ids: torch.Tensor):
+    episode_failed = self._env.termination_manager.terminated[env_ids]
+    if torch.any(episode_failed):
+      # Get time step totals for each env's motion
+      env_time_step_totals = self.motion_loader.get_time_step_total(
+        self.motion_indices[env_ids]
+      )
+      current_bin_index = torch.clamp(
+        (self.time_steps[env_ids] * self.bin_count)
+        // torch.clamp(env_time_step_totals, min=1),
+        0,
+        self.bin_count - 1,
+      )
+      fail_bins = current_bin_index[episode_failed]
+      self._current_bin_failed[:] = torch.bincount(fail_bins, minlength=self.bin_count)
+
+    sampling_probabilities = (
+      self.bin_failed_count + self.cfg.adaptive_uniform_ratio / float(self.bin_count)
+    )
+    sampling_probabilities = torch.nn.functional.pad(
+      sampling_probabilities.unsqueeze(0).unsqueeze(0),
+      (0, self.cfg.adaptive_kernel_size - 1),
+      mode="replicate",
+    )
+    sampling_probabilities = torch.nn.functional.conv1d(
+      sampling_probabilities, self.kernel.view(1, 1, -1)
+    ).view(-1)
+
+    sampling_probabilities = sampling_probabilities / sampling_probabilities.sum()
+
+    sampled_bins = torch.multinomial(
+      sampling_probabilities, len(env_ids), replacement=True
+    )
+    # Get time step totals for each env's motion
+    env_time_step_totals = self.motion_loader.get_time_step_total(
+      self.motion_indices[env_ids]
+    )
+    self.time_steps[env_ids] = (
+      (sampled_bins + sample_uniform(0.0, 1.0, (len(env_ids),), device=self.device))
+      / self.bin_count
+      * (env_time_step_totals - 1)
+    ).long()
+
+    H = -(sampling_probabilities * (sampling_probabilities + 1e-12).log()).sum()
+    H_norm = H / math.log(self.bin_count)
+    pmax, imax = sampling_probabilities.max(dim=0)
+    self.metrics["sampling_entropy"][:] = H_norm
+    self.metrics["sampling_top1_prob"][:] = pmax
+    self.metrics["sampling_top1_bin"][:] = imax.float() / self.bin_count
+
+  def _uniform_sampling(self, env_ids: torch.Tensor):
+    # Get time step totals for each env's motion
+    env_time_step_totals = self.motion_loader.get_time_step_total(
+      self.motion_indices[env_ids]
+    )
+    # Sample uniformly for each env based on its motion's length
+    self.time_steps[env_ids] = (
+      torch.rand(len(env_ids), device=self.device) * env_time_step_totals
+    ).long()
+    self.metrics["sampling_entropy"][:] = 1.0
+    self.metrics["sampling_top1_prob"][:] = 1.0 / self.bin_count
+    self.metrics["sampling_top1_bin"][:] = 0.5
+
+  def _resample_command(self, env_ids: torch.Tensor):
+    # # Randomly reassign motions to environments
+    # self.motion_indices[env_ids] = torch.randint(
+    #   0, self.motion_loader.num_motions, (len(env_ids),), device=self.device
+    # )
+
+    if self.cfg.sampling_mode == "start":
+      self.time_steps[env_ids] = 0
+    elif self.cfg.sampling_mode == "uniform":
+      self._uniform_sampling(env_ids)
+    else:
+      assert self.cfg.sampling_mode == "adaptive"
+      self._adaptive_sampling(env_ids)
+
+    root_pos = self.body_pos_w[:, 0].clone()
+    root_ori = self.body_quat_w[:, 0].clone()
+    root_lin_vel = self.body_lin_vel_w[:, 0].clone()
+    root_ang_vel = self.body_ang_vel_w[:, 0].clone()
+
+    range_list = [
+      self.cfg.pose_range.get(key, (0.0, 0.0))
+      for key in ["x", "y", "z", "roll", "pitch", "yaw"]
+    ]
+    ranges = torch.tensor(range_list, device=self.device)
+    rand_samples = sample_uniform(
+      ranges[:, 0], ranges[:, 1], (len(env_ids), 6), device=self.device
+    )
+    root_pos[env_ids] += rand_samples[:, 0:3]
+    orientations_delta = quat_from_euler_xyz(
+      rand_samples[:, 3], rand_samples[:, 4], rand_samples[:, 5]
+    )
+    root_ori[env_ids] = quat_mul(orientations_delta, root_ori[env_ids])
+    range_list = [
+      self.cfg.velocity_range.get(key, (0.0, 0.0))
+      for key in ["x", "y", "z", "roll", "pitch", "yaw"]
+    ]
+    ranges = torch.tensor(range_list, device=self.device)
+    rand_samples = sample_uniform(
+      ranges[:, 0], ranges[:, 1], (len(env_ids), 6), device=self.device
+    )
+    root_lin_vel[env_ids] += rand_samples[:, :3]
+    root_ang_vel[env_ids] += rand_samples[:, 3:]
+
+    joint_pos = self.joint_pos.clone()
+    joint_vel = self.joint_vel.clone()
+
+    joint_pos += sample_uniform(
+      lower=self.cfg.joint_position_range[0],
+      upper=self.cfg.joint_position_range[1],
+      size=joint_pos.shape,
+      device=joint_pos.device,  # type: ignore
+    )
+    soft_joint_pos_limits = self.robot.data.soft_joint_pos_limits[env_ids]
+    joint_pos[env_ids] = torch.clip(
+      joint_pos[env_ids], soft_joint_pos_limits[:, :, 0], soft_joint_pos_limits[:, :, 1]
+    )
+    self.robot.write_joint_state_to_sim(
+      joint_pos[env_ids], joint_vel[env_ids], env_ids=env_ids
+    )
+
+    root_state = torch.cat(
+      [
+        root_pos[env_ids],
+        root_ori[env_ids],
+        root_lin_vel[env_ids],
+        root_ang_vel[env_ids],
+      ],
+      dim=-1,
+    )
+
+    try:
+      box = self._env.scene.entities.get("box")  # type: ignore[attr-defined]
+    except Exception:
+      box = None
+
+    if box is not None and not box.data.is_fixed_base:
+      box_pos = self.object_pos_w[env_ids]
+      box_quat = self.object_quat_w[env_ids]
+      box_lin_vel = (
+        self.object_lin_vel_w[env_ids]
+        if self.object_lin_vel_w is not None
+        else torch.zeros(len(env_ids), 3, device=self.device)
+      )
+      box_ang_vel = (
+        self.object_ang_vel_w[env_ids]
+        if self.object_ang_vel_w is not None
+        else torch.zeros(len(env_ids), 3, device=self.device)
+      )
+
+      box_state = torch.cat(
+        [
+          box_pos,
+          box_quat,
+          box_lin_vel,
+          box_ang_vel,
+        ],
+        dim=-1,
+      )
+
+      box.write_root_state_to_sim(box_state, env_ids=env_ids)
+
+    self.robot.write_root_state_to_sim(root_state, env_ids=env_ids)
+
+    self.robot.clear_state(env_ids=env_ids)
+    if box is not None:
+      box.clear_state(env_ids=env_ids)
+
+  def _update_command(self):
+    self.time_steps += 1
+    # Check which envs have exceeded their motion's time steps
+    env_time_step_totals = self.motion_loader.get_time_step_total(self.motion_indices)
+    env_ids = torch.where(self.time_steps >= env_time_step_totals)[0]
+    if env_ids.numel() > 0:
+      self._resample_command(env_ids)
+
+    anchor_pos_w_repeat = self.anchor_pos_w[:, None, :].repeat(
+      1, len(self.cfg.body_names), 1
+    )
+    anchor_quat_w_repeat = self.anchor_quat_w[:, None, :].repeat(
+      1, len(self.cfg.body_names), 1
+    )
+    robot_anchor_pos_w_repeat = self.robot_anchor_pos_w[:, None, :].repeat(
+      1, len(self.cfg.body_names), 1
+    )
+    robot_anchor_quat_w_repeat = self.robot_anchor_quat_w[:, None, :].repeat(
+      1, len(self.cfg.body_names), 1
+    )
+
+    delta_pos_w = robot_anchor_pos_w_repeat
+    delta_pos_w[..., 2] = anchor_pos_w_repeat[..., 2]
+    delta_ori_w = yaw_quat(
+      quat_mul(robot_anchor_quat_w_repeat, quat_inv(anchor_quat_w_repeat))
+    )
+
+    self.body_quat_relative_w = quat_mul(delta_ori_w, self.body_quat_w)
+    self.body_pos_relative_w = delta_pos_w + quat_apply(
+      delta_ori_w, self.body_pos_w - anchor_pos_w_repeat
+    )
+
+    if self.cfg.sampling_mode == "adaptive":
+      self.bin_failed_count = (
+        self.cfg.adaptive_alpha * self._current_bin_failed
+        + (1 - self.cfg.adaptive_alpha) * self.bin_failed_count
+      )
+      self._current_bin_failed.zero_()
+
+    # Update contact indicator from motion data
+    if self._has_contact:
+      contact_data = self.motion_loader.get_motion_data(
+        self.motion_indices, self.time_steps, "object_contact"
+      )
+      if contact_data.ndim == 1:
+        contact_data = contact_data.unsqueeze(1)
+      self.ref_object_contact_future = contact_data.unsqueeze(1)
+      self.ref_object_contact = contact_data
+
+  def _debug_vis_impl(self, visualizer: DebugVisualizer) -> None:
+    """Draw ghost robot or frames based on visualization mode."""
+    if self.cfg.viz.mode == "ghost":
+      if self._ghost_model is None:
+        self._ghost_model = copy.deepcopy(self._env.sim.mj_model)
+        self._ghost_model.geom_rgba[:] = self._ghost_color
+
+      entity: Entity = self._env.scene[self.cfg.asset_name]
+      indexing = entity.indexing
+      free_joint_q_adr = indexing.free_joint_q_adr.cpu().numpy()
+      joint_q_adr = indexing.joint_q_adr.cpu().numpy()
+
+      qpos = np.zeros(self._env.sim.mj_model.nq)
+      qpos[free_joint_q_adr[0:3]] = self.body_pos_w[visualizer.env_idx, 0].cpu().numpy()
+      qpos[free_joint_q_adr[3:7]] = (
+        self.body_quat_w[visualizer.env_idx, 0].cpu().numpy()
+      )
+      qpos[joint_q_adr] = self.joint_pos[visualizer.env_idx].cpu().numpy()
+
+      box = self._env.scene.entities.get("box")
+      if box is not None:
+        box_free_joint_q_adr = box.indexing.free_joint_q_adr.cpu().numpy()
+        target_pos = self.object_pos_w[visualizer.env_idx].cpu().numpy()
+        target_quat = self.object_quat_w[visualizer.env_idx].cpu().numpy()
+        qpos[box_free_joint_q_adr[:3]] = target_pos
+        qpos[box_free_joint_q_adr[3:7]] = target_quat
+
+      visualizer.add_ghost_mesh(qpos, model=self._ghost_model)
+
+    elif self.cfg.viz.mode == "frames":
+      desired_body_pos = self.body_pos_w[visualizer.env_idx].cpu().numpy()
+      desired_body_quat = self.body_quat_w[visualizer.env_idx]
+      desired_body_rotm = matrix_from_quat(desired_body_quat).cpu().numpy()
+
+      current_body_pos = self.robot_body_pos_w[visualizer.env_idx].cpu().numpy()
+      current_body_quat = self.robot_body_quat_w[visualizer.env_idx]
+      current_body_rotm = matrix_from_quat(current_body_quat).cpu().numpy()
+
+      for i, body_name in enumerate(self.cfg.body_names):
+        visualizer.add_frame(
+          position=desired_body_pos[i],
+          rotation_matrix=desired_body_rotm[i],
+          scale=0.08,
+          label=f"desired_{body_name}",
+          axis_colors=_DESIRED_FRAME_COLORS,
+        )
+        visualizer.add_frame(
+          position=current_body_pos[i],
+          rotation_matrix=current_body_rotm[i],
+          scale=0.12,
+          label=f"current_{body_name}",
+        )
+
+      desired_anchor_pos = self.anchor_pos_w[visualizer.env_idx].cpu().numpy()
+      desired_anchor_quat = self.anchor_quat_w[visualizer.env_idx]
+      desired_rotation_matrix = matrix_from_quat(desired_anchor_quat).cpu().numpy()
+      visualizer.add_frame(
+        position=desired_anchor_pos,
+        rotation_matrix=desired_rotation_matrix,
+        scale=0.1,
+        label="desired_anchor",
+        axis_colors=_DESIRED_FRAME_COLORS,
+      )
+
+      current_anchor_pos = self.robot_anchor_pos_w[visualizer.env_idx].cpu().numpy()
+      current_anchor_quat = self.robot_anchor_quat_w[visualizer.env_idx]
+      current_rotation_matrix = matrix_from_quat(current_anchor_quat).cpu().numpy()
+      visualizer.add_frame(
+        position=current_anchor_pos,
+        rotation_matrix=current_rotation_matrix,
+        scale=0.15,
+        label="current_anchor",
+      )
+
+
+@dataclass(kw_only=True)
+class MultiMotionCommandCfg(CommandTermCfg):
+  motion_dir: str = "motions/output"
+  traj_name_patterns: list[str] = field(default_factory=lambda: [".*"])
+  anchor_body_name: str
+  body_names: tuple[str, ...]
+  eef_body_names: tuple[str, ...]
+  asset_name: str
+  class_type: type[CommandTerm] = MultiMotionCommand
   pose_range: dict[str, tuple[float, float]] = field(default_factory=dict)
   velocity_range: dict[str, tuple[float, float]] = field(default_factory=dict)
   joint_position_range: tuple[float, float] = (-0.52, 0.52)

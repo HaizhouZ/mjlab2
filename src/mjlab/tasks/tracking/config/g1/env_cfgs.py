@@ -3,7 +3,11 @@
 import math
 
 import mjlab.tasks.tracking.mdp as mdp
-from mjlab.asset_zoo.robots import G1_ACTION_SCALE, get_box_cfg, get_g1_robot_cfg
+from mjlab.asset_zoo.robots import (
+  G1_ACTION_SCALE,
+  get_g1_robot_cfg,
+  get_largebox_cfg,
+)
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import (
   JointPositionActionCfg,
@@ -18,7 +22,7 @@ from mjlab.managers.manager_term_config import (
 )
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
-from mjlab.tasks.tracking.mdp import MotionCommandCfg
+from mjlab.tasks.tracking.mdp import MotionCommandCfg, MultiMotionCommandCfg
 from mjlab.tasks.tracking.tracking_env_cfg import make_tracking_env_cfg
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 
@@ -120,7 +124,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   """Create Unitree G1 flat terrain tracking configuration with a box."""
   cfg = unitree_g1_flat_tracking_env_cfg(has_state_estimation=has_state_estimation)
 
-  cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_box_cfg()}
+  cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_largebox_cfg()}
 
   ###
   # Contact Sensors
@@ -343,6 +347,79 @@ def unitree_g1_flat_tracking_env_cfg_box(
     # motion_cmd.pose_range = {}
     # motion_cmd.velocity_range = {}
 
-    motion_cmd.sampling_mode = "start"
+    motion_cmd.sampling_mode = "uniform"
+
+  return cfg
+
+
+def unitree_g1_flat_multitracking_env_cfg_box(
+  has_state_estimation: bool = True,
+  play: bool = False,
+) -> ManagerBasedRlEnvCfg:
+  """Create Unitree G1 flat terrain tracking configuration with a box."""
+  cfg = unitree_g1_flat_tracking_env_cfg_box(has_state_estimation=has_state_estimation)
+
+  assert cfg.commands is not None
+  cfg.commands["motion"] = MultiMotionCommandCfg(
+    asset_name="robot",
+    anchor_body_name="torso_link",
+    body_names=(
+      "pelvis",
+      "left_hip_roll_link",
+      "left_knee_link",
+      "left_ankle_roll_link",
+      "right_hip_roll_link",
+      "right_knee_link",
+      "right_ankle_roll_link",
+      "torso_link",
+      "left_shoulder_roll_link",
+      "left_elbow_link",
+      "left_wrist_yaw_link",
+      "right_shoulder_roll_link",
+      "right_elbow_link",
+      "right_wrist_yaw_link",
+    ),
+    pose_range={
+      "x": (-0.05, 0.05),
+      "y": (-0.05, 0.05),
+      "z": (-0.01, 0.01),
+      "roll": (-0.1, 0.1),
+      "pitch": (-0.1, 0.1),
+      "yaw": (-0.2, 0.2),
+    },
+    velocity_range={
+      "x": (-0.5, 0.5),
+      "y": (-0.5, 0.5),
+      "z": (-0.2, 0.2),
+      "roll": (-0.52, 0.52),
+      "pitch": (-0.52, 0.52),
+      "yaw": (-0.78, 0.78),
+    },
+    joint_position_range=(-0.1, 0.1),
+    eef_body_names=("left_wrist_yaw_link", "right_wrist_yaw_link"),
+    motion_dir="motions/output/multi",
+    traj_name_patterns=[".*"],
+    debug_vis=True,
+    resampling_time_range=(1e9, 1e9),
+  )
+
+  # Apply play mode overrides.
+  if play:
+    # Effectively infinite episode length.
+    cfg.episode_length_s = int(1e9)
+
+    cfg.observations["policy"].enable_corruption = False
+    cfg.events.pop("push_robot", None)
+    cfg.events.pop("push_object", None)
+
+    # # Disable RSI randomization.
+    # motion_cmd.pose_range = {}
+    # motion_cmd.velocity_range = {}
+    # cfg.terminations["base_ang_vel_exceed"] = None
+    # cfg.terminations["ee_body_pos"] = None
+    # cfg.terminations["anchor_pos"] = None
+    # cfg.terminations["anchor_ori"] = None
+
+    cfg.commands["motion"].sampling_mode = "start"
 
   return cfg
