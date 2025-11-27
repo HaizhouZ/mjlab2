@@ -14,7 +14,7 @@ from rsl_rl.runners import OnPolicyRunner
 from mjlab.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
 from mjlab.rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
-from mjlab.tasks.tracking.mdp import MotionCommandCfg
+from mjlab.tasks.tracking.mdp import MotionCommandCfg, MultiMotionCommandCfg
 from mjlab.utils.gpu import select_gpus
 from mjlab.utils.os import dump_yaml, get_checkpoint_path, get_wandb_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
@@ -27,6 +27,7 @@ class TrainConfig:
   agent: RslRlOnPolicyRunnerCfg
   registry_name: str | None = None
   motion_file: str | None = None
+  motion_dir: str | None = None
   device: str = "cuda:0"
   video: bool = False
   video_length: int = 200
@@ -72,13 +73,15 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
   is_tracking_task = (
     cfg.env.commands is not None
     and "motion" in cfg.env.commands
-    and isinstance(cfg.env.commands["motion"], MotionCommandCfg)
+    and isinstance(
+      cfg.env.commands["motion"], (MotionCommandCfg, MultiMotionCommandCfg)
+    )
   )
 
   if is_tracking_task:
     assert cfg.env.commands is not None
     motion_cmd = cfg.env.commands["motion"]
-    assert isinstance(motion_cmd, MotionCommandCfg)
+    assert isinstance(motion_cmd, (MotionCommandCfg, MultiMotionCommandCfg))
 
     if cfg.registry_name:
       # Check if the registry name includes alias, if not, append ":latest".
@@ -89,17 +92,26 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
 
       api = wandb.Api()
       artifact = api.artifact(registry_name)
-      motion_cmd.motion_file = str(Path(artifact.download()) / "motion.npz")
+      if isinstance(motion_cmd, MotionCommandCfg):
+        motion_cmd.motion_file = str(Path(artifact.download()) / "motion.npz")
+      elif isinstance(motion_cmd, MultiMotionCommandCfg):
+        motion_dir = str(Path(artifact.download()) / "motions")
+        motion_cmd.motion_dir = motion_dir
+        motion_cmd.traj_name_patterns = [".*"]
     elif cfg.motion_file is not None:
       # motion_file provided via CLI: --motion-file /path/to/motion.npz
       print(f"[INFO] Using local motion file: {cfg.motion_file}")
-      motion_cmd.motion_file = cfg.motion_file
-    elif getattr(motion_cmd, "motion_file", None) and motion_cmd.motion_file:
-      # motion_file already set in config
-      print(f"[INFO] Using motion file from config: {motion_cmd.motion_file}")
+      if isinstance(motion_cmd, MotionCommandCfg):
+        motion_cmd.motion_file = cfg.motion_file
+      elif isinstance(motion_cmd, MultiMotionCommandCfg):
+        motion_dir = cfg.motion_dir
+        if motion_dir is None:
+          raise ValueError("Must provide --motion-dir for multi-motion tracking tasks.")
+        motion_cmd.motion_dir = motion_dir
+        motion_cmd.traj_name_patterns = [".*"]
     else:
       raise ValueError(
-        "Must provide --registry-name or --motion-file for tracking tasks."
+        "Must provide --registry-name or --motion-file or --motion-dir for tracking tasks."
       )
 
   # Enable NaN guard if requested.
