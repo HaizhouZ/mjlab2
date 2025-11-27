@@ -252,7 +252,7 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "self_collisions": RewardTermCfg(
       func=mdp.self_collision_cost,
-      weight=-10.0,
+      weight=-1.0,
       params={"sensor_name": "self_collision"},
     ),
   }
@@ -279,7 +279,7 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
       func=mdp.bad_motion_body_pos_z_only,
       params={
         "command_name": "motion",
-        "threshold": 0.25,
+        "threshold": 0.2,
         "body_names": (),  # Set per-robot.
       },
     ),
@@ -307,7 +307,7 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     sim=SimulationCfg(
       nconmax=35,
-      njmax=250,
+      njmax=400,
       mujoco=MujocoCfg(
         timestep=0.005,
         iterations=10,

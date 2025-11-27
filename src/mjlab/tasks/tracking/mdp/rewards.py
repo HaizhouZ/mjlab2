@@ -7,7 +7,7 @@ import torch
 from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactData, ContactSensor
-from mjlab.third_party.isaaclab.isaaclab.utils.math import quat_error_magnitude
+from mjlab.utils.lab_api.math import quat_error_magnitude
 
 from .commands import MotionCommand
 
@@ -380,6 +380,6 @@ def eef_contact_indicator_match(
   # Vectorized reward computation with force penalty
   # Reward = gain * sum(contact_detected * force_penalty) for each environment
   # The force_penalty multiplies the reward, reducing it when forces exceed threshold
-  reward = gain * (contact_detected.float() * force_penalty).mean(dim=1)  # (num_envs,)
+  reward = gain * (contact_detected.float() * force_penalty).sum(dim=1)  # (num_envs,)
   # print(reward)
   return reward

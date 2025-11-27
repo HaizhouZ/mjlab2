@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import mujoco
+import numpy as np
 
 from mjlab import MJLAB_SRC_PATH
 from mjlab.actuator import BuiltinPositionActuatorCfg
@@ -40,7 +41,7 @@ def get_spec_box() -> mujoco.MjSpec:
   spec = mujoco.MjSpec()
   world = spec.worldbody
   body = world.add_body(name="largebox_link")
-  body.pos = (0.35, 0.0, 0.115)
+  body.pos = np.array([0.35, 0.0, 0.115], dtype=np.float64)
   body.add_freejoint(name="largebox_freejoint")
   geom = body.add_geom(
     name="largebox_geom",
@@ -50,7 +51,7 @@ def get_spec_box() -> mujoco.MjSpec:
     mass=0.6,
   )
   # Slightly translucent color similar to user's cube
-  geom.rgba = (0.2, 0.6, 0.8, 1.0)
+  geom.rgba = np.array([0.2, 0.6, 0.8, 1.0], dtype=np.float32)
   return spec
 
 def get_spec_largebox() -> mujoco.MjSpec:
@@ -252,6 +253,10 @@ KNEES_BENT_KEYFRAME = EntityCfg.InitialStateCfg(
     "left_shoulder_pitch_joint": 0.2,
     "right_shoulder_roll_joint": -0.2,
     "right_shoulder_pitch_joint": 0.2,
+    ".*_wrist_roll_joint": 0.0,
+    ".*_wrist_pitch_joint": 0.0,
+    "left_wrist_yaw_joint": -1.61 * 0.89,
+    "right_wrist_yaw_joint": 1.61 * 0.89,
   },
   joint_vel={".*": 0.0},
 )
@@ -265,9 +270,15 @@ KNEES_BENT_KEYFRAME = EntityCfg.InitialStateCfg(
 # are given condim=3.
 FULL_COLLISION = CollisionCfg(
   geom_names_expr=(".*_collision",),
-  condim={r"^(left|right)_foot[1-7]_collision$": 3, ".*_collision": 1},
-  priority={r"^(left|right)_foot[1-7]_collision$": 1},
-  friction={r"^(left|right)_foot[1-7]_collision$": (0.6,)},
+  condim={r"^(left|right)_(foot|wrist|hand)[1-7]?_collision$": 3, ".*_collision": 1},
+  priority={r"^(left|right)_(foot|wrist|hand)[1-7]?_collision$": 1},
+  friction={
+    r"^(left|right)_foot[1-7]?_collision$": (0.6,),
+    r"^(left|right)_wrist[1-7]?_collision$": (0.6,),
+  },
+  # condim={r"^(left|right)_foot[1-7]_collision$": 3, ".*_collision": 1},
+  # priority={r"^(left|right)_foot[1-7]_collision$": 1},
+  # friction={r"^(left|right)_foot[1-7]_collision$": (0.6,)},
 )
 
 FULL_COLLISION_WITHOUT_SELF = CollisionCfg(
@@ -342,6 +353,12 @@ def get_largebox_cfg() -> EntityCfg:
   )
 
 
+CONSTANT_ACTION_SCALE = 0.0
+CONST_JOINT_NAMES = [
+  # ".*_wrist_pitch_joint",
+  # ".*_wrist_yaw_joint",
+  # ".*_wrist_roll_joint",
+]
 G1_ACTION_SCALE: dict[str, float] = {}
 for a in G1_ARTICULATION.actuators:
   assert isinstance(a, BuiltinPositionActuatorCfg)
@@ -350,7 +367,10 @@ for a in G1_ARTICULATION.actuators:
   names = a.joint_names_expr
   assert e is not None
   for n in names:
-    G1_ACTION_SCALE[n] = 0.25 * e / s
+    if n in CONST_JOINT_NAMES:
+      G1_ACTION_SCALE[n] = CONSTANT_ACTION_SCALE
+    else:
+      G1_ACTION_SCALE[n] = 0.25 * e / s
 
 
 if __name__ == "__main__":

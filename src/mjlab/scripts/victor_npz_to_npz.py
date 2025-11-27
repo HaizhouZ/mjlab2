@@ -15,7 +15,7 @@ from mjlab.tasks.tracking.config.g1.env_cfgs import (
   unitree_g1_flat_tracking_env_cfg,
   unitree_g1_flat_tracking_env_cfg_box,
 )
-from mjlab.third_party.isaaclab.isaaclab.utils.math import (
+from mjlab.utils.lab_api.math import (
   axis_angle_from_quat,
   quat_apply,
   quat_apply_inverse,
@@ -264,123 +264,145 @@ class TrajectoryNpzSimLoader:
     self._prepend_start_transition()
     self._repeat_first_frame()
     self._repeat_last_frame()
-    self._append_standup_transition()
-    self._append_reverse()
+    # Compute velocities before appending reverse so we can properly reverse and negate them
     self._compute_velocities_from_resampled()
+    self._append_reverse()
+
+  def _load_ilyass_pickle(self, file_path: str):
+    """Load Ilyass-format pickle containing:
+       fps, root_pos, root_rot(xyzw), dof_pos, object_pos, object_rot(xyzw)
+    """
+
+    import pickle
+
+    with open(file_path, "rb") as f:
+        data = pickle.load(f)
+
+    required_keys = [
+        "fps",
+        "root_pos",
+        "root_rot",
+        "dof_pos",
+        "object_pos",
+        "object_rot",
+    ]
+    for k in required_keys:
+        if k not in data:
+            raise ValueError(f"Missing key '{k}' in Ilyass pickle")
+
+    # Extract
+    root_pos = np.asarray(data["root_pos"], dtype=np.float32)  # (T, 3)
+    root_rot_xyzw = np.asarray(data["root_rot"], dtype=np.float32)  # (T, 4)
+    dof_pos = np.asarray(data["dof_pos"], dtype=np.float32)  # (T, 29)
+    obj_pos = np.asarray(data["object_pos"], dtype=np.float32)  # (T, 3)
+    obj_rot_xyzw = np.asarray(data["object_rot"], dtype=np.float32)  # (T, 4)
+    fps = int(data["fps"])
+
+    T = root_pos.shape[0]
+
+    # Build artificial time array
+    times_np = np.arange(T, dtype=np.float32) * (1.0 / fps)
+
+    # Convert xyzw → wxyz
+    root_rot_wxyz = root_rot_xyzw[:, [3, 0, 1, 2]]
+    obj_rot_wxyz = obj_rot_xyzw[:, [3, 0, 1, 2]]
+
+    # Store internally in the same format as the Standard NPZ loader
+    self.input_times_np = times_np
+    self.input_times = torch.from_numpy(times_np).to(self.device)
+    self.input_frames = T
+
+    self.motion_base_poss_input = torch.from_numpy(root_pos).to(self.device)
+    self.motion_base_rots_input = _normalize_quat(
+        torch.from_numpy(root_rot_wxyz).to(self.device)
+    )
+    self.motion_dof_poss_input = torch.from_numpy(dof_pos).to(self.device)
+
+    # Object is always present in this format
+    self.has_object = True
+    self.object_pos_input = torch.from_numpy(obj_pos).to(self.device)
+    self.object_rots_input = _normalize_quat(
+        torch.from_numpy(obj_rot_wxyz).to(self.device)
+    )
+
+    # Timing info
+    self.duration = float(times_np[-1] - times_np[0]) if T > 1 else 0.0
+    self.input_dt = float(self.duration / max(1, T - 1)) if T > 1 else 1.0 / fps
+    self.input_fps = fps
+
 
   def _load(self) -> None:
-    data = np.load(self.input_file, allow_pickle=True)
+    """Unified loader for Victor NPZ, Standard NPZ, and Ilyass PKL formats."""
 
-    # Check if this is Victor format or standard format
+    # Automatically detect pickle format
+    if self.input_file.endswith(".pkl"):
+        print("[Loader] Detected Ilyass pickle format.")
+        return self._load_ilyass_pickle(self.input_file)
+
+    # Otherwise load NPZ
+    data = np.load(self.input_file, allow_pickle=True)
+    print("[Loader] Detected NPZ format.")
+
+    # Victor format
     is_victor_format = "base_xyz_quat" in data and "actuator_pos" in data
 
     if is_victor_format:
-      # Victor format: separate arrays for base and actuator data
-      assert "time" in data, f"Key 'time' not found in {self.input_file}"
-      times_np = data["time"].astype(np.float32)
+        print("[Loader] Using Victor format loader.")
+        times_np = data["time"].astype(np.float32)
 
-      # Load base pose (xyz + quat)
-      base_xyz_quat = data["base_xyz_quat"].astype(
-        np.float32
-      )  # (T, 7): [x, y, z, qw, qx, qy, qz]
-      assert base_xyz_quat.shape[1] == 7, (
-        f"base_xyz_quat must have 7 columns, got {base_xyz_quat.shape}"
-      )
+        base_xyz_quat = data["base_xyz_quat"].astype(np.float32)
+        actuator_pos = data["actuator_pos"].astype(np.float32)
 
-      # Load actuator positions
-      actuator_pos = data["actuator_pos"].astype(np.float32)  # (T, 29)
-      assert actuator_pos.shape[1] == 29, (
-        f"actuator_pos must have 29 columns, got {actuator_pos.shape}"
-      )
+        T = times_np.shape[0]
+        self.input_times_np = times_np
+        self.input_times = torch.from_numpy(times_np).to(self.device)
 
-      T = times_np.shape[0]
-      assert base_xyz_quat.shape[0] == T, "base_xyz_quat length must match time length"
-      assert actuator_pos.shape[0] == T, "actuator_pos length must match time length"
-
-      self.input_times_np = times_np
-      self.input_times = torch.from_numpy(times_np).to(self.device)
-
-      # Extract base position and rotation
-      self.motion_base_poss_input = torch.from_numpy(base_xyz_quat[:, 0:3]).to(
-        self.device
-      )  # xyz
-      self.motion_base_rots_input = _normalize_quat(
-        torch.from_numpy(base_xyz_quat[:, 3:7]).to(self.device)  # quat (w, x, y, z)
-      )
-      self.motion_dof_poss_input = torch.from_numpy(actuator_pos).to(self.device)
-
-      # Check for object data
-      self.has_object = False
-      if "obj_0_xyz_quat" in data:
-        obj_xyz_quat = data["obj_0_xyz_quat"].astype(np.float32)  # (T, 7)
-        assert obj_xyz_quat.shape == (T, 7), (
-          f"obj_0_xyz_quat must be shape ({T}, 7), got {obj_xyz_quat.shape}"
+        self.motion_base_poss_input = torch.from_numpy(
+            base_xyz_quat[:, 0:3]
+        ).to(self.device)
+        self.motion_base_rots_input = _normalize_quat(
+            torch.from_numpy(base_xyz_quat[:, 3:7]).to(self.device)
         )
-        self.has_object = True
-        self.object_pos_input = torch.from_numpy(obj_xyz_quat[:, 0:3]).to(self.device)
-        self.object_rots_input = _normalize_quat(
-          torch.from_numpy(obj_xyz_quat[:, 3:7]).to(self.device)
-        )
+        self.motion_dof_poss_input = torch.from_numpy(actuator_pos).to(self.device)
+
+        self.has_object = False
+        if "obj_0_xyz_quat" in data:
+            obj = data["obj_0_xyz_quat"].astype(np.float32)
+            self.has_object = True
+            self.object_pos_input = torch.from_numpy(obj[:, 0:3]).to(self.device)
+            self.object_rots_input = _normalize_quat(
+                torch.from_numpy(obj[:, 3:7]).to(self.device)
+            )
+
     else:
-      # Standard format: single 'x' array
-      assert "x" in data, f"Key 'x' not found in {self.input_file}"
-      x_np = data["x"]
-      assert x_np.ndim == 2 and x_np.shape[1] in (71, 84), (
-        f"x must be (T,71) or (T,84); got {x_np.shape}"
-      )
-
-      assert "time" in data, f"Key 'time' not found in {self.input_file}"
-      times_np = data["time"].astype(np.float32)
-      assert times_np.ndim == 1 and times_np.shape[0] == x_np.shape[0], (
-        "times must be 1D and match x length"
-      )
-
-      self.input_times_np = times_np
-      self.input_times = torch.from_numpy(times_np).to(self.device)
-
-      T = x_np.shape[0]
-      rs = torch.from_numpy(x_np.astype(np.float32)).to(self.device)
-
-      # Use only qpos portions: [pos(3), quat wxyz(4), joint pos(29)]
-      # New format (T,84) has x = (qpos(43), qvel(41)). Legacy (T,71) keeps only qpos fields.
-      self.motion_base_poss_input = rs[:, 0:3]
-      self.motion_base_rots_input = _normalize_quat(rs[:, 3:7])
-      self.motion_dof_poss_input = rs[:, 7:36]
-
-      # Optional object
-      # Priority: if x has embedded object in qpos (shape 84), use that; otherwise fallback to separate 'object_states'
-      self.has_object = False
-      if x_np.shape[1] == 84:
-        # x = (qpos(43), qvel(41)) where:
-        # qpos[0:7] - first 7 entries (base pos(3) + base quat(4))
-        # qpos[7:36] - next 29 entries (joint positions)
-        # qpos[36:40] = obj_quat_wxyz (4 values: w, x, y, z)
-        # qpos[40:43] = obj_pos (3 values: x, y, z)
-        self.has_object = True
-        self.object_rots_input = _normalize_quat(rs[:, 36:40])
-        self.object_pos_input = rs[:, 40:43]
-        assert self.object_rots_input.shape == (T, 4), (
-          f"object_rots_input shape mismatch: expected ({T}, 4), got {self.object_rots_input.shape}"
+        print("[Loader] Using Standard NPZ format loader.")
+        assert "x" in data, (
+            f"Key 'x' not found in standard NPZ file: {self.input_file}"
         )
-        assert self.object_pos_input.shape == (T, 3), (
-          f"object_pos_input shape mismatch: expected ({T}, 3), got {self.object_pos_input.shape}"
-        )
-      elif "object_states" in data:
-        obj_np = data["object_states"].astype(np.float32)
-        assert obj_np.ndim == 2 and obj_np.shape[0] == T and obj_np.shape[1] == 7, (
-          "object_states must be shape (T,7)"
-        )
-        self.has_object = True
-        self.object_pos_input = torch.from_numpy(obj_np[:, 0:3]).to(self.device)
-        self.object_rots_input = _normalize_quat(
-          torch.from_numpy(obj_np[:, 3:7]).to(self.device)
-        )
+        x_np = data["x"].astype(np.float32)
 
-    T = len(self.input_times_np)
-    self.input_frames = int(T)
-    self.duration = (
-      float(self.input_times_np[-1] - self.input_times_np[0]) if T > 1 else 0.0
-    )
+        times_np = data["time"].astype(np.float32)
+        T = x_np.shape[0]
+
+        self.input_times_np = times_np
+        self.input_times = torch.from_numpy(times_np).to(self.device)
+
+        rs = torch.from_numpy(x_np).to(self.device)
+
+        self.motion_base_poss_input = rs[:, 0:3]
+        self.motion_base_rots_input = _normalize_quat(rs[:, 3:7])
+        self.motion_dof_poss_input = rs[:, 7:36]
+
+        # Optional embedded object: identical to your previous code
+        self.has_object = False
+        if x_np.shape[1] >= 43:  # qpos(43) → includes object (quat + pos)
+            self.has_object = True
+            self.object_rots_input = _normalize_quat(rs[:, 36:40])
+            self.object_pos_input = rs[:, 40:43]
+
+    # Timing setup for all formats
+    self.input_frames = T
+    self.duration = float(times_np[-1] - times_np[0]) if T > 1 else 0.0
     self.input_dt = float(self.duration / max(1, T - 1)) if T > 1 else self.output_dt
     self.input_fps = int(round(1.0 / max(1e-8, self.input_dt)))
 
@@ -605,10 +627,15 @@ class TrajectoryNpzSimLoader:
     self.output_frames += self.repeat_last_frame
 
   def _append_reverse(self) -> None:
-    """Append the reversed motion trajectory at the end."""
+    """Append the reversed motion trajectory at the end.
+
+    Reverses positions, rotations, and velocities. Velocities are negated
+    because the motion is going backwards. The last frame of the original
+    trajectory becomes the first frame of the reversed trajectory (duplicate),
+    which creates a smooth transition.
+    """
     if not self.append_reverse:
       return
-
     # Store original frame count before appending
     original_frames = self.output_frames
 
@@ -617,9 +644,23 @@ class TrajectoryNpzSimLoader:
     reversed_rot = torch.flip(self.motion_base_rots, dims=[0])
     reversed_dof = torch.flip(self.motion_dof_poss, dims=[0])
 
+    # Reverse and negate velocities (velocities should point in opposite direction)
+    reversed_lin_vel = -torch.flip(self.motion_base_lin_vels, dims=[0])
+    reversed_ang_vel = -torch.flip(self.motion_base_ang_vels, dims=[0])
+    reversed_dof_vel = -torch.flip(self.motion_dof_vels, dims=[0])
+
     self.motion_base_poss = torch.cat([self.motion_base_poss, reversed_pos], dim=0)
     self.motion_base_rots = torch.cat([self.motion_base_rots, reversed_rot], dim=0)
     self.motion_dof_poss = torch.cat([self.motion_dof_poss, reversed_dof], dim=0)
+
+    # Append reversed and negated velocities
+    self.motion_base_lin_vels = torch.cat(
+      [self.motion_base_lin_vels, reversed_lin_vel], dim=0
+    )
+    self.motion_base_ang_vels = torch.cat(
+      [self.motion_base_ang_vels, reversed_ang_vel], dim=0
+    )
+    self.motion_dof_vels = torch.cat([self.motion_dof_vels, reversed_dof_vel], dim=0)
 
     if self.has_object:
       reversed_obj_pos = torch.flip(self.object_poss, dims=[0])
@@ -801,17 +842,18 @@ def convert(
   # The body_names in the config are used for tracking/observation, but motion files need all bodies
   print(f"Robot has {len(robot.body_names)} bodies: {robot.body_names}")
 
-  # End effector names for contact detection
-  eef_names = ["left_wrist_yaw_link", "right_wrist_yaw_link"]
+  # End effector site names for contact detection
+  eef_names = ["left_palm", "right_palm"]
 
-  # Get end effector body indices in robot.body_names
-  eef_indices = []
-  for eef_name in eef_names:
-    if eef_name in robot.body_names:
-      eef_indices.append(robot.body_names.index(eef_name))
-    else:
-      print(f"Warning: End effector '{eef_name}' not found in robot body names")
-      eef_indices.append(-1)
+  # Get end effector site indices in robot.site_names
+  eef_indices, eef_names_found = robot.find_sites(eef_names, preserve_order=True)
+  for i, eef_name in enumerate(eef_names):
+    if i >= len(eef_indices) or eef_indices[i] < 0:
+      print(f"Warning: End effector site '{eef_name}' not found in robot site names")
+      if i >= len(eef_indices):
+        eef_indices.append(-1)
+      else:
+        eef_indices[i] = -1
 
   # Store object size for distance method (will be set during first frame if using distance method)
   object_size_global = None
@@ -911,11 +953,22 @@ def convert(
       obj_pos_slice[:, :2] += scene.env_origins[:, :2]
 
       obj_pose = torch.cat([obj_pos_slice, curr_obj_rot_motion], dim=-1)
+      assert (
+        box is not None
+      )  # Type narrowing: box is guaranteed to be not None when log_object is True
       box.write_root_link_pose_to_sim(obj_pose)
 
       # Store current position for next iteration
       prev_obj_pos_motion = curr_obj_pos_motion[0].clone()
       prev_obj_rot_motion = curr_obj_rot_motion[0].clone()
+
+      # Initialize velocities for this frame (always defined in both branches above)
+      obj_lin_vel_motion_frame = obj_lin_vel_motion
+      obj_ang_vel_motion_frame = obj_ang_vel_motion
+    else:
+      # Initialize dummy values when log_object is False (shouldn't be used)
+      obj_lin_vel_motion_frame = torch.zeros(3, device=device, dtype=torch.float32)
+      obj_ang_vel_motion_frame = torch.zeros(3, device=device, dtype=torch.float32)
 
     sim.forward()
     scene.update(sim.mj_model.opt.timestep)
@@ -937,6 +990,9 @@ def convert(
 
     if log_object:
       # Get object position from simulation (after setting pose and forward step)
+      assert (
+        box is not None
+      )  # Type narrowing: box is guaranteed to be not None when log_object is True
       curr_obj_pos = box.data.body_link_pos_w[0, 0].cpu().numpy().copy()
       curr_obj_rot = box.data.body_link_quat_w[0, 0].cpu().numpy().copy()
 
@@ -944,17 +1000,18 @@ def convert(
       log["object_quat_w"].append(curr_obj_rot)
 
       # Use velocities computed from motion data (computed earlier in the loop)
-      obj_lin_vel = obj_lin_vel_motion.cpu().numpy()
-      obj_ang_vel = obj_ang_vel_motion.cpu().numpy()
+      obj_lin_vel = obj_lin_vel_motion_frame.cpu().numpy()
+      obj_ang_vel = obj_ang_vel_motion_frame.cpu().numpy()
 
       log["object_lin_vel_w"].append(obj_lin_vel)
       log["object_ang_vel_w"].append(obj_ang_vel)
 
       # Use distance threshold method (simpler fallback)
-      # Get end effector positions from body_pos_w
+      # Get end effector positions from site_pos_w
+      site_pos_w = robot.data.site_pos_w[0, :].cpu().numpy().copy()
       eef_positions = np.array(
         [
-          body_pos_w[idx] if idx >= 0 else np.array([np.nan, np.nan, np.nan])
+          site_pos_w[idx] if idx >= 0 else np.array([np.nan, np.nan, np.nan])
           for idx in eef_indices
         ]
       )
@@ -966,16 +1023,15 @@ def convert(
         object_body_names = ["largebox_link", "box", "object"]
         object_body_id = -1
         for body_name in object_body_names:
-          object_body_id = mujoco.mj_name2id(
-            sim.mj_model, mujoco.mjtObj.mjOBJ_BODY, body_name
-          )
-          if object_body_id >= 0:
+          body_id = mujoco.mj_name2id(sim.mj_model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+          if body_id >= 0:
+            object_body_id = int(body_id)
             break
 
         if object_body_id >= 0:
           # Find geoms belonging to this body
           for geom_id in range(sim.mj_model.ngeom):
-            if sim.mj_model.geom_bodyid[geom_id] == object_body_id:
+            if int(sim.mj_model.geom_bodyid[geom_id]) == object_body_id:
               # Check if it's a box geometry
               if sim.mj_model.geom_type[geom_id] == mujoco.mjtGeom.mjGEOM_BOX:
                 object_size = sim.mj_model.geom_size[geom_id].copy()  # Half-extents
@@ -987,9 +1043,10 @@ def convert(
           try:
             geom_ids = box.indexing.geom_ids
             if len(geom_ids) > 0:
-              geom_id = (
+              geom_id_val = (
                 geom_ids[0].item() if hasattr(geom_ids[0], "item") else int(geom_ids[0])
               )
+              geom_id = int(geom_id_val)  # Ensure it's an int for indexing
               if sim.mj_model.geom_type[geom_id] == mujoco.mjtGeom.mjGEOM_BOX:
                 object_size = sim.mj_model.geom_size[geom_id].copy()
           except Exception:
@@ -1068,20 +1125,10 @@ def convert(
       # Print diagnostic info for distance method if no contacts found
       if contact_method == "distance" and log["contact_indicators"].sum() == 0:
         print("\n⚠️  Diagnostic information (no contacts detected):")
-        # Sample a few frames to check distances
-        sample_frames = min(10, num_frames)
-        if sample_frames > 0 and "body_pos_w" in log and "object_pos_w" in log:
-          print(f"  Sample frame analysis (first {sample_frames} frames):")
-          for frame_idx in range(sample_frames):
-            for i, eef_name in enumerate(eef_names):
-              if i < len(eef_indices) and eef_indices[i] >= 0:
-                try:
-                  eef_pos = log["body_pos_w"][frame_idx, eef_indices[i]]
-                  obj_pos = log["object_pos_w"][frame_idx]
-                  dist = np.linalg.norm(eef_pos - obj_pos)
-                  print(f"    Frame {frame_idx}, {eef_name}: distance = {dist:.4f}m")
-                except (IndexError, KeyError):
-                  pass
+        print(
+          "  Note: End effector positions are extracted from palm sites, not body positions."
+        )
+        print("  Check that palm sites are correctly positioned in the robot model.")
 
       print("\nPer-end-effector contact statistics:")
       for i, eef_name in enumerate(eef_names):

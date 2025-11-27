@@ -168,26 +168,26 @@ def unitree_g1_flat_tracking_env_cfg_box(
   ###
   # Motion Tracking Joint Position Action
   ###
-  # cfg.actions["joint_pos"] = MotionTrackingJointPositionActionCfg(
-  #   asset_name="robot",
-  #   actuator_names=(".*",),
-  #   scale=G1_ACTION_SCALE,
-  #   use_default_offset=True,
-  #   command_name="motion",
-  # )
+  cfg.actions["joint_pos"] = MotionTrackingJointPositionActionCfg(
+    asset_name="robot",
+    actuator_names=(".*",),
+    scale=G1_ACTION_SCALE,
+    use_default_offset=True,
+    command_name="motion",
+  )
 
   ###
   # Object Tracking Reward Terms
   ###
   cfg.rewards["contact_match"] = RewardTermCfg(
     func=mdp.eef_contact_indicator_match,
-    weight=2.0,
+    weight=1.0,
     params={
       "command_name": "motion",
       "eef_body_names": motion_cmd.eef_body_names,
       "sensor_names": ["left_eef_contact", "right_eef_contact"],
       "gain": 1.0,
-      "force_threshold": 12.0,
+      "force_threshold": 10.0,
       "force_penalty_std": 10.0,
     },
   )
@@ -202,11 +202,11 @@ def unitree_g1_flat_tracking_env_cfg_box(
   )
   cfg.rewards["object_global_ori"] = RewardTermCfg(
     func=mdp.object_global_orientation_error_exp,
-    weight=0.65,
+    weight=0.8,
     params={
       "command_name": "motion",
       "object_asset_cfg": SceneEntityCfg("box"),
-      "std": 0.4,
+      "std": 0.3,
     },
   )
   cfg.rewards["bad_termination"] = RewardTermCfg(
@@ -270,10 +270,18 @@ def unitree_g1_flat_tracking_env_cfg_box(
   # Actor (Policy) Object Tracking Observation Terms
   ###
   cfg.observations["policy"].terms["object_global_pos"] = ObservationTermCfg(
-    func=mdp.object_pos_b, params={"command_name": "motion"}
+    func=mdp.object_pos_b,
+    noise=Unoise(n_min=-0.1, n_max=0.1),
+    params={"command_name": "motion"},
   )
-  cfg.observations["policy"].terms["object_global_ori"] = ObservationTermCfg(
+  cfg.observations["policy"].terms["object_pos_error"] = ObservationTermCfg(
     func=mdp.object_position_error,
+    noise=Unoise(n_min=-0.05, n_max=0.05),
+    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
+  )
+  cfg.observations["policy"].terms["object_ori_error"] = ObservationTermCfg(
+    func=mdp.object_orientation_error,
+    noise=Unoise(n_min=-0.05, n_max=0.05),
     params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
   )
 
@@ -281,17 +289,30 @@ def unitree_g1_flat_tracking_env_cfg_box(
   # Critic Object Tracking Observation Terms
   ###
   cfg.observations["critic"].terms["object_global_pos"] = ObservationTermCfg(
-    func=mdp.object_pos_b, params={"command_name": "motion"}
+    func=mdp.object_pos_b, history_length=10, params={"command_name": "motion"}
   )
   cfg.observations["critic"].terms["object_global_ori"] = ObservationTermCfg(
-    func=mdp.object_position_error,
-    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
+    func=mdp.object_ori_b, history_length=10, params={"command_name": "motion"}
   )
   cfg.observations["critic"].terms["object_lin_vel_w"] = ObservationTermCfg(
-    func=mdp.object_lin_vel_w, params={"asset_cfg": SceneEntityCfg("box")}
+    func=mdp.object_lin_vel_w,
+    history_length=10,
+    params={"asset_cfg": SceneEntityCfg("box")},
   )
   cfg.observations["critic"].terms["object_ang_vel_w"] = ObservationTermCfg(
-    func=mdp.object_ang_vel_w, params={"asset_cfg": SceneEntityCfg("box")}
+    func=mdp.object_ang_vel_w,
+    history_length=10,
+    params={"asset_cfg": SceneEntityCfg("box")},
+  )
+  cfg.observations["critic"].terms["object_pos_error"] = ObservationTermCfg(
+    func=mdp.object_position_error,
+    history_length=10,
+    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
+  )
+  cfg.observations["critic"].terms["object_ori_error"] = ObservationTermCfg(
+    func=mdp.object_orientation_error,
+    history_length=10,
+    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
   )
 
   # Modify observations if we don't have state estimation.
