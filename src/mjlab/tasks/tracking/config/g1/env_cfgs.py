@@ -156,10 +156,34 @@ def unitree_g1_flat_tracking_env_cfg_box(
     num_slots=3,
   )
 
+  left_foot_contact_sensor = ContactSensorCfg(
+    name="left_foot_contact",
+    primary=ContactMatch(
+      mode="geom", pattern="left_foot[1-7]_collision", entity="robot"
+    ),
+    secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="box"),
+    fields=("found", "force", "pos"),
+    reduce="netforce",
+    num_slots=3,
+  )
+
+  right_foot_contact_sensor = ContactSensorCfg(
+    name="right_foot_contact",
+    primary=ContactMatch(
+      mode="geom", pattern="right_foot[1-7]_collision", entity="robot"
+    ),
+    secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="box"),
+    fields=("found", "force", "pos"),
+    reduce="netforce",
+    num_slots=3,
+  )
+
   cfg.scene.sensors = (
     self_collision_cfg,
     left_eef_contact_sensor,
     right_eef_contact_sensor,
+    left_foot_contact_sensor,
+    right_foot_contact_sensor,
   )
 
   assert cfg.commands is not None
@@ -191,7 +215,12 @@ def unitree_g1_flat_tracking_env_cfg_box(
     params={
       "command_name": "motion",
       "eef_body_names": motion_cmd.eef_body_names,
-      "sensor_names": ["left_eef_contact", "right_eef_contact"],
+      "sensor_names": [
+        "left_eef_contact",
+        "right_eef_contact",
+        "left_foot_contact",
+        "right_foot_contact",
+      ],
       "gain": 1.0,
       "force_threshold": 10.0,
       "force_penalty_std": 10.0,
