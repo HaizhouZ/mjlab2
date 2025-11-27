@@ -3,6 +3,7 @@ from mjlab.asset_zoo.robots.unitree_g1.g1_constants import (
 )
 from mjlab.asset_zoo.robots.unitree_g1.g1_constants import (
   get_box_cfg as get_box_cfg,
+  get_largebox_cfg as get_largebox_cfg,
 )
 from mjlab.asset_zoo.robots.unitree_g1.g1_constants import (
   get_g1_robot_cfg as get_g1_robot_cfg,

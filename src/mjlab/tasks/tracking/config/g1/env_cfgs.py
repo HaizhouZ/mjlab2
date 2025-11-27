@@ -3,7 +3,7 @@
 import math
 
 import mjlab.tasks.tracking.mdp as mdp
-from mjlab.asset_zoo.robots import G1_ACTION_SCALE, get_box_cfg, get_g1_robot_cfg
+from mjlab.asset_zoo.robots import G1_ACTION_SCALE, get_box_cfg, get_g1_robot_cfg, get_largebox_cfg
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import (
   JointPositionActionCfg,
@@ -118,7 +118,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   """Create Unitree G1 flat terrain tracking configuration with a box."""
   cfg = unitree_g1_flat_tracking_env_cfg(has_state_estimation=has_state_estimation)
 
-  cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_box_cfg()}
+  cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_largebox_cfg()}
 
   ###
   # Contact Sensors
