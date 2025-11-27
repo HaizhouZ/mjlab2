@@ -7,6 +7,7 @@ from mjlab.asset_zoo.robots import G1_ACTION_SCALE, get_box_cfg, get_g1_robot_cf
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import (
   JointPositionActionCfg,
+  MotionTrackingJointPositionActionCfg,
 )
 from mjlab.managers.manager_term_config import (
   EventTermCfg,
@@ -19,6 +20,7 @@ from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
 from mjlab.tasks.tracking.mdp import MotionCommandCfg
 from mjlab.tasks.tracking.tracking_env_cfg import make_tracking_env_cfg
+from mjlab.utils.noise import UniformNoiseCfg as Unoise
 
 _MAX_ANG_VEL = 500 * math.pi / 180.0  # [rad/s]
 
