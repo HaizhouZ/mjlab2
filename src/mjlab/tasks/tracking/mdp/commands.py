@@ -1123,10 +1123,17 @@ class MultiMotionCommand(CommandTerm):
       device=self.device,
     )
 
-    # Randomly assign motions to each environment
-    self.motion_indices = torch.randint(
-      0, self.motion_loader.num_motions, (self.num_envs,), device=self.device
-    )
+    # Assign motions to each environment based on assignment mode
+    if self.cfg.motion_assignment_mode == "linear":
+      # Linear assignment: env 0 -> motion 0, env 1 -> motion 1, etc. (wraps around)
+      self.motion_indices = (
+        torch.arange(self.num_envs, device=self.device) % self.motion_loader.num_motions
+      )
+    else:  # "random" (default)
+      # Randomly assign motions to each environment
+      self.motion_indices = torch.randint(
+        0, self.motion_loader.num_motions, (self.num_envs,), device=self.device
+      )
 
     self.time_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
     self.body_pos_relative_w = torch.zeros(
@@ -1796,6 +1803,7 @@ class MultiMotionCommandCfg(CommandTermCfg):
   adaptive_uniform_ratio: float = 0.1
   adaptive_alpha: float = 0.001
   sampling_mode: Literal["adaptive", "uniform", "start"] = "adaptive"
+  motion_assignment_mode: Literal["random", "linear"] = "random"
 
   @dataclass
   class VizCfg:

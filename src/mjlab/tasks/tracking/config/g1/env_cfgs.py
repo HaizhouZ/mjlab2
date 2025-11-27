@@ -421,5 +421,6 @@ def unitree_g1_flat_multitracking_env_cfg_box(
     # cfg.terminations["anchor_ori"] = None
 
     cfg.commands["motion"].sampling_mode = "start"
+    cfg.commands["motion"].motion_assignment_mode = "linear"
 
   return cfg
