@@ -156,7 +156,7 @@ class MultiMotionLoader:
 
     Args:
       motion_dir: Base directory containing trajectory subdirectories
-      traj_name_patterns: List of regex patterns to match trajectory names. Use ".*" to match all.
+      traj_name_patterns: List of regex patterns to match trajectory names (e.g., ".*" matches all).
       body_indexes: Body indices to extract from motion data
       device: Device to load tensors on
     """
@@ -166,23 +166,14 @@ class MultiMotionLoader:
 
     # Find all trajectory directories
     traj_dirs = []
-    if ".*" in traj_name_patterns:
-      # Match all directories
-      traj_dirs = [
+    for pattern in traj_name_patterns:
+      regex = re.compile(pattern)
+      matching_dirs = [
         d
         for d in motion_dir_path.iterdir()
-        if d.is_dir() and (d / "motion.npz").exists()
+        if d.is_dir() and regex.match(d.name) and (d / "motion.npz").exists()
       ]
-    else:
-      # Match based on regex patterns
-      for pattern in traj_name_patterns:
-        regex = re.compile(pattern)
-        matching_dirs = [
-          d
-          for d in motion_dir_path.iterdir()
-          if d.is_dir() and regex.match(d.name) and (d / "motion.npz").exists()
-        ]
-        traj_dirs.extend(matching_dirs)
+      traj_dirs.extend(matching_dirs)
 
     if not traj_dirs:
       raise ValueError(
@@ -390,6 +381,11 @@ class MultiMotionLoader:
     Returns:
       Tensor of shape (num_envs, ...) with motion data
     """
+    if torch.any(motion_indices < 0) or torch.any(motion_indices >= self.num_motions):
+      raise ValueError(
+        f"motion_indices out of range: min={motion_indices.min()}, max={motion_indices.max()}, num_motions={self.num_motions}"
+      )
+
     # Clamp time steps to valid range for each motion
     max_times = self.time_step_totals[motion_indices] - 1
     time_steps_clamped = torch.minimum(time_steps, max_times)
@@ -1093,6 +1089,10 @@ class MotionCommandCfg(CommandTermCfg):
 
 
 class MultiMotionCommand(CommandTerm):
+  """
+  Command term for tracking multiple motion trajectories.
+  """
+
   cfg: MultiMotionCommandCfg
   _env: ManagerBasedRlEnv
 
@@ -1348,22 +1348,20 @@ class MultiMotionCommand(CommandTerm):
 
   @property
   def object_lin_vel_w(self) -> torch.Tensor | None:
+    if getattr(self.motion_loader, "_batched_object_lin_vel_w", None) is None:
+      return None
     data = self.motion_loader.get_motion_data(
       self.motion_indices, self.time_steps, "object_lin_vel_w"
     )
-    # Check if any motion has object lin vel
-    if torch.all(data == 0):
-      return None
     return data
 
   @property
   def object_ang_vel_w(self) -> torch.Tensor | None:
+    if getattr(self.motion_loader, "_batched_object_ang_vel_w", None) is None:
+      return None
     data = self.motion_loader.get_motion_data(
       self.motion_indices, self.time_steps, "object_ang_vel_w"
     )
-    # Check if any motion has object ang vel
-    if torch.all(data == 0):
-      return None
     return data
 
   @property
