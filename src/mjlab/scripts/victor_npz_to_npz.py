@@ -121,15 +121,14 @@ class TrajectoryNpzSimLoader:
   def __init__(
     self,
     input_file: str,
-    output_fps: int,
+    speed: float,
     device: torch.device | str,
     repeat_last_frame: int = 0,
     repeat_first_frame: int = 0,
     append_reverse: bool = False,
   ):
     self.input_file = input_file
-    self.output_fps = int(output_fps)
-    self.output_dt = 1.0 / float(self.output_fps)
+    self.speed = float(speed)
     self.device = device
     self.current_idx = 0
     self.repeat_last_frame = max(0, int(repeat_last_frame))
@@ -137,6 +136,15 @@ class TrajectoryNpzSimLoader:
     self.append_reverse = bool(append_reverse)
 
     self._load()
+    # Calculate output_fps from input_fps and speed
+    self.output_fps = int(round(self.input_fps / self.speed))
+    self.output_dt = 1.0 / float(self.output_fps)
+
+    print("[INFO]: Input FPS: ", self.input_fps)
+    print("[INFO]: Speed: ", self.speed)
+    print("[INFO]: Output FPS: ", self.output_fps)
+    print("[INFO]: Output DT: ", self.output_dt)
+
     self._resample_to_output_fps_using_times()
     self._repeat_first_frame()
     self._repeat_last_frame()
@@ -485,7 +493,7 @@ def convert(
   input_file: str,
   output_dir: str,
   output_name: str,
-  output_fps: float = 50.0,
+  speed: float = 1.0,
   device: str = "cuda:0",
   repeat_last_frame: int = 0,
   repeat_first_frame: int = 0,
@@ -505,7 +513,7 @@ def convert(
     input_file: Path to input NPZ file
     output_dir: Base output directory
     output_name: Name for the output (used to create motions/output/<output_name>/motion.npz)
-    output_fps: Output frame rate
+    speed: Speed multiplier for trajectory (output_fps = input_fps * speed)
     device: Device to use for simulation
     repeat_last_frame: Number of times to repeat the last frame
     repeat_first_frame: Number of times to repeat the first frame
@@ -519,6 +527,18 @@ def convert(
   os.makedirs(os.path.dirname(output_path), exist_ok=True)
   output_file = output_path
 
+  motion = TrajectoryNpzSimLoader(
+    input_file=input_file,
+    speed=speed,
+    device=device,
+    repeat_last_frame=repeat_last_frame,
+    repeat_first_frame=repeat_first_frame,
+    append_reverse=append_reverse,
+  )
+
+  # Get output_fps from motion loader (calculated from input_fps * speed)
+  output_fps = motion.output_fps
+
   sim_cfg = SimulationCfg()
   sim_cfg.mujoco.timestep = 1.0 / float(output_fps)
   if extract_object_states:
@@ -528,15 +548,6 @@ def convert(
   model = scene.compile()
   sim = Simulation(num_envs=1, cfg=sim_cfg, model=model, device=device)
   scene.initialize(sim.mj_model, sim.model, sim.data)
-
-  motion = TrajectoryNpzSimLoader(
-    input_file=input_file,
-    output_fps=int(round(output_fps)),
-    device=sim.device,
-    repeat_last_frame=repeat_last_frame,
-    repeat_first_frame=repeat_first_frame,
-    append_reverse=append_reverse,
-  )
 
   robot: Entity = scene["robot"]
   box: Entity | None = scene.entities.get("box") if hasattr(scene, "entities") else None
@@ -725,10 +736,19 @@ def convert(
 
       # Use distance threshold method (simpler fallback)
       # Get end effector positions from site_pos_w
-      site_pos_w = robot.data.site_pos_w[0, :].cpu().numpy().copy()
+      # site_pos_w = robot.data.site_pos_w[0, :].cpu().numpy().copy()
+      # eef_positions = np.array(
+      #   [
+      #     site_pos_w[idx] if idx >= 0 else np.array([np.nan, np.nan, np.nan])
+      #     for idx in eef_indices
+      #   ]
+      # )
+      body_pos_w = (
+        robot.data.body_link_pos_w[0, :, :3].cpu().numpy().copy()
+      )  # (num_bodies, 3)
       eef_positions = np.array(
         [
-          site_pos_w[idx] if idx >= 0 else np.array([np.nan, np.nan, np.nan])
+          body_pos_w[idx] if idx >= 0 else np.array([np.nan, np.nan, np.nan])
           for idx in eef_indices
         ]
       )
@@ -927,7 +947,7 @@ def main(
   repeat_first_frame: int = 0,
   append_reverse: bool = False,
   extract_object_states: bool = True,
-  output_fps: float = 50.0,
+  speed: float = 1.0,
   contact_threshold: float = 0.05,
   contact_method: str = "distance",
   output_dir: str = "motions/output/",
@@ -939,7 +959,7 @@ def main(
     input_file: Path to input NPZ file
     output_dir: Base output directory
     output_name: Name for the output (used to create motions/output/<output_name>/motion.npz)
-    output_fps: Output frame rate
+    speed: Speed multiplier for trajectory (output_fps = input_fps * speed)
     device: Device to use for simulation
     repeat_last_frame: Number of times to repeat the last frame
     repeat_first_frame: Number of times to repeat the first frame
@@ -951,7 +971,7 @@ def main(
   Example usage:
     MUJOCO_GL=egl CUDA_VISIBLE_DEVICES=0 uv run src/mjlab/scripts/victor_npz_to_npz.py
     --output-dir motions/output/
-    --output-fps 70
+    --speed 1.4
     --repeat-last-frame 150 --repeat-first-frame 100
     --input-file motions/input/time_x_u_traj_rl_format.npz
     --output-name victor_object_repeated
@@ -961,7 +981,7 @@ def main(
     input_file=input_file,
     output_dir=output_dir,
     output_name=output_name,
-    output_fps=output_fps,
+    speed=speed,
     device=device,
     repeat_last_frame=repeat_last_frame,
     repeat_first_frame=repeat_first_frame,
