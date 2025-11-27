@@ -73,6 +73,59 @@ def _extract_last_frame_yaw(input_file: str, device: torch.device | str) -> torc
   return _quat_to_yaw(last_quat)[0]
 
 
+def _extract_first_frame_base_pos(
+  input_file: str, device: torch.device | str
+) -> torch.Tensor:
+  """Load input motion and return xyz position of the first frame."""
+  with np.load(input_file, allow_pickle=True) as data:
+    if "base_xyz_quat" in data:
+      base_pos = data["base_xyz_quat"].astype(np.float32)[:, 0:3]
+    elif "x" in data:
+      x_np = data["x"].astype(np.float32)
+      if x_np.ndim != 2 or x_np.shape[1] < 3:
+        raise ValueError(
+          f"'x' array must be 2D with >=3 columns to extract base position, got {x_np.shape}"
+        )
+      base_pos = x_np[:, 0:3]
+    else:
+      raise ValueError(
+        f"Cannot determine base position from {input_file}: missing 'base_xyz_quat' or 'x'"
+      )
+
+  if base_pos.shape[0] == 0:
+    raise ValueError(f"No frames found in {input_file}")
+
+  first_pos = torch.from_numpy(base_pos[0:1]).to(device)
+  return first_pos[0]
+
+
+def _extract_first_frame_base_rot(
+  input_file: str, device: torch.device | str
+) -> torch.Tensor:
+  """Load input motion and return quaternion of the first frame."""
+  with np.load(input_file, allow_pickle=True) as data:
+    if "base_xyz_quat" in data:
+      base_quats = data["base_xyz_quat"].astype(np.float32)[:, 3:7]
+    elif "x" in data:
+      x_np = data["x"].astype(np.float32)
+      if x_np.ndim != 2 or x_np.shape[1] < 7:
+        raise ValueError(
+          f"'x' array must be 2D with >=7 columns to extract base quat, got {x_np.shape}"
+        )
+      base_quats = x_np[:, 3:7]
+    else:
+      raise ValueError(
+        f"Cannot determine base orientation from {input_file}: missing 'base_xyz_quat' or 'x'"
+      )
+
+  if base_quats.shape[0] == 0:
+    raise ValueError(f"No frames found in {input_file}")
+
+  first_quat = torch.from_numpy(base_quats[0:1]).to(device)
+  first_quat = _normalize_quat(first_quat)
+  return first_quat[0]
+
+
 def extract_contacts_from_distance(
   eef_positions: np.ndarray,
   object_position: np.ndarray,
@@ -164,6 +217,15 @@ def extract_contacts_from_distance(
 
 
 @dataclass
+class StartInterpolationConfig:
+  frames: int
+  base_pos: torch.Tensor
+  base_rot: torch.Tensor
+  joint_pos: torch.Tensor
+  easing: str = "smoothstep"
+
+
+@dataclass
 class StandupInterpolationConfig:
   frames: int
   target_base_pos: torch.Tensor
@@ -183,6 +245,7 @@ class TrajectoryNpzSimLoader:
     repeat_last_frame: int = 0,
     repeat_first_frame: int = 0,
     append_reverse: bool = False,
+    start_cfg: StartInterpolationConfig | None = None,
     standup_cfg: StandupInterpolationConfig | None = None,
   ):
     self.input_file = input_file
@@ -193,10 +256,12 @@ class TrajectoryNpzSimLoader:
     self.repeat_last_frame = max(0, int(repeat_last_frame))
     self.repeat_first_frame = max(0, int(repeat_first_frame))
     self.append_reverse = bool(append_reverse)
+    self.start_cfg = start_cfg
     self.standup_cfg = standup_cfg
 
     self._load()
     self._resample_to_output_fps_using_times()
+    self._prepend_start_transition()
     self._repeat_first_frame()
     self._repeat_last_frame()
     self._append_standup_transition()
@@ -442,6 +507,61 @@ class TrajectoryNpzSimLoader:
 
     self.output_frames += frames
 
+  def _prepend_start_transition(self) -> None:
+    """Prepend frames interpolating from a nominal start pose to the first motion frame."""
+    cfg = getattr(self, "start_cfg", None)
+    if cfg is None or cfg.frames <= 0:
+      return
+
+    if self.motion_base_poss.shape[0] <= 0:
+      return
+
+    frames = int(cfg.frames)
+    blend = torch.linspace(0.0, 1.0, frames + 1, device=self.device)[:-1].unsqueeze(1)
+    easing = (cfg.easing or "").lower()
+    if easing in ("smoothstep", "cubic"):
+      blend = blend * blend * (3.0 - 2.0 * blend)
+    elif easing in ("cosine", "cos"):
+      blend = 0.5 - 0.5 * torch.cos(blend * torch.pi)
+
+    start_base_pos = cfg.base_pos.to(self.device).clone()
+    # Use the exact first frame position from the motion data (after resampling).
+    target_base_pos = self.motion_base_poss[0].clone()
+    start_pos = start_base_pos.unsqueeze(0).expand(frames, -1)
+    target_pos = target_base_pos.unsqueeze(0).expand(frames, -1)
+    prepended_pos = self._lerp(start_pos, target_pos, blend)
+
+    # Interpolate rotation: start from yaw-only (upright) and blend to full target rotation.
+    # This preserves the final pitch/roll from the motion data to avoid discontinuity.
+    start_base_rot = _normalize_quat(cfg.base_rot.to(self.device).unsqueeze(0))
+    # Use the FULL target rotation (including pitch/roll) to avoid discontinuity at boundary
+    target_base_rot = _normalize_quat(self.motion_base_rots[0].unsqueeze(0))
+    # Ensure quaternions are in the same hemisphere for proper interpolation
+    dot = (start_base_rot * target_base_rot).sum(-1, keepdim=True)
+    target_base_rot = torch.where(dot < 0, -target_base_rot, target_base_rot)
+    # Expand to all frames for interpolation
+    start_rot_expanded = start_base_rot.expand(frames, -1)
+    target_rot_expanded = target_base_rot.expand(frames, -1)
+    # Spherical linear interpolation (SLERP) approximated by normalized lerp
+    blended_rot = start_rot_expanded * (1.0 - blend) + target_rot_expanded * blend
+    prepended_rot = _normalize_quat(blended_rot)
+
+    start_joint_pos = cfg.joint_pos.to(self.device).unsqueeze(0).expand(frames, -1)
+    target_joint_pos = self.motion_dof_poss[0].unsqueeze(0).expand(frames, -1)
+    prepended_joint = self._lerp(start_joint_pos, target_joint_pos, blend)
+
+    self.motion_base_poss = torch.cat([prepended_pos, self.motion_base_poss], dim=0)
+    self.motion_base_rots = torch.cat([prepended_rot, self.motion_base_rots], dim=0)
+    self.motion_dof_poss = torch.cat([prepended_joint, self.motion_dof_poss], dim=0)
+
+    if self.has_object:
+      first_obj_pos = self.object_poss[:1].repeat(frames, 1)
+      first_obj_rot = self.object_rots[:1].repeat(frames, 1)
+      self.object_poss = torch.cat([first_obj_pos, self.object_poss], dim=0)
+      self.object_rots = torch.cat([first_obj_rot, self.object_rots], dim=0)
+
+    self.output_frames += frames
+
   def _repeat_first_frame(self) -> None:
     """Prepend the first frame N times to extend the trajectory."""
     if self.repeat_first_frame <= 0:
@@ -565,6 +685,8 @@ def convert(
   device: str = "cuda:0",
   repeat_last_frame: int = 0,
   repeat_first_frame: int = 0,
+  start_frames: int = 0,
+  start_easing: str = "smoothstep",
   append_reverse: bool = False,
   extract_object_states: bool = True,
   contact_method: str = "distance",
@@ -589,6 +711,8 @@ def convert(
     device: Device to use for simulation
     repeat_last_frame: Number of times to repeat the last frame
     repeat_first_frame: Number of times to repeat the first frame
+    start_frames: Number of frames to interpolate from default stand pose to the first motion frame
+    start_easing: Easing function for the start interpolation ("smoothstep", "cosine", "linear")
     append_reverse: If True, append the reversed motion trajectory at the end
     extract_object_states: If False, skip extracting object states and contact information
     contact_method: Method to extract contacts - "mujoco" (preferred, uses physics) or "distance" (uses threshold)
@@ -616,18 +740,36 @@ def convert(
   robot: Entity = scene["robot"]
   box: Entity | None = scene.entities.get("box") if hasattr(scene, "entities") else None
 
+  default_root_state = robot.data.default_root_state[0].detach().clone().to(sim.device)
+  default_base_pos = default_root_state[0:3].clone()
+  default_base_rot = _normalize_quat(default_root_state[3:7].clone().unsqueeze(0))[0]
+  default_joint_pos = robot.data.default_joint_pos[0].detach().clone().to(sim.device)
+
+  start_cfg: StartInterpolationConfig | None = None
+  if start_frames > 0:
+    first_frame_base_pos = _extract_first_frame_base_pos(input_file, sim.device)
+    first_frame_base_rot = _extract_first_frame_base_rot(input_file, sim.device)
+    first_frame_yaw = _quat_to_yaw(first_frame_base_rot.unsqueeze(0))[0]
+    first_frame_yaw_quat = _normalize_quat(
+      _yaw_to_quat(first_frame_yaw.unsqueeze(0))
+    )[0]
+    start_base_pos = default_base_pos.clone()
+    start_base_pos[:2] = first_frame_base_pos[:2]
+    start_cfg = StartInterpolationConfig(
+      frames=start_frames,
+      base_pos=start_base_pos,
+      base_rot=first_frame_yaw_quat.clone(),
+      joint_pos=default_joint_pos.clone(),
+      easing=start_easing,
+    )
+
   standup_cfg: StandupInterpolationConfig | None = None
   if standup_frames > 0:
-    default_root_state = (
-      robot.data.default_root_state[0].detach().clone().to(sim.device)
-    )
-    base_pos = default_root_state[0:3].clone()
-    
+    base_pos = default_base_pos.clone()
+
     last_frame_yaw = _extract_last_frame_yaw(input_file, sim.device)
     base_rot = _normalize_quat(_yaw_to_quat(last_frame_yaw).unsqueeze(0))[0]
-    
-
-    target_joint_pos = robot.data.default_joint_pos[0].detach().clone().to(sim.device)
+    target_joint_pos = default_joint_pos.clone()
     standup_cfg = StandupInterpolationConfig(
       frames=standup_frames,
       target_base_pos=base_pos,
@@ -645,6 +787,7 @@ def convert(
     repeat_last_frame=repeat_last_frame,
     repeat_first_frame=repeat_first_frame,
     append_reverse=append_reverse,
+    start_cfg=start_cfg,
     standup_cfg=standup_cfg,
   )
 
@@ -1018,6 +1161,8 @@ def main(
   output_name: str,
   repeat_last_frame: int = 0,
   repeat_first_frame: int = 0,
+  start_frames: int = 0,
+  start_easing: str = "smoothstep",
   append_reverse: bool = False,
   extract_object_states: bool = True,
   output_fps: float = 50.0,
@@ -1066,6 +1211,8 @@ def main(
     device=device,
     repeat_last_frame=repeat_last_frame,
     repeat_first_frame=repeat_first_frame,
+    start_frames=start_frames,
+    start_easing=start_easing,
     append_reverse=append_reverse,
     extract_object_states=extract_object_states,
     contact_method=contact_method,
