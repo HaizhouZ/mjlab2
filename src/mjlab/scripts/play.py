@@ -13,7 +13,7 @@ from rsl_rl.runners import OnPolicyRunner
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.rl import RslRlVecEnvWrapper
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg
-from mjlab.tasks.tracking.mdp import MotionCommandCfg
+from mjlab.tasks.tracking.mdp import MotionCommandCfg, MultiMotionCommandCfg
 from mjlab.tasks.tracking.rl import MotionTrackingOnPolicyRunner
 from mjlab.tasks.tracking.rl.exporter import (
   attach_onnx_metadata as attach_tracking_onnx_metadata,
@@ -38,6 +38,7 @@ class PlayConfig:
   wandb_run_path: str | None = None
   checkpoint_file: str | None = None
   motion_file: str | None = None
+  motion_dir: str | None = None
   num_envs: int | None = None
   device: str | None = None
   video: bool = False
@@ -66,20 +67,22 @@ def run_play(task: str, cfg: PlayConfig):
   is_tracking_task = (
     env_cfg.commands is not None
     and "motion" in env_cfg.commands
-    and isinstance(env_cfg.commands["motion"], MotionCommandCfg)
+    and isinstance(
+      env_cfg.commands["motion"], (MotionCommandCfg, MultiMotionCommandCfg)
+    )
   )
 
   if is_tracking_task and cfg._demo_mode:
     # Demo mode: use uniform sampling to see more diversity with num_envs > 1.
     assert env_cfg.commands is not None
     motion_cmd = env_cfg.commands["motion"]
-    assert isinstance(motion_cmd, MotionCommandCfg)
+    assert isinstance(motion_cmd, (MotionCommandCfg, MultiMotionCommandCfg))
     motion_cmd.sampling_mode = "uniform"
 
   if is_tracking_task:
     assert env_cfg.commands is not None
     motion_cmd = env_cfg.commands["motion"]
-    assert isinstance(motion_cmd, MotionCommandCfg)
+    assert isinstance(motion_cmd, (MotionCommandCfg, MultiMotionCommandCfg))
 
     if DUMMY_MODE:
       if not cfg.registry_name:
@@ -94,11 +97,21 @@ def run_play(task: str, cfg: PlayConfig):
 
       api = wandb.Api()
       artifact = api.artifact(registry_name)
-      motion_cmd.motion_file = str(Path(artifact.download()) / "motion.npz")
+      if isinstance(motion_cmd, MotionCommandCfg):
+        motion_cmd.motion_file = str(Path(artifact.download()) / "motion.npz")
+      elif isinstance(motion_cmd, MultiMotionCommandCfg):
+        motion_dir = str(Path(artifact.download()) / "motions")
+        motion_cmd.motion_dir = motion_dir
+        motion_cmd.traj_name_patterns = [".*"]
     else:
-      if cfg.motion_file is not None:
+      if isinstance(motion_cmd, MotionCommandCfg) and cfg.motion_file is not None:
         print(f"[INFO]: Using motion file from CLI: {cfg.motion_file}")
         motion_cmd.motion_file = cfg.motion_file
+      elif isinstance(motion_cmd, MultiMotionCommandCfg) and cfg.motion_dir is not None:
+        print(f"[INFO]: Using motion directory from CLI: {cfg.motion_dir}")
+        motion_dir = cfg.motion_dir
+        motion_cmd.motion_dir = motion_dir
+        motion_cmd.traj_name_patterns = [".*"]
       else:
         import wandb
 
@@ -115,7 +128,12 @@ def run_play(task: str, cfg: PlayConfig):
           )
           if art is None:
             raise RuntimeError("No motion artifact found in the run.")
-          motion_cmd.motion_file = str(Path(art.download()) / "motion.npz")
+          if isinstance(motion_cmd, MotionCommandCfg):
+            motion_cmd.motion_file = str(Path(art.download()) / "motion.npz")
+          elif isinstance(motion_cmd, MultiMotionCommandCfg):
+            motion_dir = str(Path(art.download()) / "motions")
+            motion_cmd.motion_dir = motion_dir
+            motion_cmd.traj_name_patterns = [".*"]
 
   log_dir: Path | None = None
   resume_path: Path | None = None
