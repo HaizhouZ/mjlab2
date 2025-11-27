@@ -1,4 +1,5 @@
 import os
+from dataclasses import dataclass
 from typing import Any
 
 import mujoco
@@ -25,6 +26,51 @@ from mjlab.third_party.isaaclab.isaaclab.utils.math import (
 
 def _normalize_quat(q: torch.Tensor) -> torch.Tensor:
   return q / torch.norm(q, dim=-1, keepdim=True).clamp_min(1e-8)
+
+
+def _quat_to_yaw(q: torch.Tensor) -> torch.Tensor:
+  """Return yaw (rotation about Z) for quaternions shaped (..., 4)."""
+  if q.shape[-1] != 4:
+    raise ValueError(f"Quaternion must have last dim 4, got {q.shape}")
+  w, x, y, z = torch.unbind(q, dim=-1)
+  siny_cosp = 2.0 * (w * z + x * y)
+  cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
+  return torch.atan2(siny_cosp, cosy_cosp)
+
+
+def _yaw_to_quat(yaw: torch.Tensor) -> torch.Tensor:
+  """Create yaw-only quaternion (w, x, y, z) from yaw angles (radians)."""
+  yaw = yaw.to(torch.float32)
+  half = 0.5 * yaw
+  sin_half = torch.sin(half)
+  cos_half = torch.cos(half)
+  zeros = torch.zeros_like(half)
+  return torch.stack((cos_half, zeros, zeros, sin_half), dim=-1)
+
+
+def _extract_last_frame_yaw(input_file: str, device: torch.device | str) -> torch.Tensor:
+  """Load input motion and return yaw of the final frame."""
+  with np.load(input_file, allow_pickle=True) as data:
+    if "base_xyz_quat" in data:
+      base_quats = data["base_xyz_quat"].astype(np.float32)[:, 3:7]
+    elif "x" in data:
+      x_np = data["x"].astype(np.float32)
+      if x_np.ndim != 2 or x_np.shape[1] < 7:
+        raise ValueError(
+          f"'x' array must be 2D with >=7 columns to extract base quat, got {x_np.shape}"
+        )
+      base_quats = x_np[:, 3:7]
+    else:
+      raise ValueError(
+        f"Cannot determine base orientation from {input_file}: missing 'base_xyz_quat' or 'x'"
+      )
+
+  if base_quats.shape[0] == 0:
+    raise ValueError(f"No frames found in {input_file}")
+
+  last_quat = torch.from_numpy(base_quats[-1:]).to(device)
+  last_quat = _normalize_quat(last_quat)
+  return _quat_to_yaw(last_quat)[0]
 
 
 def extract_contacts_from_distance(
@@ -117,6 +163,17 @@ def extract_contacts_from_distance(
   }
 
 
+@dataclass
+class StandupInterpolationConfig:
+  frames: int
+  target_base_pos: torch.Tensor
+  target_base_rot: torch.Tensor
+  target_joint_pos: torch.Tensor
+  target_base_height: float | None = None
+  preserve_xy: bool = True
+  easing: str = "smoothstep"
+
+
 class TrajectoryNpzSimLoader:
   def __init__(
     self,
@@ -126,6 +183,7 @@ class TrajectoryNpzSimLoader:
     repeat_last_frame: int = 0,
     repeat_first_frame: int = 0,
     append_reverse: bool = False,
+    standup_cfg: StandupInterpolationConfig | None = None,
   ):
     self.input_file = input_file
     self.output_fps = int(output_fps)
@@ -135,11 +193,13 @@ class TrajectoryNpzSimLoader:
     self.repeat_last_frame = max(0, int(repeat_last_frame))
     self.repeat_first_frame = max(0, int(repeat_first_frame))
     self.append_reverse = bool(append_reverse)
+    self.standup_cfg = standup_cfg
 
     self._load()
     self._resample_to_output_fps_using_times()
     self._repeat_first_frame()
     self._repeat_last_frame()
+    self._append_standup_transition()
     self._append_reverse()
     self._compute_velocities_from_resampled()
 
@@ -327,6 +387,61 @@ class TrajectoryNpzSimLoader:
       oq = oq0 * (1 - blend.unsqueeze(1)) + oq1 * blend.unsqueeze(1)
       self.object_rots = _normalize_quat(oq)
 
+  def _append_standup_transition(self) -> None:
+    """Append a transition to the nominal stand pose after the motion tail."""
+    cfg = getattr(self, "standup_cfg", None)
+    if cfg is None or cfg.frames <= 0:
+      return
+
+    total_frames = int(self.motion_base_poss.shape[0])
+    if total_frames <= 0:
+      return
+
+    frames = int(cfg.frames)
+    blend = torch.linspace(0.0, 1.0, frames + 1, device=self.device)[1:].unsqueeze(1)
+    easing = (cfg.easing or "").lower()
+    if easing in ("smoothstep", "cubic"):
+      blend = blend * blend * (3.0 - 2.0 * blend)
+    elif easing in ("cosine", "cos"):
+      blend = 0.5 - 0.5 * torch.cos(blend * torch.pi)
+    # Guarantee the final frame reaches the target exactly.
+    blend[-1] = 1.0
+
+    target_base_pos = cfg.target_base_pos.to(self.device).clone()
+    last_base_pos = self.motion_base_poss[-1].clone()
+    if cfg.preserve_xy:
+      target_base_pos[:2] = last_base_pos[:2]
+    if cfg.target_base_height is not None:
+      target_base_pos[2] = float(cfg.target_base_height)
+
+    target_pos = target_base_pos.unsqueeze(0).expand(frames, -1)
+    start_pos = last_base_pos.unsqueeze(0).expand(frames, -1)
+    appended_pos = self._lerp(start_pos, target_pos, blend)
+
+    target_base_rot = _normalize_quat(cfg.target_base_rot.to(self.device).unsqueeze(0))
+    target_base_rot = target_base_rot.expand(frames, -1)
+    base_rot_segment = self.motion_base_rots[-1].unsqueeze(0).expand(frames, -1)
+    dot = (base_rot_segment * target_base_rot).sum(-1, keepdim=True)
+    target_base_rot = torch.where(dot < 0, -target_base_rot, target_base_rot)
+    blended_rot = base_rot_segment * (1.0 - blend) + target_base_rot * blend
+    appended_rot = _normalize_quat(blended_rot)
+
+    target_joint_pos = cfg.target_joint_pos.to(self.device).unsqueeze(0).expand(frames, -1)
+    start_joint = self.motion_dof_poss[-1].unsqueeze(0).expand(frames, -1)
+    appended_joint = self._lerp(start_joint, target_joint_pos, blend)
+
+    self.motion_base_poss = torch.cat([self.motion_base_poss, appended_pos], dim=0)
+    self.motion_base_rots = torch.cat([self.motion_base_rots, appended_rot], dim=0)
+    self.motion_dof_poss = torch.cat([self.motion_dof_poss, appended_joint], dim=0)
+
+    if self.has_object:
+      last_obj_pos = self.object_poss[-1:].repeat(frames, 1)
+      last_obj_rot = self.object_rots[-1:].repeat(frames, 1)
+      self.object_poss = torch.cat([self.object_poss, last_obj_pos], dim=0)
+      self.object_rots = torch.cat([self.object_rots, last_obj_rot], dim=0)
+
+    self.output_frames += frames
+
   def _repeat_first_frame(self) -> None:
     """Prepend the first frame N times to extend the trajectory."""
     if self.repeat_first_frame <= 0:
@@ -454,6 +569,10 @@ def convert(
   extract_object_states: bool = True,
   contact_method: str = "distance",
   contact_threshold: float = 0.05,
+  standup_frames: int = 0,
+  standup_base_height: float | None = None,
+  standup_preserve_xy: bool = True,
+  standup_easing: str = "smoothstep",
 ):
   """Convert dataset NPZ (qpos in x) to mjlab motion.npz using simulation states.
 
@@ -474,6 +593,10 @@ def convert(
     extract_object_states: If False, skip extracting object states and contact information
     contact_method: Method to extract contacts - "mujoco" (preferred, uses physics) or "distance" (uses threshold)
     contact_threshold: Distance threshold in meters for "distance" method (default: 0.05m = 5cm)
+    standup_frames: Number of tail frames to blend to the nominal stand pose (0 disables)
+    standup_base_height: Optional absolute Z height for the final base pose (None keeps nominal height)
+    standup_preserve_xy: Keep the final XY position of the motion when blending to the stand pose
+    standup_easing: Easing function for the blend ("smoothstep", "cosine", "linear")
   """
   # Construct output path: motions/output/<output_name>/motion.npz
   output_path = f"motions/output/{output_name}/motion.npz"
@@ -490,6 +613,31 @@ def convert(
   sim = Simulation(num_envs=1, cfg=sim_cfg, model=model, device=device)
   scene.initialize(sim.mj_model, sim.model, sim.data)
 
+  robot: Entity = scene["robot"]
+  box: Entity | None = scene.entities.get("box") if hasattr(scene, "entities") else None
+
+  standup_cfg: StandupInterpolationConfig | None = None
+  if standup_frames > 0:
+    default_root_state = (
+      robot.data.default_root_state[0].detach().clone().to(sim.device)
+    )
+    base_pos = default_root_state[0:3].clone()
+    
+    last_frame_yaw = _extract_last_frame_yaw(input_file, sim.device)
+    base_rot = _normalize_quat(_yaw_to_quat(last_frame_yaw).unsqueeze(0))[0]
+    
+
+    target_joint_pos = robot.data.default_joint_pos[0].detach().clone().to(sim.device)
+    standup_cfg = StandupInterpolationConfig(
+      frames=standup_frames,
+      target_base_pos=base_pos,
+      target_base_rot=base_rot,
+      target_joint_pos=target_joint_pos,
+      target_base_height=standup_base_height,
+      preserve_xy=standup_preserve_xy,
+      easing=standup_easing,
+    )
+
   motion = TrajectoryNpzSimLoader(
     input_file=input_file,
     output_fps=int(round(output_fps)),
@@ -497,10 +645,9 @@ def convert(
     repeat_last_frame=repeat_last_frame,
     repeat_first_frame=repeat_first_frame,
     append_reverse=append_reverse,
+    standup_cfg=standup_cfg,
   )
 
-  robot: Entity = scene["robot"]
-  box: Entity | None = scene.entities.get("box") if hasattr(scene, "entities") else None
   log_object = (
     extract_object_states
     and getattr(motion, "has_object", False)
@@ -878,6 +1025,10 @@ def main(
   contact_method: str = "distance",
   output_dir: str = "motions/output/",
   device: str = "cuda:0",
+  standup_frames: int = 0,
+  standup_base_height: float | None = None,
+  standup_preserve_xy: bool = True,
+  standup_easing: str = "smoothstep",
 ):
   """Convert trajectory NPZ file to mjlab motion format with contact extraction.
 
@@ -893,6 +1044,10 @@ def main(
     extract_object_states: If False, skip extracting object states and contact information
     contact_method: Method to extract contacts - "mujoco" (preferred) or "distance"
     contact_threshold: Distance threshold in meters for "distance" method
+    standup_frames: Number of tail frames to blend to nominal stand pose (0 disables)
+    standup_base_height: Optional override for final base height (None keeps nominal)
+    standup_preserve_xy: Keep last XY position when transitioning to stand pose
+    standup_easing: Easing function used when blending into the stand pose
 
   Example usage:
     MUJOCO_GL=egl CUDA_VISIBLE_DEVICES=0 uv run src/mjlab/scripts/victor_npz_to_npz.py
@@ -915,6 +1070,10 @@ def main(
     extract_object_states=extract_object_states,
     contact_method=contact_method,
     contact_threshold=contact_threshold,
+    standup_frames=standup_frames,
+    standup_base_height=standup_base_height,
+    standup_preserve_xy=standup_preserve_xy,
+    standup_easing=standup_easing,
   )
 
 
