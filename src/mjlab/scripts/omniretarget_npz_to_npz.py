@@ -10,6 +10,10 @@ import torch
 import tyro
 from tqdm import tqdm
 
+from mjlab.asset_zoo.robots.unitree_g1.g1_constants import (
+  get_g1_robot_cfg,
+  get_largeboxmesh_cfg,
+)
 from mjlab.entity import Entity
 from mjlab.scene import Scene
 from mjlab.sim.sim import Simulation, SimulationCfg
@@ -723,8 +727,14 @@ def convert(
 
   sim_cfg = SimulationCfg()
   sim_cfg.mujoco.timestep = 1.0 / float(output_fps)
+
   if extract_object_states:
-    scene = Scene(unitree_g1_flat_tracking_env_cfg_box().scene, device=device)
+    env_cfg = unitree_g1_flat_tracking_env_cfg_box()
+    env_cfg.scene.entities = {
+      "robot": get_g1_robot_cfg(),
+      "box": get_largeboxmesh_cfg(),
+    }
+    scene = Scene(env_cfg.scene, device=device)
   else:
     scene = Scene(unitree_g1_flat_tracking_env_cfg().scene, device=device)
   model = scene.compile()
@@ -948,14 +958,6 @@ def convert(
       curr_obj_pos_motion = motion.object_poss[frame_idx : frame_idx + 1].clone()
       curr_obj_rot_motion = motion.object_rots[frame_idx : frame_idx + 1].clone()
 
-      if obj_pos_offset is not None:
-        curr_obj_pos_motion = curr_obj_pos_motion - obj_pos_offset.unsqueeze(0)
-
-      if obj_rot_offset is not None:
-        curr_obj_rot_motion = _normalize_quat(
-          quat_mul(curr_obj_rot_motion, obj_rot_offset.unsqueeze(0))
-        )
-
       # Compute velocity from motion data positions
       if prev_obj_pos_motion is not None:
         # Linear velocity: (current_pos - prev_pos) / dt
@@ -1017,9 +1019,16 @@ def convert(
       assert (
         box is not None
       )  # Type narrowing: box is guaranteed to be not None when log_object is True
-      curr_obj_pos = box.data.body_link_pos_w[0, 0].cpu().numpy().copy()
-      curr_obj_rot = box.data.body_link_quat_w[0, 0].cpu().numpy().copy()
+      curr_obj_pos = box.data.body_link_pos_w[0, 0].clone()
+      curr_obj_rot = box.data.body_link_quat_w[0, 0].clone()
 
+      if obj_pos_offset is not None:
+        curr_obj_pos = curr_obj_pos - obj_pos_offset
+
+      if obj_rot_offset is not None:
+        curr_obj_rot = _normalize_quat(quat_mul(curr_obj_rot, obj_rot_offset))
+      curr_obj_pos = curr_obj_pos.cpu().numpy().copy()
+      curr_obj_rot = curr_obj_rot.cpu().numpy().copy()
       log["object_pos_w"].append(curr_obj_pos)
       log["object_quat_w"].append(curr_obj_rot)
 
@@ -1282,7 +1291,7 @@ def main(
   append_reverse: bool = False,
   extract_object_states: bool = True,
   speed: float = 1.0,
-  contact_threshold: float = 0.1,
+  contact_threshold: float = 0.08,
   contact_method: str = "distance",
   output_dir: str = "motions/output/",
   device: str = "cuda:0",
