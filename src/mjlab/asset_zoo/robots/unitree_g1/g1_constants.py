@@ -58,19 +58,19 @@ def get_spec_largebox() -> mujoco.MjSpec:
   spec = mujoco.MjSpec()
   world = spec.worldbody
   body = world.add_body(name="largebox_link")
-  body.pos = (0.4, 0, 0.1)
+  body.pos = np.array([0.4, 0, 0.1], dtype=np.float64)
   body.add_freejoint(name="largebox_freejoint")
   geom = body.add_geom(
     name="largebox_geom",
     type=mujoco.mjtGeom.mjGEOM_BOX,
     friction=(0.8, 0.005, 0.0001),
-    size=(0.165, 0.155, 0.16),
-    pos=(0.01, 0, 0.03),
-    quat=(0.00991298, 0.849052, -0.523456, 0.0707591),
+    size=(0.14, 0.155, 0.16),
+    # pos=(0.01, 0, 0.03),
+    # quat=(0.00991298, 0.849052, -0.523456, 0.0707591),
     mass=0.5,
   )
   # Slightly translucent color similar to user's cube
-  geom.rgba = (0.2, 0.6, 0.8, 1.0)
+  geom.rgba = np.array([0.2, 0.6, 0.8, 1.0], dtype=np.float32)
   return spec
 
 

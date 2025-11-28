@@ -263,8 +263,8 @@ class TrajectoryNpzSimLoader:
     self._resample_to_output_fps_using_times()
     self._prepend_start_transition()
     self._repeat_first_frame()
-    self._repeat_last_frame()
     self._append_standup_transition()
+    self._repeat_last_frame()
     # Compute velocities before appending reverse so we can properly reverse and negate them
     self._compute_velocities_from_resampled()
     self._append_reverse()
@@ -734,6 +734,8 @@ def convert(
   standup_base_height: float | None = None,
   standup_preserve_xy: bool = True,
   standup_easing: str = "smoothstep",
+  object_position_offset: tuple[float, float, float] | None = None,
+  object_rotation_offset: tuple[float, float, float, float] | None = None,
 ):
   """Convert dataset NPZ (qpos in x) to mjlab motion.npz using simulation states.
 
@@ -760,6 +762,8 @@ def convert(
     standup_base_height: Optional absolute Z height for the final base pose (None keeps nominal height)
     standup_preserve_xy: Keep the final XY position of the motion when blending to the stand pose
     standup_easing: Easing function for the blend ("smoothstep", "cosine", "linear")
+    object_position_offset: Optional constant XYZ offset (meters) applied to the tracked object's pose
+    object_rotation_offset: Optional constant quaternion (w, x, y, z) applied to the tracked object's pose
   """
   # Construct output path: motions/output/<output_name>/motion.npz
   output_path = f"motions/output/{output_name}/motion.npz"
@@ -778,6 +782,20 @@ def convert(
 
   robot: Entity = scene["robot"]
   box: Entity | None = scene.entities.get("box") if hasattr(scene, "entities") else None
+  obj_pos_offset = None
+  if object_position_offset is not None:
+    obj_pos_offset = torch.tensor(
+      object_position_offset, dtype=torch.float32, device=sim.device
+    )
+
+  obj_rot_offset = None
+  if object_rotation_offset is not None:
+    obj_rot_offset = _normalize_quat(
+      torch.tensor(object_rotation_offset, dtype=torch.float32, device=sim.device)
+      .unsqueeze(0)
+      .clone()
+    )[0]
+
 
   default_root_state = robot.data.default_root_state[0].detach().clone().to(sim.device)
   default_base_pos = default_root_state[0:3].clone()
@@ -937,6 +955,14 @@ def convert(
       # Get current object position from motion data (before adding env_origin)
       curr_obj_pos_motion = motion.object_poss[frame_idx : frame_idx + 1].clone()
       curr_obj_rot_motion = motion.object_rots[frame_idx : frame_idx + 1].clone()
+
+      if obj_pos_offset is not None:
+        curr_obj_pos_motion = curr_obj_pos_motion - obj_pos_offset.unsqueeze(0)
+
+      if obj_rot_offset is not None:
+        curr_obj_rot_motion = _normalize_quat(
+          quat_mul(curr_obj_rot_motion, obj_rot_offset.unsqueeze(0))
+        )
 
       # Compute velocity from motion data positions
       if prev_obj_pos_motion is not None:
@@ -1237,6 +1263,8 @@ def main(
   standup_base_height: float | None = None,
   standup_preserve_xy: bool = True,
   standup_easing: str = "smoothstep",
+  object_position_offset: tuple[float, float, float] | None = None,
+  object_rotation_offset: tuple[float, float, float, float] | None = None,
 ):
   """Convert trajectory NPZ file to mjlab motion format with contact extraction.
 
@@ -1256,6 +1284,8 @@ def main(
     standup_base_height: Optional override for final base height (None keeps nominal)
     standup_preserve_xy: Keep last XY position when transitioning to stand pose
     standup_easing: Easing function used when blending into the stand pose
+    object_position_offset: Optional constant XYZ offset (meters) applied to tracked object
+    object_rotation_offset: Optional constant quaternion (w, x, y, z) applied to tracked object
 
   Example usage:
     MUJOCO_GL=egl CUDA_VISIBLE_DEVICES=0 uv run src/mjlab/scripts/victor_npz_to_npz.py
@@ -1284,6 +1314,8 @@ def main(
     standup_base_height=standup_base_height,
     standup_preserve_xy=standup_preserve_xy,
     standup_easing=standup_easing,
+    object_position_offset=object_position_offset,
+    object_rotation_offset=object_rotation_offset,
   )
 
 
