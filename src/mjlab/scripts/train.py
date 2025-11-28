@@ -109,6 +109,16 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
           raise ValueError("Must provide --motion-dir for multi-motion tracking tasks.")
         motion_cmd.motion_dir = motion_dir
         motion_cmd.traj_name_patterns = [".*"]
+    elif cfg.motion_dir is not None:
+      # motion_dir provided via CLI: --motion-dir /path/to/motion/dir
+      print(f"[INFO] Using local motion directory: {cfg.motion_dir}")
+      if isinstance(motion_cmd, MotionCommandCfg):
+        raise ValueError(
+          "Cannot use --motion-dir with single motion command. Use --motion-file instead."
+        )
+      elif isinstance(motion_cmd, MultiMotionCommandCfg):
+        motion_cmd.motion_dir = cfg.motion_dir
+        motion_cmd.traj_name_patterns = [".*"]
     else:
       raise ValueError(
         "Must provide --registry-name or --motion-file or --motion-dir for tracking tasks."
