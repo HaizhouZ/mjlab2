@@ -149,3 +149,8 @@ def object_ori_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
   mat = matrix_from_quat(ori)
   # breakpoint()
   return mat[..., :2].reshape(mat.shape[0], -1)
+
+
+def contact_indicator(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
+  command = cast(MotionCommand, env.command_manager.get_term(command_name))
+  return command.ref_object_contact.view(env.num_envs, -1)

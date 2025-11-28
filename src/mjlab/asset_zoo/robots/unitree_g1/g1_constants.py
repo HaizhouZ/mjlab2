@@ -346,14 +346,24 @@ def get_box_cfg() -> EntityCfg:
 
 def get_largebox_cfg() -> EntityCfg:
   """Get a fresh largebox configuration instance."""
-  # largebox_xml = "src/mjlab/asset_zoo/objects/largebox.xml"
   return EntityCfg(
     init_state=EntityCfg.InitialStateCfg(
       pos=(0.4, 0.0, 0.1),
       rot=(1.0, 0.0, 0.0, 0.0),
     ),
     spec_fn=get_spec_largebox,
-    # spec_fn=lambda: mujoco.MjSpec.from_file(str(largebox_xml)),
+  )
+
+
+def get_largeboxmesh_cfg() -> EntityCfg:
+  """Get a fresh largebox configuration instance."""
+  largebox_xml = "src/mjlab/asset_zoo/objects/largebox.xml"
+  return EntityCfg(
+    init_state=EntityCfg.InitialStateCfg(
+      pos=(0.4, 0.0, 0.1),
+      rot=(1.0, 0.0, 0.0, 0.0),
+    ),
+    spec_fn=lambda: mujoco.MjSpec.from_file(str(largebox_xml)),
   )
 
 
