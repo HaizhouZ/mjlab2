@@ -31,7 +31,6 @@ def _normalize_quat(q: torch.Tensor) -> torch.Tensor:
 
 # Alignment constants to match get_spec_largebox() from g1_constants.py
 # These account for the body and geom offsets/rotations in the spec
-LARGEBOX_BODY_POS = np.array([0.4, 0, 0.1], dtype=np.float32)
 LARGEBOX_GEOM_POS = np.array([0.01, 0, 0.03], dtype=np.float32)
 LARGEBOX_GEOM_QUAT = np.array(
   [0.00991298, 0.849052, -0.523456, 0.0707591], dtype=np.float32
