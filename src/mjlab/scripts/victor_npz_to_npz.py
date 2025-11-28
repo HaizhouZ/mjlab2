@@ -736,6 +736,7 @@ def convert(
   standup_easing: str = "smoothstep",
   object_position_offset: tuple[float, float, float] | None = None,
   object_rotation_offset: tuple[float, float, float, float] | None = None,
+  align_first_frame: bool = False,
 ):
   """Convert dataset NPZ (qpos in x) to mjlab motion.npz using simulation states.
 
@@ -764,6 +765,7 @@ def convert(
     standup_easing: Easing function for the blend ("smoothstep", "cosine", "linear")
     object_position_offset: Optional constant XYZ offset (meters) applied to the tracked object's pose
     object_rotation_offset: Optional constant quaternion (w, x, y, z) applied to the tracked object's pose
+    align_first_frame: Translate XY and rotate yaw so the first frame aligns with world axes
   """
   # Construct output path: motions/output/<output_name>/motion.npz
   output_path = f"motions/output/{output_name}/motion.npz"
@@ -847,6 +849,57 @@ def convert(
     start_cfg=start_cfg,
     standup_cfg=standup_cfg,
   )
+
+  total_frames = getattr(motion, "output_frames", motion.input_frames)
+  if align_first_frame and total_frames > 0:
+    first_pos = motion.motion_base_poss[0].clone()
+    xy_offset = first_pos[:2].clone()
+    if xy_offset.abs().sum() > 0:
+      motion.motion_base_poss[:, :2] -= xy_offset
+      if hasattr(motion, "motion_base_poss_input"):
+        motion.motion_base_poss_input[:, :2] -= xy_offset
+      if getattr(motion, "has_object", False):
+        motion.object_poss[:, :2] -= xy_offset
+        if hasattr(motion, "object_pos_input"):
+          motion.object_pos_input[:, :2] -= xy_offset
+
+    first_rot = motion.motion_base_rots[0:1]
+    first_yaw = _quat_to_yaw(first_rot)[0]
+    delta_yaw = -first_yaw
+    delta_quat = _normalize_quat(_yaw_to_quat(delta_yaw.unsqueeze(0)))[0]
+    delta_quat_full = delta_quat.unsqueeze(0)
+
+    rot_expand = delta_quat_full.expand_as(motion.motion_base_rots)
+    motion.motion_base_rots = _normalize_quat(
+      quat_mul(rot_expand, motion.motion_base_rots)
+    )
+
+    vec_expand = delta_quat_full.expand(motion.motion_base_poss.shape[0], -1)
+    motion.motion_base_poss = quat_apply(vec_expand, motion.motion_base_poss)
+    motion.motion_base_lin_vels = quat_apply(vec_expand, motion.motion_base_lin_vels)
+    motion.motion_base_ang_vels = quat_apply(vec_expand, motion.motion_base_ang_vels)
+
+    if getattr(motion, "has_object", False):
+      obj_vec_expand = delta_quat_full.expand(motion.object_poss.shape[0], -1)
+      obj_rot_expand = delta_quat_full.expand(motion.object_rots.shape[0], -1)
+      motion.object_poss = quat_apply(obj_vec_expand, motion.object_poss)
+      motion.object_rots = _normalize_quat(
+        quat_mul(obj_rot_expand, motion.object_rots)
+      )
+
+      if hasattr(motion, "object_pos_input"):
+        motion.object_pos_input = quat_apply(
+          delta_quat_full.expand(motion.object_pos_input.shape[0], -1),
+          motion.object_pos_input,
+        )
+      if hasattr(motion, "object_rots_input"):
+        motion.object_rots_input = _normalize_quat(
+          quat_mul(
+            delta_quat_full.expand(motion.object_rots_input.shape[0], -1),
+            motion.object_rots_input,
+          )
+        )
+
 
   log_object = (
     extract_object_states
@@ -1265,6 +1318,7 @@ def main(
   standup_easing: str = "smoothstep",
   object_position_offset: tuple[float, float, float] | None = None,
   object_rotation_offset: tuple[float, float, float, float] | None = None,
+  align_first_frame: bool = True,
 ):
   """Convert trajectory NPZ file to mjlab motion format with contact extraction.
 
@@ -1286,6 +1340,7 @@ def main(
     standup_easing: Easing function used when blending into the stand pose
     object_position_offset: Optional constant XYZ offset (meters) applied to tracked object
     object_rotation_offset: Optional constant quaternion (w, x, y, z) applied to tracked object
+    align_first_frame: Translate XY and rotate yaw so first frame aligns with world axes
 
   Example usage:
     MUJOCO_GL=egl CUDA_VISIBLE_DEVICES=0 uv run src/mjlab/scripts/victor_npz_to_npz.py
@@ -1316,6 +1371,7 @@ def main(
     standup_easing=standup_easing,
     object_position_offset=object_position_offset,
     object_rotation_offset=object_rotation_offset,
+    align_first_frame=align_first_frame,
   )
 
 
