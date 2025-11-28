@@ -29,6 +29,15 @@ def _normalize_quat(q: torch.Tensor) -> torch.Tensor:
   return q / torch.norm(q, dim=-1, keepdim=True).clamp_min(1e-8)
 
 
+# Alignment constants to match get_spec_largebox() from g1_constants.py
+# These account for the body and geom offsets/rotations in the spec
+LARGEBOX_BODY_POS = np.array([0.4, 0, 0.1], dtype=np.float32)
+LARGEBOX_GEOM_POS = np.array([0.01, 0, 0.03], dtype=np.float32)
+LARGEBOX_GEOM_QUAT = np.array(
+  [0.00991298, 0.849052, -0.523456, 0.0707591], dtype=np.float32
+)  # wxyz
+
+
 def extract_contacts_from_distance(
   eef_positions: np.ndarray,
   object_position: np.ndarray,
@@ -486,7 +495,12 @@ def convert(
   print(f"Robot has {len(robot.body_names)} bodies: {robot.body_names}")
 
   # End effector body names for contact detection
-  eef_names = ["left_wrist_yaw_link", "right_wrist_yaw_link"]
+  eef_names = [
+    "left_wrist_yaw_link",
+    "right_wrist_yaw_link",
+    "left_ankle_roll_link",
+    "right_ankle_roll_link",
+  ]
 
   # Get end effector body indices in robot.body_names
   eef_indices, eef_names_found = robot.find_bodies(eef_names, preserve_order=True)
@@ -594,7 +608,6 @@ def convert(
       # Object position should be in world coordinates, add env_origin offset
       obj_pos_slice = curr_obj_pos_motion.clone()
       obj_pos_slice[:, :2] += scene.env_origins[:, :2]
-
       obj_pose = torch.cat([obj_pos_slice, curr_obj_rot_motion], dim=-1)
       assert (
         box is not None
@@ -899,7 +912,7 @@ def main(
   append_reverse: bool = False,
   extract_object_states: bool = True,
   speed: float = 1.0,
-  contact_threshold: float = 0.08,
+  contact_threshold: float = 0.1,
   contact_method: str = "distance",
   output_dir: str = "motions/output/",
   device: str = "cuda:0",
@@ -952,7 +965,7 @@ def main(
   else:
     # Get all NPZ files from directory
     input_path = Path(input_dir)
-    all_files = sorted(input_path.glob("*.npz"))
+    all_files = sorted(input_path.glob("*_original.npz"))
 
     if len(all_files) == 0:
       print(f"Error: No NPZ files found in {input_dir}")
