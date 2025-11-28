@@ -59,14 +59,15 @@ def get_spec_largebox() -> mujoco.MjSpec:
   spec = mujoco.MjSpec()
   world = spec.worldbody
   body = world.add_body(name="largebox_link")
-  body.pos = np.array([0.01, 0.0, 0.03], dtype=np.float64)
-  body.quat = np.array([0.00991298, 0.849052, -0.523456, 0.0707591], dtype=np.float64)
+  body.pos = np.array([0.4, 0, 0.1], dtype=np.float64)
   body.add_freejoint(name="largebox_freejoint")
   geom = body.add_geom(
     name="largebox_geom",
     type=mujoco.mjtGeom.mjGEOM_BOX,
-    friction=(1.0, 0.005, 0.0001),
-    size=(0.165, 0.155, 0.16),
+    friction=(0.8, 0.005, 0.0001),
+    size=(0.14, 0.155, 0.16),
+    # pos=(0.01, 0, 0.03),
+    # quat=(0.00991298, 0.849052, -0.523456, 0.0707591),
     mass=0.5,
   )
   # Slightly translucent color similar to user's cube
@@ -345,14 +346,14 @@ def get_box_cfg() -> EntityCfg:
 
 def get_largebox_cfg() -> EntityCfg:
   """Get a fresh largebox configuration instance."""
-  largebox_xml = "src/mjlab/asset_zoo/objects/largebox.xml"
+  # largebox_xml = "src/mjlab/asset_zoo/objects/largebox.xml"
   return EntityCfg(
     init_state=EntityCfg.InitialStateCfg(
       pos=(0.4, 0.0, 0.1),
       rot=(1.0, 0.0, 0.0, 0.0),
     ),
-    # spec_fn=get_spec_largebox,
-    spec_fn=lambda: mujoco.MjSpec.from_file(str(largebox_xml)),
+    spec_fn=get_spec_largebox,
+    # spec_fn=lambda: mujoco.MjSpec.from_file(str(largebox_xml)),
   )
 
 

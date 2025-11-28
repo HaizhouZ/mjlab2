@@ -364,7 +364,7 @@ def visualize_contacts(
 
         # Print contact info periodically (every 50 frames to avoid spam)
         if (
-          frame_idx % 50 == 0
+          frame_idx % 1 == 0
           and contact_indicators is not None
           and contact_positions is not None
         ):
