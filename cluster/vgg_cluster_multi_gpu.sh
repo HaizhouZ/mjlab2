@@ -5,7 +5,7 @@
 #SBATCH --mail-user=ilyass.taouil@tum.de
 #SBATCH --mem=48gb
 #SBATCH --time=4-00:00:00
-#SBATCH --output=/rhome/itaouil/output/rl_training.log
+#SBATCH --output=/rhome/itaouil/output/rl_training_multi_gpu.log
 #SBATCH --partition=submit
 #SBATCH --gres=gpu:2
 #SBATCH --constraint="a100"
@@ -21,11 +21,8 @@ echo Running on $(hostname)
 echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
 nvidia-smi
 
-MUJOCO_GL=egl uv run torchrun \
-  --nproc_per_node=2 \
-  --no_python \
-  train  Mjlab-Tracking-Flat-Unitree-G1-Box-No-State-Estimation\
-    --distributed True \
-    --motion-file motions/output/motion.npz \
-  --env.scene.num_envs 8192 \
+MUJOCO_GL=egl uv run train  Mjlab-MultiTracking-Flat-Unitree-G1-Box-No-State-Estimation\
+    --gpu-ids all \
+    --motion-dir motions/output/multi-dataset \
+  --env.scene.num_envs 16384 \
   --agent.max-iterations 30000
