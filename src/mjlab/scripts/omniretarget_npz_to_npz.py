@@ -1,5 +1,6 @@
 import os
-from dataclasses import dataclass
+import shutil
+from pathlib import Path
 from typing import Any
 
 import mujoco
@@ -26,104 +27,6 @@ from mjlab.utils.lab_api.math import (
 
 def _normalize_quat(q: torch.Tensor) -> torch.Tensor:
   return q / torch.norm(q, dim=-1, keepdim=True).clamp_min(1e-8)
-
-
-def _quat_to_yaw(q: torch.Tensor) -> torch.Tensor:
-  """Return yaw (rotation about Z) for quaternions shaped (..., 4)."""
-  if q.shape[-1] != 4:
-    raise ValueError(f"Quaternion must have last dim 4, got {q.shape}")
-  w, x, y, z = torch.unbind(q, dim=-1)
-  siny_cosp = 2.0 * (w * z + x * y)
-  cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
-  return torch.atan2(siny_cosp, cosy_cosp)
-
-
-def _yaw_to_quat(yaw: torch.Tensor) -> torch.Tensor:
-  """Create yaw-only quaternion (w, x, y, z) from yaw angles (radians)."""
-  yaw = yaw.to(torch.float32)
-  half = 0.5 * yaw
-  sin_half = torch.sin(half)
-  cos_half = torch.cos(half)
-  zeros = torch.zeros_like(half)
-  return torch.stack((cos_half, zeros, zeros, sin_half), dim=-1)
-
-
-def _extract_last_frame_yaw(input_file: str, device: torch.device | str) -> torch.Tensor:
-  """Load input motion and return yaw of the final frame."""
-  with np.load(input_file, allow_pickle=True) as data:
-    if "base_xyz_quat" in data:
-      base_quats = data["base_xyz_quat"].astype(np.float32)[:, 3:7]
-    elif "x" in data:
-      x_np = data["x"].astype(np.float32)
-      if x_np.ndim != 2 or x_np.shape[1] < 7:
-        raise ValueError(
-          f"'x' array must be 2D with >=7 columns to extract base quat, got {x_np.shape}"
-        )
-      base_quats = x_np[:, 3:7]
-    else:
-      raise ValueError(
-        f"Cannot determine base orientation from {input_file}: missing 'base_xyz_quat' or 'x'"
-      )
-
-  if base_quats.shape[0] == 0:
-    raise ValueError(f"No frames found in {input_file}")
-
-  last_quat = torch.from_numpy(base_quats[-1:]).to(device)
-  last_quat = _normalize_quat(last_quat)
-  return _quat_to_yaw(last_quat)[0]
-
-
-def _extract_first_frame_base_pos(
-  input_file: str, device: torch.device | str
-) -> torch.Tensor:
-  """Load input motion and return xyz position of the first frame."""
-  with np.load(input_file, allow_pickle=True) as data:
-    if "base_xyz_quat" in data:
-      base_pos = data["base_xyz_quat"].astype(np.float32)[:, 0:3]
-    elif "x" in data:
-      x_np = data["x"].astype(np.float32)
-      if x_np.ndim != 2 or x_np.shape[1] < 3:
-        raise ValueError(
-          f"'x' array must be 2D with >=3 columns to extract base position, got {x_np.shape}"
-        )
-      base_pos = x_np[:, 0:3]
-    else:
-      raise ValueError(
-        f"Cannot determine base position from {input_file}: missing 'base_xyz_quat' or 'x'"
-      )
-
-  if base_pos.shape[0] == 0:
-    raise ValueError(f"No frames found in {input_file}")
-
-  first_pos = torch.from_numpy(base_pos[0:1]).to(device)
-  return first_pos[0]
-
-
-def _extract_first_frame_base_rot(
-  input_file: str, device: torch.device | str
-) -> torch.Tensor:
-  """Load input motion and return quaternion of the first frame."""
-  with np.load(input_file, allow_pickle=True) as data:
-    if "base_xyz_quat" in data:
-      base_quats = data["base_xyz_quat"].astype(np.float32)[:, 3:7]
-    elif "x" in data:
-      x_np = data["x"].astype(np.float32)
-      if x_np.ndim != 2 or x_np.shape[1] < 7:
-        raise ValueError(
-          f"'x' array must be 2D with >=7 columns to extract base quat, got {x_np.shape}"
-        )
-      base_quats = x_np[:, 3:7]
-    else:
-      raise ValueError(
-        f"Cannot determine base orientation from {input_file}: missing 'base_xyz_quat' or 'x'"
-      )
-
-  if base_quats.shape[0] == 0:
-    raise ValueError(f"No frames found in {input_file}")
-
-  first_quat = torch.from_numpy(base_quats[0:1]).to(device)
-  first_quat = _normalize_quat(first_quat)
-  return first_quat[0]
 
 
 def extract_contacts_from_distance(
@@ -216,201 +119,86 @@ def extract_contacts_from_distance(
   }
 
 
-@dataclass
-class StartInterpolationConfig:
-  frames: int
-  base_pos: torch.Tensor
-  base_rot: torch.Tensor
-  joint_pos: torch.Tensor
-  easing: str = "smoothstep"
-
-
-@dataclass
-class StandupInterpolationConfig:
-  frames: int
-  target_base_pos: torch.Tensor
-  target_base_rot: torch.Tensor
-  target_joint_pos: torch.Tensor
-  target_base_height: float | None = None
-  preserve_xy: bool = True
-  easing: str = "smoothstep"
-
-
-class TrajectoryNpzSimLoader:
+class OmniRetargetTrajectoryLoader:
   def __init__(
     self,
     input_file: str,
-    speed: float,
+    output_fps: int,
     device: torch.device | str,
     repeat_last_frame: int = 0,
     repeat_first_frame: int = 0,
     append_reverse: bool = False,
-    start_cfg: StartInterpolationConfig | None = None,
-    standup_cfg: StandupInterpolationConfig | None = None,
   ):
     self.input_file = input_file
-    self.speed = float(speed)
+    self.output_fps = int(output_fps)
+    self.output_dt = 1.0 / float(self.output_fps)
     self.device = device
     self.current_idx = 0
     self.repeat_last_frame = max(0, int(repeat_last_frame))
     self.repeat_first_frame = max(0, int(repeat_first_frame))
     self.append_reverse = bool(append_reverse)
-    self.start_cfg = start_cfg
-    self.standup_cfg = standup_cfg
 
     self._load()
-    # Calculate output_fps from input_fps and speed
-    self.output_fps = int(round(self.input_fps / self.speed))
-    self.output_dt = 1.0 / float(self.output_fps)
-
-    print("[INFO]: Input FPS: ", self.input_fps)
-    print("[INFO]: Speed: ", self.speed)
-    print("[INFO]: Output FPS: ", self.output_fps)
-    print("[INFO]: Output DT: ", self.output_dt)
-
     self._resample_to_output_fps_using_times()
-    self._prepend_start_transition()
     self._repeat_first_frame()
-    self._append_standup_transition()
     self._repeat_last_frame()
     # Compute velocities before appending reverse so we can properly reverse and negate them
     self._compute_velocities_from_resampled()
     self._append_reverse()
 
-  def _load_ilyass_pickle(self, file_path: str):
-    """Load Ilyass-format pickle containing:
-    fps, root_pos, root_rot(xyzw), dof_pos, object_pos, object_rot(xyzw)
+  def _load(self) -> None:
+    """Load OmniRetarget format NPZ file.
+
+    Format: qpos (T, 43)
+      - qpos[:, 0:7] = base quat (wxyz) + base pos (xyz)
+      - qpos[:, 7:36] = joint positions (29D)
+      - qpos[:, 36:43] = object quat (wxyz) + object pos (xyz)
     """
+    data = np.load(self.input_file, allow_pickle=True)
+    print(f"[Loader] Loading OmniRetarget format from: {self.input_file}")
 
-    import pickle
+    assert "qpos" in data, (
+      f"Key 'qpos' not found in OmniRetarget NPZ file: {self.input_file}"
+    )
+    qpos_np = data["qpos"].astype(np.float32)  # (T, 43)
 
-    with open(file_path, "rb") as f:
-      data = pickle.load(f)
+    # Get fps if available, otherwise infer from data
+    if "fps" in data:
+      input_fps = int(data["fps"])
+    else:
+      # Default to 30 fps if not specified
+      input_fps = 30
+      print(f"[Loader] Warning: 'fps' not found, defaulting to {input_fps} fps")
 
-    required_keys = [
-      "fps",
-      "root_pos",
-      "root_rot",
-      "dof_pos",
-      "object_pos",
-      "object_rot",
-    ]
-    for k in required_keys:
-      if k not in data:
-        raise ValueError(f"Missing key '{k}' in Ilyass pickle")
+    T = qpos_np.shape[0]
 
-    # Extract
-    root_pos = np.asarray(data["root_pos"], dtype=np.float32)  # (T, 3)
-    root_rot_xyzw = np.asarray(data["root_rot"], dtype=np.float32)  # (T, 4)
-    dof_pos = np.asarray(data["dof_pos"], dtype=np.float32)  # (T, 29)
-    obj_pos = np.asarray(data["object_pos"], dtype=np.float32)  # (T, 3)
-    obj_rot_xyzw = np.asarray(data["object_rot"], dtype=np.float32)  # (T, 4)
-    fps = int(data["fps"])
+    # Build time array from fps
+    times_np = np.arange(T, dtype=np.float32) * (1.0 / input_fps)
 
-    T = root_pos.shape[0]
-
-    # Build artificial time array
-    times_np = np.arange(T, dtype=np.float32) * (1.0 / fps)
-
-    # Convert xyzw → wxyz
-    root_rot_wxyz = root_rot_xyzw[:, [3, 0, 1, 2]]
-    obj_rot_wxyz = obj_rot_xyzw[:, [3, 0, 1, 2]]
-
-    # Store internally in the same format as the Standard NPZ loader
     self.input_times_np = times_np
     self.input_times = torch.from_numpy(times_np).to(self.device)
     self.input_frames = T
 
-    self.motion_base_poss_input = torch.from_numpy(root_pos).to(self.device)
+    # Extract base pose: qpos[:, 0:7] = [qw, qx, qy, qz, x, y, z]
     self.motion_base_rots_input = _normalize_quat(
-      torch.from_numpy(root_rot_wxyz).to(self.device)
+      torch.from_numpy(qpos_np[:, 0:4]).to(self.device)
     )
-    self.motion_dof_poss_input = torch.from_numpy(dof_pos).to(self.device)
+    self.motion_base_poss_input = torch.from_numpy(qpos_np[:, 4:7]).to(self.device)
 
-    # Object is always present in this format
+    # Extract joint positions: qpos[:, 7:36] (29D)
+    self.motion_dof_poss_input = torch.from_numpy(qpos_np[:, 7:36]).to(self.device)
+
+    # Extract object pose: qpos[:, 36:43] = [qw, qx, qy, qz, x, y, z]
     self.has_object = True
-    self.object_pos_input = torch.from_numpy(obj_pos).to(self.device)
     self.object_rots_input = _normalize_quat(
-      torch.from_numpy(obj_rot_wxyz).to(self.device)
+      torch.from_numpy(qpos_np[:, 36:40]).to(self.device)
     )
+    self.object_pos_input = torch.from_numpy(qpos_np[:, 40:43]).to(self.device)
 
-    # Timing info
+    # Timing setup
     self.duration = float(times_np[-1] - times_np[0]) if T > 1 else 0.0
-    self.input_dt = float(self.duration / max(1, T - 1)) if T > 1 else 1.0 / fps
-    self.input_fps = fps
-
-  def _load(self) -> None:
-    """Unified loader for Victor NPZ, Standard NPZ, and Ilyass PKL formats."""
-
-    # Automatically detect pickle format
-    if self.input_file.endswith(".pkl"):
-      print("[Loader] Detected Ilyass pickle format.")
-      return self._load_ilyass_pickle(self.input_file)
-
-    # Otherwise load NPZ
-    data = np.load(self.input_file, allow_pickle=True)
-    print("[Loader] Detected NPZ format.")
-
-    # Victor format
-    is_victor_format = "base_xyz_quat" in data and "actuator_pos" in data
-
-    if is_victor_format:
-      print("[Loader] Using Victor format loader.")
-      times_np = data["time"].astype(np.float32)
-
-      base_xyz_quat = data["base_xyz_quat"].astype(np.float32)
-      actuator_pos = data["actuator_pos"].astype(np.float32)
-
-      T = times_np.shape[0]
-      self.input_times_np = times_np
-      self.input_times = torch.from_numpy(times_np).to(self.device)
-
-      self.motion_base_poss_input = torch.from_numpy(base_xyz_quat[:, 0:3]).to(
-        self.device
-      )
-      self.motion_base_rots_input = _normalize_quat(
-        torch.from_numpy(base_xyz_quat[:, 3:7]).to(self.device)
-      )
-      self.motion_dof_poss_input = torch.from_numpy(actuator_pos).to(self.device)
-
-      self.has_object = False
-      if "obj_0_xyz_quat" in data:
-        obj = data["obj_0_xyz_quat"].astype(np.float32)
-        self.has_object = True
-        self.object_pos_input = torch.from_numpy(obj[:, 0:3]).to(self.device)
-        self.object_rots_input = _normalize_quat(
-          torch.from_numpy(obj[:, 3:7]).to(self.device)
-        )
-
-    else:
-      print("[Loader] Using Standard NPZ format loader.")
-      assert "x" in data, f"Key 'x' not found in standard NPZ file: {self.input_file}"
-      x_np = data["x"].astype(np.float32)
-
-      times_np = data["time"].astype(np.float32)
-      T = x_np.shape[0]
-
-      self.input_times_np = times_np
-      self.input_times = torch.from_numpy(times_np).to(self.device)
-
-      rs = torch.from_numpy(x_np).to(self.device)
-
-      self.motion_base_poss_input = rs[:, 0:3]
-      self.motion_base_rots_input = _normalize_quat(rs[:, 3:7])
-      self.motion_dof_poss_input = rs[:, 7:36]
-
-      # Optional embedded object: identical to your previous code
-      self.has_object = False
-      if x_np.shape[1] >= 43:  # qpos(43) → includes object (quat + pos)
-        self.has_object = True
-        self.object_rots_input = _normalize_quat(rs[:, 36:40])
-        self.object_pos_input = rs[:, 40:43]
-
-    # Timing setup for all formats
-    self.input_frames = T
-    self.duration = float(times_np[-1] - times_np[0]) if T > 1 else 0.0
-    self.input_dt = float(self.duration / max(1, T - 1)) if T > 1 else self.output_dt
-    self.input_fps = int(round(1.0 / max(1e-8, self.input_dt)))
+    self.input_dt = float(self.duration / max(1, T - 1)) if T > 1 else 1.0 / input_fps
+    self.input_fps = input_fps
 
   def _resample_to_output_fps_using_times(self) -> None:
     if self.input_frames <= 1:
@@ -479,116 +267,6 @@ class TrajectoryNpzSimLoader:
       oq1 = torch.where(odot < 0, -oq1, oq1)
       oq = oq0 * (1 - blend.unsqueeze(1)) + oq1 * blend.unsqueeze(1)
       self.object_rots = _normalize_quat(oq)
-
-  def _append_standup_transition(self) -> None:
-    """Append a transition to the nominal stand pose after the motion tail."""
-    cfg = getattr(self, "standup_cfg", None)
-    if cfg is None or cfg.frames <= 0:
-      return
-
-    total_frames = int(self.motion_base_poss.shape[0])
-    if total_frames <= 0:
-      return
-
-    frames = int(cfg.frames)
-    blend = torch.linspace(0.0, 1.0, frames + 1, device=self.device)[1:].unsqueeze(1)
-    easing = (cfg.easing or "").lower()
-    if easing in ("smoothstep", "cubic"):
-      blend = blend * blend * (3.0 - 2.0 * blend)
-    elif easing in ("cosine", "cos"):
-      blend = 0.5 - 0.5 * torch.cos(blend * torch.pi)
-    # Guarantee the final frame reaches the target exactly.
-    blend[-1] = 1.0
-
-    target_base_pos = cfg.target_base_pos.to(self.device).clone()
-    last_base_pos = self.motion_base_poss[-1].clone()
-    if cfg.preserve_xy:
-      target_base_pos[:2] = last_base_pos[:2]
-    if cfg.target_base_height is not None:
-      target_base_pos[2] = float(cfg.target_base_height)
-
-    target_pos = target_base_pos.unsqueeze(0).expand(frames, -1)
-    start_pos = last_base_pos.unsqueeze(0).expand(frames, -1)
-    appended_pos = self._lerp(start_pos, target_pos, blend)
-
-    target_base_rot = _normalize_quat(cfg.target_base_rot.to(self.device).unsqueeze(0))
-    target_base_rot = target_base_rot.expand(frames, -1)
-    base_rot_segment = self.motion_base_rots[-1].unsqueeze(0).expand(frames, -1)
-    dot = (base_rot_segment * target_base_rot).sum(-1, keepdim=True)
-    target_base_rot = torch.where(dot < 0, -target_base_rot, target_base_rot)
-    blended_rot = base_rot_segment * (1.0 - blend) + target_base_rot * blend
-    appended_rot = _normalize_quat(blended_rot)
-
-    target_joint_pos = cfg.target_joint_pos.to(self.device).unsqueeze(0).expand(frames, -1)
-    start_joint = self.motion_dof_poss[-1].unsqueeze(0).expand(frames, -1)
-    appended_joint = self._lerp(start_joint, target_joint_pos, blend)
-
-    self.motion_base_poss = torch.cat([self.motion_base_poss, appended_pos], dim=0)
-    self.motion_base_rots = torch.cat([self.motion_base_rots, appended_rot], dim=0)
-    self.motion_dof_poss = torch.cat([self.motion_dof_poss, appended_joint], dim=0)
-
-    if self.has_object:
-      last_obj_pos = self.object_poss[-1:].repeat(frames, 1)
-      last_obj_rot = self.object_rots[-1:].repeat(frames, 1)
-      self.object_poss = torch.cat([self.object_poss, last_obj_pos], dim=0)
-      self.object_rots = torch.cat([self.object_rots, last_obj_rot], dim=0)
-
-    self.output_frames += frames
-
-  def _prepend_start_transition(self) -> None:
-    """Prepend frames interpolating from a nominal start pose to the first motion frame."""
-    cfg = getattr(self, "start_cfg", None)
-    if cfg is None or cfg.frames <= 0:
-      return
-
-    if self.motion_base_poss.shape[0] <= 0:
-      return
-
-    frames = int(cfg.frames)
-    blend = torch.linspace(0.0, 1.0, frames + 1, device=self.device)[:-1].unsqueeze(1)
-    easing = (cfg.easing or "").lower()
-    if easing in ("smoothstep", "cubic"):
-      blend = blend * blend * (3.0 - 2.0 * blend)
-    elif easing in ("cosine", "cos"):
-      blend = 0.5 - 0.5 * torch.cos(blend * torch.pi)
-
-    start_base_pos = cfg.base_pos.to(self.device).clone()
-    # Use the exact first frame position from the motion data (after resampling).
-    target_base_pos = self.motion_base_poss[0].clone()
-    start_pos = start_base_pos.unsqueeze(0).expand(frames, -1)
-    target_pos = target_base_pos.unsqueeze(0).expand(frames, -1)
-    prepended_pos = self._lerp(start_pos, target_pos, blend)
-
-    # Interpolate rotation: start from yaw-only (upright) and blend to full target rotation.
-    # This preserves the final pitch/roll from the motion data to avoid discontinuity.
-    start_base_rot = _normalize_quat(cfg.base_rot.to(self.device).unsqueeze(0))
-    # Use the FULL target rotation (including pitch/roll) to avoid discontinuity at boundary
-    target_base_rot = _normalize_quat(self.motion_base_rots[0].unsqueeze(0))
-    # Ensure quaternions are in the same hemisphere for proper interpolation
-    dot = (start_base_rot * target_base_rot).sum(-1, keepdim=True)
-    target_base_rot = torch.where(dot < 0, -target_base_rot, target_base_rot)
-    # Expand to all frames for interpolation
-    start_rot_expanded = start_base_rot.expand(frames, -1)
-    target_rot_expanded = target_base_rot.expand(frames, -1)
-    # Spherical linear interpolation (SLERP) approximated by normalized lerp
-    blended_rot = start_rot_expanded * (1.0 - blend) + target_rot_expanded * blend
-    prepended_rot = _normalize_quat(blended_rot)
-
-    start_joint_pos = cfg.joint_pos.to(self.device).unsqueeze(0).expand(frames, -1)
-    target_joint_pos = self.motion_dof_poss[0].unsqueeze(0).expand(frames, -1)
-    prepended_joint = self._lerp(start_joint_pos, target_joint_pos, blend)
-
-    self.motion_base_poss = torch.cat([prepended_pos, self.motion_base_poss], dim=0)
-    self.motion_base_rots = torch.cat([prepended_rot, self.motion_base_rots], dim=0)
-    self.motion_dof_poss = torch.cat([prepended_joint, self.motion_dof_poss], dim=0)
-
-    if self.has_object:
-      first_obj_pos = self.object_poss[:1].repeat(frames, 1)
-      first_obj_rot = self.object_rots[:1].repeat(frames, 1)
-      self.object_poss = torch.cat([first_obj_pos, self.object_poss], dim=0)
-      self.object_rots = torch.cat([first_obj_rot, self.object_rots], dim=0)
-
-    self.output_frames += frames
 
   def _repeat_first_frame(self) -> None:
     """Prepend the first frame N times to extend the trajectory."""
@@ -728,28 +406,22 @@ def convert(
   input_file: str,
   output_dir: str,
   output_name: str,
-  speed: float = 1.0,
+  output_fps: float = 50.0,
   device: str = "cuda:0",
   repeat_last_frame: int = 0,
   repeat_first_frame: int = 0,
-  start_frames: int = 0,
-  start_easing: str = "smoothstep",
   append_reverse: bool = False,
   extract_object_states: bool = True,
   contact_method: str = "distance",
   contact_threshold: float = 0.05,
-  standup_frames: int = 0,
-  standup_base_height: float | None = None,
-  standup_preserve_xy: bool = True,
-  standup_easing: str = "smoothstep",
-  object_position_offset: tuple[float, float, float] | None = None,
-  object_rotation_offset: tuple[float, float, float, float] | None = None,
-  align_first_frame: bool = False,
-):
-  """Convert dataset NPZ (qpos in x) to mjlab motion.npz using simulation states.
+) -> tuple[dict[str, int] | None, str]:
+  """Convert OmniRetarget NPZ file to mjlab motion.npz using simulation states.
 
   Extracts data for all robot bodies to match the expected mjlab motion format.
-  Supports both Victor format (separate arrays) and standard format (x array).
+  The OmniRetarget format has qpos with 43 dimensions:
+    - qpos[:, 0:7] = base quat (wxyz) + base pos (xyz)
+    - qpos[:, 7:36] = joint positions (29D)
+    - qpos[:, 36:43] = object quat (wxyz) + object pos (xyz)
 
   When object data is present, also extracts contact information for end effectors.
 
@@ -757,40 +429,19 @@ def convert(
     input_file: Path to input NPZ file
     output_dir: Base output directory
     output_name: Name for the output (used to create motions/output/<output_name>/motion.npz)
-    speed: Speed multiplier for trajectory (output_fps = input_fps * speed)
+    output_fps: Output frame rate
     device: Device to use for simulation
     repeat_last_frame: Number of times to repeat the last frame
     repeat_first_frame: Number of times to repeat the first frame
-    start_frames: Number of frames to interpolate from default stand pose to the first motion frame
-    start_easing: Easing function for the start interpolation ("smoothstep", "cosine", "linear")
     append_reverse: If True, append the reversed motion trajectory at the end
     extract_object_states: If False, skip extracting object states and contact information
     contact_method: Method to extract contacts - "mujoco" (preferred, uses physics) or "distance" (uses threshold)
     contact_threshold: Distance threshold in meters for "distance" method (default: 0.05m = 5cm)
-    standup_frames: Number of tail frames to blend to the nominal stand pose (0 disables)
-    standup_base_height: Optional absolute Z height for the final base pose (None keeps nominal height)
-    standup_preserve_xy: Keep the final XY position of the motion when blending to the stand pose
-    standup_easing: Easing function for the blend ("smoothstep", "cosine", "linear")
-    object_position_offset: Optional constant XYZ offset (meters) applied to the tracked object's pose
-    object_rotation_offset: Optional constant quaternion (w, x, y, z) applied to the tracked object's pose
-    align_first_frame: Translate XY and rotate yaw so the first frame aligns with world axes
   """
   # Construct output path: motions/output/<output_name>/motion.npz
   output_path = f"motions/output/{output_name}/motion.npz"
   os.makedirs(os.path.dirname(output_path), exist_ok=True)
   output_file = output_path
-
-  motion = TrajectoryNpzSimLoader(
-    input_file=input_file,
-    speed=speed,
-    device=device,
-    repeat_last_frame=repeat_last_frame,
-    repeat_first_frame=repeat_first_frame,
-    append_reverse=append_reverse,
-  )
-
-  # Get output_fps from motion loader (calculated from input_fps * speed)
-  output_fps = motion.output_fps
 
   sim_cfg = SimulationCfg()
   sim_cfg.mujoco.timestep = 1.0 / float(output_fps)
@@ -802,125 +453,17 @@ def convert(
   sim = Simulation(num_envs=1, cfg=sim_cfg, model=model, device=device)
   scene.initialize(sim.mj_model, sim.model, sim.data)
 
-  robot: Entity = scene["robot"]
-  box: Entity | None = scene.entities.get("box") if hasattr(scene, "entities") else None
-  obj_pos_offset = None
-  if object_position_offset is not None:
-    obj_pos_offset = torch.tensor(
-      object_position_offset, dtype=torch.float32, device=sim.device
-    )
-
-  obj_rot_offset = None
-  if object_rotation_offset is not None:
-    obj_rot_offset = _normalize_quat(
-      torch.tensor(object_rotation_offset, dtype=torch.float32, device=sim.device)
-      .unsqueeze(0)
-      .clone()
-    )[0]
-
-
-  default_root_state = robot.data.default_root_state[0].detach().clone().to(sim.device)
-  default_base_pos = default_root_state[0:3].clone()
-  default_base_rot = _normalize_quat(default_root_state[3:7].clone().unsqueeze(0))[0]
-  default_joint_pos = robot.data.default_joint_pos[0].detach().clone().to(sim.device)
-
-  start_cfg: StartInterpolationConfig | None = None
-  if start_frames > 0:
-    first_frame_base_pos = _extract_first_frame_base_pos(input_file, sim.device)
-    first_frame_base_rot = _extract_first_frame_base_rot(input_file, sim.device)
-    first_frame_yaw = _quat_to_yaw(first_frame_base_rot.unsqueeze(0))[0]
-    first_frame_yaw_quat = _normalize_quat(
-      _yaw_to_quat(first_frame_yaw.unsqueeze(0))
-    )[0]
-    start_base_pos = default_base_pos.clone()
-    start_base_pos[:2] = first_frame_base_pos[:2]
-    start_cfg = StartInterpolationConfig(
-      frames=start_frames,
-      base_pos=start_base_pos,
-      base_rot=first_frame_yaw_quat.clone(),
-      joint_pos=default_joint_pos.clone(),
-      easing=start_easing,
-    )
-
-  standup_cfg: StandupInterpolationConfig | None = None
-  if standup_frames > 0:
-    base_pos = default_base_pos.clone()
-
-    last_frame_yaw = _extract_last_frame_yaw(input_file, sim.device)
-    base_rot = _normalize_quat(_yaw_to_quat(last_frame_yaw).unsqueeze(0))[0]
-    target_joint_pos = default_joint_pos.clone()
-    standup_cfg = StandupInterpolationConfig(
-      frames=standup_frames,
-      target_base_pos=base_pos,
-      target_base_rot=base_rot,
-      target_joint_pos=target_joint_pos,
-      target_base_height=standup_base_height,
-      preserve_xy=standup_preserve_xy,
-      easing=standup_easing,
-    )
-
-  motion = TrajectoryNpzSimLoader(
+  motion = OmniRetargetTrajectoryLoader(
     input_file=input_file,
     output_fps=int(round(output_fps)),
     device=sim.device,
     repeat_last_frame=repeat_last_frame,
     repeat_first_frame=repeat_first_frame,
     append_reverse=append_reverse,
-    start_cfg=start_cfg,
-    standup_cfg=standup_cfg,
   )
 
-  total_frames = getattr(motion, "output_frames", motion.input_frames)
-  if align_first_frame and total_frames > 0:
-    first_pos = motion.motion_base_poss[0].clone()
-    xy_offset = first_pos[:2].clone()
-    if xy_offset.abs().sum() > 0:
-      motion.motion_base_poss[:, :2] -= xy_offset
-      if hasattr(motion, "motion_base_poss_input"):
-        motion.motion_base_poss_input[:, :2] -= xy_offset
-      if getattr(motion, "has_object", False):
-        motion.object_poss[:, :2] -= xy_offset
-        if hasattr(motion, "object_pos_input"):
-          motion.object_pos_input[:, :2] -= xy_offset
-
-    first_rot = motion.motion_base_rots[0:1]
-    first_yaw = _quat_to_yaw(first_rot)[0]
-    delta_yaw = -first_yaw
-    delta_quat = _normalize_quat(_yaw_to_quat(delta_yaw.unsqueeze(0)))[0]
-    delta_quat_full = delta_quat.unsqueeze(0)
-
-    rot_expand = delta_quat_full.expand_as(motion.motion_base_rots)
-    motion.motion_base_rots = _normalize_quat(
-      quat_mul(rot_expand, motion.motion_base_rots)
-    )
-
-    vec_expand = delta_quat_full.expand(motion.motion_base_poss.shape[0], -1)
-    motion.motion_base_poss = quat_apply(vec_expand, motion.motion_base_poss)
-    motion.motion_base_lin_vels = quat_apply(vec_expand, motion.motion_base_lin_vels)
-    motion.motion_base_ang_vels = quat_apply(vec_expand, motion.motion_base_ang_vels)
-
-    if getattr(motion, "has_object", False):
-      obj_vec_expand = delta_quat_full.expand(motion.object_poss.shape[0], -1)
-      obj_rot_expand = delta_quat_full.expand(motion.object_rots.shape[0], -1)
-      motion.object_poss = quat_apply(obj_vec_expand, motion.object_poss)
-      motion.object_rots = _normalize_quat(
-        quat_mul(obj_rot_expand, motion.object_rots)
-      )
-
-      if hasattr(motion, "object_pos_input"):
-        motion.object_pos_input = quat_apply(
-          delta_quat_full.expand(motion.object_pos_input.shape[0], -1),
-          motion.object_pos_input,
-        )
-      if hasattr(motion, "object_rots_input"):
-        motion.object_rots_input = _normalize_quat(
-          quat_mul(
-            delta_quat_full.expand(motion.object_rots_input.shape[0], -1),
-            motion.object_rots_input,
-          )
-        )
-
-
+  robot: Entity = scene["robot"]
+  box: Entity | None = scene.entities.get("box") if hasattr(scene, "entities") else None
   log_object = (
     extract_object_states
     and getattr(motion, "has_object", False)
@@ -931,19 +474,10 @@ def convert(
   # The body_names in the config are used for tracking/observation, but motion files need all bodies
   print(f"Robot has {len(robot.body_names)} bodies: {robot.body_names}")
 
-  # End effector site names for contact detection
-  # eef_names = ["left_palm", "right_palm"]
-  # # Get end effector site indices in robot.site_names
-  # eef_indices, eef_names_found = robot.find_sites(eef_names, preserve_order=True)
-  # for i, eef_name in enumerate(eef_names):
-  #   if i >= len(eef_indices) or eef_indices[i] < 0:
-  #     print(f"Warning: End effector site '{eef_name}' not found in robot site names")
-  #     if i >= len(eef_indices):
-  #       eef_indices.append(-1)
-  #     else:
-  #       eef_indices[i] = -1
-
+  # End effector body names for contact detection
   eef_names = ["left_wrist_yaw_link", "right_wrist_yaw_link"]
+
+  # Get end effector body indices in robot.body_names
   eef_indices, eef_names_found = robot.find_bodies(eef_names, preserve_order=True)
   for i, eef_name in enumerate(eef_names):
     if i >= len(eef_indices) or eef_indices[i] < 0:
@@ -1029,14 +563,6 @@ def convert(
       curr_obj_pos_motion = motion.object_poss[frame_idx : frame_idx + 1].clone()
       curr_obj_rot_motion = motion.object_rots[frame_idx : frame_idx + 1].clone()
 
-      if obj_pos_offset is not None:
-        curr_obj_pos_motion = curr_obj_pos_motion - obj_pos_offset.unsqueeze(0)
-
-      if obj_rot_offset is not None:
-        curr_obj_rot_motion = _normalize_quat(
-          quat_mul(curr_obj_rot_motion, obj_rot_offset.unsqueeze(0))
-        )
-
       # Compute velocity from motion data positions
       if prev_obj_pos_motion is not None:
         # Linear velocity: (current_pos - prev_pos) / dt
@@ -1113,14 +639,7 @@ def convert(
       log["object_ang_vel_w"].append(obj_ang_vel)
 
       # Use distance threshold method (simpler fallback)
-      # Get end effector positions from site_pos_w
-      # site_pos_w = robot.data.site_pos_w[0, :].cpu().numpy().copy()
-      # eef_positions = np.array(
-      #   [
-      #     site_pos_w[idx] if idx >= 0 else np.array([np.nan, np.nan, np.nan])
-      #     for idx in eef_indices
-      #   ]
-      # )
+      # Get end effector positions from body_link_pos_w
       body_pos_w = (
         robot.data.body_link_pos_w[0, :, :3].cpu().numpy().copy()
       )  # (num_bodies, 3)
@@ -1131,11 +650,11 @@ def convert(
         ]
       )
 
-      # Get object size from MuJoCo model (half-extents for box geometry)
+      # Get object size from MuJoCo model (half-extents for box geometry or mesh bounding box)
       object_size = None
       if box is not None:
         # Try to find the object body - check common names
-        object_body_names = ["largebox_link", "box", "object"]
+        object_body_names = ["largebox", "largebox_link", "box", "object"]
         object_body_id = -1
         for body_name in object_body_names:
           body_id = mujoco.mj_name2id(sim.mj_model, mujoco.mjtObj.mjOBJ_BODY, body_name)
@@ -1147,10 +666,35 @@ def convert(
           # Find geoms belonging to this body
           for geom_id in range(sim.mj_model.ngeom):
             if int(sim.mj_model.geom_bodyid[geom_id]) == object_body_id:
+              geom_type = sim.mj_model.geom_type[geom_id]
               # Check if it's a box geometry
-              if sim.mj_model.geom_type[geom_id] == mujoco.mjtGeom.mjGEOM_BOX:
+              if geom_type == mujoco.mjtGeom.mjGEOM_BOX:
                 object_size = sim.mj_model.geom_size[geom_id].copy()  # Half-extents
                 break
+              # Check if it's a mesh geometry - compute bounding box from mesh vertices
+              elif geom_type == mujoco.mjtGeom.mjGEOM_MESH:
+                try:
+                  # Get mesh ID for this geometry
+                  mesh_id = int(sim.mj_model.geom_dataid[geom_id])
+                  # Get mesh vertex data
+                  vert_start = int(sim.mj_model.mesh_vertadr[mesh_id])
+                  vert_count = int(sim.mj_model.mesh_vertnum[mesh_id])
+                  # Extract vertices
+                  vertices = sim.mj_model.mesh_vert[
+                    vert_start : vert_start + vert_count
+                  ]  # (vert_count, 3)
+                  # Compute bounding box (half-extents)
+                  if vertices.shape[0] > 0:
+                    min_bounds = vertices.min(axis=0)
+                    max_bounds = vertices.max(axis=0)
+                    # Half-extents = (max - min) / 2
+                    object_size = ((max_bounds - min_bounds) / 2.0).copy()
+                    break
+                except Exception as e:
+                  print(
+                    f"[Contact Detection] Warning: Failed to extract mesh bounding box: {e}"
+                  )
+                  pass
 
         # If still not found, try to get from box entity's first geom
         if object_size is None and hasattr(box, "spec"):
@@ -1162,8 +706,26 @@ def convert(
                 geom_ids[0].item() if hasattr(geom_ids[0], "item") else int(geom_ids[0])
               )
               geom_id = int(geom_id_val)  # Ensure it's an int for indexing
-              if sim.mj_model.geom_type[geom_id] == mujoco.mjtGeom.mjGEOM_BOX:
+              geom_type = sim.mj_model.geom_type[geom_id]
+              if geom_type == mujoco.mjtGeom.mjGEOM_BOX:
                 object_size = sim.mj_model.geom_size[geom_id].copy()
+              elif geom_type == mujoco.mjtGeom.mjGEOM_MESH:
+                # Compute bounding box from mesh vertices
+                try:
+                  mesh_id = int(sim.mj_model.geom_dataid[geom_id])
+                  vert_start = int(sim.mj_model.mesh_vertadr[mesh_id])
+                  vert_count = int(sim.mj_model.mesh_vertnum[mesh_id])
+                  vertices = sim.mj_model.mesh_vert[
+                    vert_start : vert_start + vert_count
+                  ]
+                  if vertices.shape[0] > 0:
+                    min_bounds = vertices.min(axis=0)
+                    max_bounds = vertices.max(axis=0)
+                    object_size = ((max_bounds - min_bounds) / 2.0).copy()
+                except Exception as e:
+                  print(
+                    f"[Contact Detection] Warning: Failed to extract mesh bounding box from entity: {e}"
+                  )
           except Exception:
             pass
 
@@ -1240,10 +802,8 @@ def convert(
       # Print diagnostic info for distance method if no contacts found
       if contact_method == "distance" and log["contact_indicators"].sum() == 0:
         print("\n⚠️  Diagnostic information (no contacts detected):")
-        print(
-          "  Note: End effector positions are extracted from palm sites, not body positions."
-        )
-        print("  Check that palm sites are correctly positioned in the robot model.")
+        print("  Note: End effector positions are extracted from body link positions.")
+        print("  Check that the contact threshold and object size are appropriate.")
 
       print("\nPer-end-effector contact statistics:")
       for i, eef_name in enumerate(eef_names):
@@ -1300,53 +860,51 @@ def convert(
   )
   print(f"  All robot bodies: {robot.body_names}")
 
-  print("Uploading to Weights & Biases...")
-  import wandb
+  # Return contact statistics for filename modification
+  contact_stats = None
+  if log_object and "contact_indicators" in log:
+    contact_indicators = log["contact_indicators"]
+    # Check if it's already a numpy array (stacked) or still a list
+    if isinstance(contact_indicators, np.ndarray) and contact_indicators.shape[0] > 0:
+      num_frames = contact_indicators.shape[0]
+      num_eefs = contact_indicators.shape[1]
+      frames_with_both_contacts = (contact_indicators.sum(axis=1) == num_eefs).sum()
+      contact_stats = {
+        "frames_with_both_contacts": int(frames_with_both_contacts),
+        "total_frames": int(num_frames),
+      }
 
-  COLLECTION = output_name
-  run = wandb.init(project="victor_motions", name=COLLECTION, entity="ATARITUM")
-  print(f"[INFO]: Logging motion to wandb: {COLLECTION}")
-  REGISTRY = "motions"
-  logged_artifact = run.log_artifact(
-    artifact_or_path=output_file, name=COLLECTION, type=REGISTRY
-  )
-  run.link_artifact(
-    artifact=logged_artifact,
-    target_path=f"wandb-registry-{REGISTRY}/{COLLECTION}",
-  )
-  print(f"[INFO]: Motion saved to wandb registry: {REGISTRY}/{COLLECTION}")
-  wandb.finish()
+  return contact_stats, output_file
 
 
 def main(
-  input_file: str,
-  output_name: str,
+  input_dir: str = "/home/breakout/workspace/OmniRetarget_Dataset/robot-object",
+  output_name: str | None = None,
+  input_file: str | None = None,
+  convert_all: bool = False,
   repeat_last_frame: int = 0,
   repeat_first_frame: int = 0,
-  start_frames: int = 0,
-  start_easing: str = "smoothstep",
   append_reverse: bool = False,
   extract_object_states: bool = True,
-  speed: float = 1.0,
-  contact_threshold: float = 0.05,
+  output_fps: float = 50.0,
+  contact_threshold: float = 0.08,
   contact_method: str = "distance",
   output_dir: str = "motions/output/",
   device: str = "cuda:0",
-  standup_frames: int = 0,
-  standup_base_height: float | None = None,
-  standup_preserve_xy: bool = True,
-  standup_easing: str = "smoothstep",
-  object_position_offset: tuple[float, float, float] | None = None,
-  object_rotation_offset: tuple[float, float, float, float] | None = None,
-  align_first_frame: bool = True,
 ):
-  """Convert trajectory NPZ file to mjlab motion format with contact extraction.
+  """Convert OmniRetarget NPZ files to mjlab motion format with contact extraction.
 
   Args:
-    input_file: Path to input NPZ file
+    input_dir: Directory containing OmniRetarget NPZ files
+    output_name: Name for the output directory
+                - Single file: creates motions/output/<output_name>/motion.npz
+                - Convert all with output_name: creates motions/output/<output_name>/<filename>/motion.npz
+                - Convert all without output_name: creates motions/output/<filename>/motion.npz
+                - If None and input_file is provided, will derive from input_file name
+    input_file: Specific file to convert (if None, will convert first file in directory for testing)
+    convert_all: If True, convert all files in the directory. If False, only convert one file for testing.
     output_dir: Base output directory
-    output_name: Name for the output (used to create motions/output/<output_name>/motion.npz)
-    speed: Speed multiplier for trajectory (output_fps = input_fps * speed)
+    output_fps: Output frame rate
     device: Device to use for simulation
     repeat_last_frame: Number of times to repeat the last frame
     repeat_first_frame: Number of times to repeat the first frame
@@ -1354,45 +912,185 @@ def main(
     extract_object_states: If False, skip extracting object states and contact information
     contact_method: Method to extract contacts - "mujoco" (preferred) or "distance"
     contact_threshold: Distance threshold in meters for "distance" method
-    standup_frames: Number of tail frames to blend to nominal stand pose (0 disables)
-    standup_base_height: Optional override for final base height (None keeps nominal)
-    standup_preserve_xy: Keep last XY position when transitioning to stand pose
-    standup_easing: Easing function used when blending into the stand pose
-    object_position_offset: Optional constant XYZ offset (meters) applied to tracked object
-    object_rotation_offset: Optional constant quaternion (w, x, y, z) applied to tracked object
-    align_first_frame: Translate XY and rotate yaw so first frame aligns with world axes
 
   Example usage:
-    MUJOCO_GL=egl CUDA_VISIBLE_DEVICES=0 uv run src/mjlab/scripts/victor_npz_to_npz.py
-    --output-dir motions/output/
-    --speed 1.4
-    --repeat-last-frame 150 --repeat-first-frame 100
-    --input-file motions/input/time_x_u_traj_rl_format.npz
-    --output-name victor_object_repeated
-    --append-reverse
+    # Convert one file for testing
+    MUJOCO_GL=egl CUDA_VISIBLE_DEVICES=0 uv run src/mjlab/scripts/omniretarget_npz_to_npz.py
+    --input-file /home/breakout/workspace/OmniRetarget_Dataset/robot-object/sub10_largebox_000_original.npz
+    --output-name test_omniretarget
+
+    # Convert all files (each in its own directory)
+    MUJOCO_GL=egl CUDA_VISIBLE_DEVICES=0 uv run src/mjlab/scripts/omniretarget_npz_to_npz.py
+    --input-dir /home/breakout/workspace/OmniRetarget_Dataset/robot-object
+    --convert-all
+
+    # Convert all files into a common parent directory
+    MUJOCO_GL=egl CUDA_VISIBLE_DEVICES=0 uv run src/mjlab/scripts/omniretarget_npz_to_npz.py
+    --input-dir /home/breakout/workspace/OmniRetarget_Dataset/robot-object
+    --convert-all --output-name omniretarget
+    # Creates: motions/output/omniretarget/sub10_largebox_000_original/motion.npz, etc.
   """
-  convert(
-    input_file=input_file,
-    output_dir=output_dir,
-    output_name=output_name,
-    speed=speed,
-    device=device,
-    repeat_last_frame=repeat_last_frame,
-    repeat_first_frame=repeat_first_frame,
-    start_frames=start_frames,
-    start_easing=start_easing,
-    append_reverse=append_reverse,
-    extract_object_states=extract_object_states,
-    contact_method=contact_method,
-    contact_threshold=contact_threshold,
-    standup_frames=standup_frames,
-    standup_base_height=standup_base_height,
-    standup_preserve_xy=standup_preserve_xy,
-    standup_easing=standup_easing,
-    object_position_offset=object_position_offset,
-    object_rotation_offset=object_rotation_offset,
-    align_first_frame=align_first_frame,
-  )
+  # Determine which files to convert
+  if input_file is not None:
+    # Convert specific file
+    files_to_convert = [input_file]
+    if output_name is None:
+      # Derive output name from input file name
+      output_name = Path(input_file).stem
+  else:
+    # Get all NPZ files from directory
+    input_path = Path(input_dir)
+    all_files = sorted(input_path.glob("*.npz"))
+
+    if len(all_files) == 0:
+      print(f"Error: No NPZ files found in {input_dir}")
+      return
+
+    if convert_all:
+      files_to_convert = [str(f) for f in all_files]
+      print(f"Found {len(files_to_convert)} files to convert")
+    else:
+      # Just convert the first file for testing
+      files_to_convert = [str(all_files[0])]
+      print(f"Testing with first file: {files_to_convert[0]}")
+      print("To convert all files, use --convert-all flag")
+      if output_name is None:
+        output_name = all_files[0].stem
+
+  # Convert each file
+  for file_path in files_to_convert:
+    # Determine output name first
+    if len(files_to_convert) > 1:
+      # Converting multiple files
+      if output_name is not None:
+        # Use output_name as parent directory: output_name/filename
+        file_output_name = f"{output_name}/{Path(file_path).stem}"
+      else:
+        # No parent directory specified, use filename directly
+        file_output_name = Path(file_path).stem
+    else:
+      # Converting single file
+      if output_name is None:
+        # Derive output name from file name
+        file_output_name = Path(file_path).stem
+      else:
+        # Use provided output name
+        file_output_name = output_name
+
+    # CHECK FIRST: Skip if already converted (before doing any processing)
+    initial_output_path = f"motions/output/{file_output_name}/motion.npz"
+
+    # Check if initial output exists
+    if os.path.exists(initial_output_path):
+      print(f"\n{'=' * 60}")
+      print(f"SKIPPING (already converted): {file_path}")
+      print(f"Output exists: {initial_output_path}")
+      print(f"{'=' * 60}\n")
+      continue
+
+    # Also check if a renamed version exists (with contact stats format)
+    # Pattern: <digits>-<digits>-<filename>
+    # Split the output path to get parent directory and filename
+    output_parts = file_output_name.split("/")
+    if len(output_parts) > 1:
+      # Nested path like "omniretarget/sub10_largebox_000_original"
+      parent_dir_path = os.path.join("motions", "output", "/".join(output_parts[:-1]))
+      filename_base = output_parts[-1]
+    else:
+      # Flat path like "sub10_largebox_000_original"
+      parent_dir_path = "motions/output"
+      filename_base = output_parts[0]
+
+    # Check parent directory for renamed versions
+    already_converted = False
+    if os.path.exists(parent_dir_path) and os.path.isdir(parent_dir_path):
+      for item in os.listdir(parent_dir_path):
+        item_path = os.path.join(parent_dir_path, item)
+        if os.path.isdir(item_path):
+          # Check if it matches the pattern: <digits>-<digits>-<filename_base>
+          parts = item.split("-")
+          if len(parts) >= 3 and parts[0].isdigit() and parts[1].isdigit():
+            # Extract the filename part
+            potential_filename = "-".join(parts[2:])
+            if potential_filename == filename_base:
+              # Check if motion.npz exists in this directory
+              potential_output = os.path.join(item_path, "motion.npz")
+              if os.path.exists(potential_output):
+                print(f"\n{'=' * 60}")
+                print(f"SKIPPING (already converted): {file_path}")
+                print(f"Output exists: {potential_output}")
+                print(f"{'=' * 60}\n")
+                already_converted = True
+                break
+
+    if already_converted:
+      continue
+
+    print(f"\n{'=' * 60}")
+    print(f"Converting: {file_path}")
+    print(f"Output name: {file_output_name}")
+    print(f"{'=' * 60}\n")
+
+    contact_stats, output_file = convert(
+      input_file=file_path,
+      output_dir=output_dir,
+      output_name=file_output_name,
+      output_fps=output_fps,
+      device=device,
+      repeat_last_frame=repeat_last_frame,
+      repeat_first_frame=repeat_first_frame,
+      append_reverse=append_reverse,
+      extract_object_states=extract_object_states,
+      contact_method=contact_method,
+      contact_threshold=contact_threshold,
+    )
+
+    # Rename output directory to include contact statistics if available
+    if contact_stats is not None:
+      frames_with_both = contact_stats["frames_with_both_contacts"]
+      total_frames = contact_stats["total_frames"]
+
+      # Extract the current output directory path
+      current_output_dir = os.path.dirname(output_file)  # motions/output/<path>
+      # Split into base and leaf directory
+      path_parts = current_output_dir.split(os.sep)
+      base_output_dir = os.sep.join(
+        path_parts[:-1]
+      )  # motions/output or motions/output/parent
+      current_name = path_parts[-1]  # leaf directory name
+
+      # Check if current_name already has the format (to avoid double-appending)
+      # Format: <frames>-<total>-<filename>
+      parts = current_name.split("-")
+      if len(parts) >= 3 and parts[0].isdigit() and parts[1].isdigit():
+        # Already has the format, extract just the filename part
+        original_name = "-".join(parts[2:])
+      else:
+        # Doesn't have the format yet, use current_name as base
+        original_name = current_name
+
+      # Construct new name: <frames_with_both>-<total_frames>-<original_name>
+      new_name = f"{frames_with_both}-{total_frames}-{original_name}"
+      new_output_dir = os.path.join(base_output_dir, new_name)
+      new_output_file = os.path.join(new_output_dir, "motion.npz")
+
+      # Only rename if the name actually changed
+      if current_output_dir != new_output_dir:
+        os.makedirs(new_output_dir, exist_ok=True)
+        # Move the file
+        shutil.move(output_file, new_output_file)
+        # Remove old directory if empty
+        try:
+          os.rmdir(current_output_dir)
+        except OSError:
+          pass  # Directory not empty or doesn't exist, that's fine
+
+        print("\nRenamed output directory to include contact statistics:")
+        print(f"  Old: {current_output_dir}")
+        print(f"  New: {new_output_dir}")
+        print(
+          f"  Format: <{frames_with_both} frames with both contacts>-<{total_frames} total frames>-<{original_name}>"
+        )
 
 
 if __name__ == "__main__":
