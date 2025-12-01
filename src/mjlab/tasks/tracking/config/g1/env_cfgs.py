@@ -3,7 +3,7 @@
 import math
 
 import mjlab.tasks.tracking.mdp as mdp
-from mjlab.asset_zoo.robots import G1_ACTION_SCALE, get_box_cfg, get_g1_robot_cfg
+from mjlab.asset_zoo.robots import G1_ACTION_SCALE, get_box_cfg, get_g1_robot_cfg, get_largebox_cfg
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import (
   JointPositionActionCfg,
@@ -120,7 +120,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   """Create Unitree G1 flat terrain tracking configuration with a box."""
   cfg = unitree_g1_flat_tracking_env_cfg(has_state_estimation=has_state_estimation)
 
-  cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_box_cfg()}
+  cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_largebox_cfg()}
 
   ###
   # Contact Sensors
@@ -136,7 +136,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
 
   left_eef_contact_sensor = ContactSensorCfg(
     name="left_eef_contact",
-    primary=ContactMatch(mode="geom", pattern="left_hand_collision", entity="robot"),
+    primary=ContactMatch(mode="geom", pattern="left_wrist_collision", entity="robot"),
     secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="box"),
     fields=("found", "force", "pos"),
     reduce="netforce",
@@ -145,7 +145,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
 
   right_eef_contact_sensor = ContactSensorCfg(
     name="right_eef_contact",
-    primary=ContactMatch(mode="geom", pattern="right_hand_collision", entity="robot"),
+    primary=ContactMatch(mode="geom", pattern="right_wrist_collision", entity="robot"),
     secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="box"),
     fields=("found", "force", "pos"),
     reduce="netforce",
@@ -183,7 +183,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   ###
   cfg.rewards["contact_match"] = RewardTermCfg(
     func=mdp.eef_contact_indicator_match,
-    weight=1.25,
+    weight=1.0,
     params={
       "command_name": "motion",
       "eef_body_names": motion_cmd.eef_body_names,
@@ -195,7 +195,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   )
   cfg.rewards["object_global_pos"] = RewardTermCfg(
     func=mdp.object_global_position_error_exp,
-    weight=1.25,
+    weight=1.0,
     params={
       "command_name": "motion",
       "object_asset_cfg": SceneEntityCfg("box"),
@@ -204,11 +204,11 @@ def unitree_g1_flat_tracking_env_cfg_box(
   )
   cfg.rewards["object_global_ori"] = RewardTermCfg(
     func=mdp.object_global_orientation_error_exp,
-    weight=0.65,
+    weight=0.8,
     params={
       "command_name": "motion",
       "object_asset_cfg": SceneEntityCfg("box"),
-      "std": 0.4,
+      "std": 0.3,
     },
   )
   cfg.rewards["bad_termination"] = RewardTermCfg(
@@ -272,10 +272,17 @@ def unitree_g1_flat_tracking_env_cfg_box(
   # Actor (Policy) Object Tracking Observation Terms
   ###
   cfg.observations["policy"].terms["object_global_pos"] = ObservationTermCfg(
-    func=mdp.object_pos_b, params={"command_name": "motion"}
+    func=mdp.object_pos_b,
+    noise=Unoise(n_min=-0.1, n_max=0.1),
+    params={"command_name": "motion"},
   )
-  cfg.observations["policy"].terms["object_global_ori"] = ObservationTermCfg(
+  cfg.observations["policy"].terms["object_pos_error"] = ObservationTermCfg(
     func=mdp.object_position_error,
+    noise=Unoise(n_min=-0.05, n_max=0.05),
+    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
+  )
+  cfg.observations["policy"].terms["object_ori_error"] = ObservationTermCfg(
+    func=mdp.object_orientation_error,
     noise=Unoise(n_min=-0.05, n_max=0.05),
     params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
   )
