@@ -861,7 +861,7 @@ def convert(
 
   motion = TrajectoryNpzSimLoader(
     input_file=input_file,
-    output_fps=int(round(output_fps)),
+    speed=speed,
     device=sim.device,
     repeat_last_frame=repeat_last_frame,
     repeat_first_frame=repeat_first_frame,
