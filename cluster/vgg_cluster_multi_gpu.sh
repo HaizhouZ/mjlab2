@@ -21,8 +21,8 @@ echo Running on $(hostname)
 echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
 nvidia-smi
 
-MUJOCO_GL=egl uv run train  Mjlab-MultiTracking-Flat-Unitree-G1-Box-No-State-Estimation\
-    --gpu-ids all \
-    --motion-dir motions/output/multi-dataset \
-  --env.scene.num_envs 16384 \
-  --agent.max-iterations 30000
+MUJOCO_GL=egl uv run train Mjlab-MultiTracking-Flat-Unitree-G1-Box-No-State-Estimation \
+  --motion_dir motions/output/diverse  --env.scene.num_envs 8192 \
+  --agent.max-iterations 30000 \
+  --device cuda:0 \
+  --agent.wandb-project single-vs-multi
