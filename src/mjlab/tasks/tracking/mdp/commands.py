@@ -1308,7 +1308,13 @@ class MultiMotionCommand(CommandTerm):
   @property
   def command(self) -> torch.Tensor:
     """Get command (joint_pos + joint_vel) for current timestep only."""
-    return torch.cat([self.joint_pos, self.joint_vel], dim=1)
+    return torch.cat(
+      [
+        self.get_joint_pos_horizon(self.cfg.horizon),
+        self.get_joint_vel_horizon(self.cfg.horizon),
+      ],
+      dim=1,
+    ).view(self.num_envs, -1)
 
   @property
   def joint_pos(self) -> torch.Tensor:
