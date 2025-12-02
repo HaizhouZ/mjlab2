@@ -46,3 +46,10 @@ def unitree_g1_tracking_ppo_runner_cfg_box() -> RslRlOnPolicyRunnerCfg:
   cfg.experiment_name = "g1_object_tracking"
 
   return cfg
+
+
+def unitree_g1_tracking_ppo_runner_cfg_largebox() -> RslRlOnPolicyRunnerCfg:
+  """Create RL runner configuration for Unitree G1 tracking task with a large box."""
+  cfg = unitree_g1_tracking_ppo_runner_cfg_box()
+  cfg.experiment_name = "g1_largebox_tracking"
+  return cfg
