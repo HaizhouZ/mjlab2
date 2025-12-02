@@ -48,12 +48,14 @@ After training, to play a policy:
 import logging
 import os
 import sys
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
 import tyro
+import wandb
 from rsl_rl.runners import OnPolicyRunner
 
 from mjlab.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
@@ -156,8 +158,6 @@ def run_train_single_motion_from_registry(
     registry_name_with_alias = registry_name_with_alias + ":latest"
 
   # Download motion from wandb registry
-  import wandb
-
   api = wandb.Api()
   artifact = api.artifact(registry_name_with_alias)
   motion_file_path = str(Path(artifact.download()) / "motion.npz")
@@ -249,6 +249,10 @@ def run_train_single_motion_from_registry(
   runner.learn(
     num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True
   )
+
+  # Finish wandb run to allow next motion to start fresh
+  if wandb.run is not None:
+    wandb.finish()
 
   env.close()
 
@@ -385,6 +389,10 @@ def run_train_single_motion_from_file(
     num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True
   )
 
+  # Finish wandb run to allow next motion to start fresh
+  if wandb.run is not None:
+    wandb.finish()
+
   env.close()
 
 
@@ -504,13 +512,14 @@ def launch_training_multi_motion(cfg: TrainMultiMotionConfig) -> None:
     log_dir = log_root_path / log_dir_name
 
     # Create a config for this specific motion
+    # Deep copy configs to avoid mutation between motions
     motion_cfg = TrainMultiMotionConfig(
       registry_names=[registry_name] if registry_name else [],
       motion_dir=None,
       traj_name_patterns=cfg.traj_name_patterns,
       task_id=cfg.task_id,
-      env=env_cfg_default,
-      agent=agent_cfg_default,
+      env=deepcopy(env_cfg_default),
+      agent=deepcopy(agent_cfg_default),
       device=cfg.device,
       video=cfg.video,
       video_length=cfg.video_length,
