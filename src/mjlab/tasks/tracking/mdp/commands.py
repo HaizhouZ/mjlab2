@@ -446,6 +446,97 @@ class MultiMotionLoader:
     else:
       raise ValueError(f"Unknown field name: {field_name}")
 
+  def get_motion_data_horizon(
+    self,
+    motion_indices: torch.Tensor,
+    time_steps: torch.Tensor,
+    field_name: str,
+    horizon: int,
+  ) -> torch.Tensor:
+    """Get motion data for a horizon of future timesteps.
+
+    Args:
+      motion_indices: (num_envs,) tensor of motion indices
+      time_steps: (num_envs,) tensor of starting time steps
+      field_name: Name of the field to retrieve (e.g., 'joint_pos', 'body_pos_w')
+      horizon: Number of future timesteps to retrieve
+
+    Returns:
+      Tensor of shape (num_envs, horizon, ...) with motion data for timesteps
+      [time_steps, time_steps+1, ..., time_steps+horizon-1]
+    """
+    if horizon <= 0:
+      raise ValueError(f"horizon must be > 0, got {horizon}")
+
+    num_envs = motion_indices.shape[0]
+    max_times = self.time_step_totals[motion_indices] - 1
+
+    # Create timestep indices for horizon: (num_envs, horizon)
+    # Each row is [t, t+1, ..., t+horizon-1] clamped to valid range
+    timestep_indices = (
+      time_steps[:, None] + torch.arange(horizon, device=self.device)[None, :]
+    )
+    timestep_indices = torch.minimum(timestep_indices, max_times[:, None])
+    timestep_indices = torch.clamp(timestep_indices, min=0)
+
+    # Get data for all timesteps: (num_envs, horizon, ...)
+    # We need to index: batched_data[motion_indices[:, None], timestep_indices]
+    # This gives us (num_envs, horizon, ...)
+    if field_name == "joint_pos":
+      return self._batched_joint_pos[motion_indices[:, None], timestep_indices]
+    elif field_name == "joint_vel":
+      return self._batched_joint_vel[motion_indices[:, None], timestep_indices]
+    elif field_name == "body_pos_w":
+      return self._batched_body_pos_w[motion_indices[:, None], timestep_indices]
+    elif field_name == "body_quat_w":
+      return self._batched_body_quat_w[motion_indices[:, None], timestep_indices]
+    elif field_name == "body_lin_vel_w":
+      return self._batched_body_lin_vel_w[motion_indices[:, None], timestep_indices]
+    elif field_name == "body_ang_vel_w":
+      return self._batched_body_ang_vel_w[motion_indices[:, None], timestep_indices]
+    elif field_name == "object_pos_w":
+      if self._batched_object_pos_w is None:
+        return torch.zeros(
+          num_envs, horizon, 3, dtype=torch.float32, device=self.device
+        )
+      return self._batched_object_pos_w[motion_indices[:, None], timestep_indices]
+    elif field_name == "object_quat_w":
+      if self._batched_object_quat_w is None:
+        quat = torch.zeros(
+          num_envs, horizon, 4, dtype=torch.float32, device=self.device
+        )
+        quat[:, :, 0] = 1.0
+        return quat
+      return self._batched_object_quat_w[motion_indices[:, None], timestep_indices]
+    elif field_name == "object_lin_vel_w":
+      if self._batched_object_lin_vel_w is None:
+        return torch.zeros(
+          num_envs, horizon, 3, dtype=torch.float32, device=self.device
+        )
+      return self._batched_object_lin_vel_w[motion_indices[:, None], timestep_indices]
+    elif field_name == "object_ang_vel_w":
+      if self._batched_object_ang_vel_w is None:
+        return torch.zeros(
+          num_envs, horizon, 3, dtype=torch.float32, device=self.device
+        )
+      return self._batched_object_ang_vel_w[motion_indices[:, None], timestep_indices]
+    elif field_name == "object_contact":
+      if self._batched_object_contact is None:
+        num_contacts = 1
+        return torch.zeros(
+          num_envs, horizon, num_contacts, dtype=torch.bool, device=self.device
+        )
+      return self._batched_object_contact[motion_indices[:, None], timestep_indices]
+    elif field_name == "contact_positions":
+      if self._batched_contact_positions is None:
+        num_contacts = 1
+        return torch.zeros(
+          num_envs, horizon, num_contacts, 3, dtype=torch.float32, device=self.device
+        )
+      return self._batched_contact_positions[motion_indices[:, None], timestep_indices]
+    else:
+      raise ValueError(f"Unknown field name: {field_name}")
+
   def get_time_step_total(self, motion_indices: torch.Tensor) -> torch.Tensor:
     """Get time step totals for specified motion indices."""
     return self.time_step_totals[motion_indices]
@@ -1216,22 +1307,38 @@ class MultiMotionCommand(CommandTerm):
 
   @property
   def command(self) -> torch.Tensor:
+    """Get command (joint_pos + joint_vel) for current timestep only."""
     return torch.cat([self.joint_pos, self.joint_vel], dim=1)
 
   @property
   def joint_pos(self) -> torch.Tensor:
+    """Get joint positions for current timestep only."""
     return self.motion_loader.get_motion_data(
       self.motion_indices, self.time_steps, "joint_pos"
     )
 
+  def get_joint_pos_horizon(self, horizon: int) -> torch.Tensor:
+    """Get joint positions for horizon timesteps. For observation use."""
+    return self.motion_loader.get_motion_data_horizon(
+      self.motion_indices, self.time_steps, "joint_pos", horizon
+    )
+
   @property
   def joint_vel(self) -> torch.Tensor:
+    """Get joint velocities for current timestep only."""
     return self.motion_loader.get_motion_data(
       self.motion_indices, self.time_steps, "joint_vel"
     )
 
+  def get_joint_vel_horizon(self, horizon: int) -> torch.Tensor:
+    """Get joint velocities for horizon timesteps. For observation use."""
+    return self.motion_loader.get_motion_data_horizon(
+      self.motion_indices, self.time_steps, "joint_vel", horizon
+    )
+
   @property
   def body_pos_w(self) -> torch.Tensor:
+    """Get body positions for current timestep only."""
     return (
       self.motion_loader.get_motion_data(
         self.motion_indices, self.time_steps, "body_pos_w"
@@ -1239,51 +1346,123 @@ class MultiMotionCommand(CommandTerm):
       + self._env.scene.env_origins[:, None, :]
     )
 
+  def get_body_pos_w_horizon(self, horizon: int) -> torch.Tensor:
+    """Get body positions for horizon timesteps. For observation use."""
+    data = self.motion_loader.get_motion_data_horizon(
+      self.motion_indices, self.time_steps, "body_pos_w", horizon
+    )
+    # Add env_origins: (num_envs, horizon, num_bodies, 3) + (num_envs, 1, 1, 3)
+    return data + self._env.scene.env_origins[:, None, None, :]
+
   @property
   def body_quat_w(self) -> torch.Tensor:
+    """Get body quaternions for current timestep only."""
     return self.motion_loader.get_motion_data(
       self.motion_indices, self.time_steps, "body_quat_w"
     )
 
+  def get_body_quat_w_horizon(self, horizon: int) -> torch.Tensor:
+    """Get body quaternions for horizon timesteps. For observation use."""
+    return self.motion_loader.get_motion_data_horizon(
+      self.motion_indices, self.time_steps, "body_quat_w", horizon
+    )
+
   @property
   def body_lin_vel_w(self) -> torch.Tensor:
+    """Get body linear velocities for current timestep only."""
     return self.motion_loader.get_motion_data(
       self.motion_indices, self.time_steps, "body_lin_vel_w"
     )
 
+  def get_body_lin_vel_w_horizon(self, horizon: int) -> torch.Tensor:
+    """Get body linear velocities for horizon timesteps. For observation use."""
+    return self.motion_loader.get_motion_data_horizon(
+      self.motion_indices, self.time_steps, "body_lin_vel_w", horizon
+    )
+
   @property
   def body_ang_vel_w(self) -> torch.Tensor:
+    """Get body angular velocities for current timestep only."""
     return self.motion_loader.get_motion_data(
       self.motion_indices, self.time_steps, "body_ang_vel_w"
     )
 
+  def get_body_ang_vel_w_horizon(self, horizon: int) -> torch.Tensor:
+    """Get body angular velocities for horizon timesteps. For observation use."""
+    return self.motion_loader.get_motion_data_horizon(
+      self.motion_indices, self.time_steps, "body_ang_vel_w", horizon
+    )
+
   @property
   def anchor_pos_w(self) -> torch.Tensor:
+    """Get anchor position for current timestep only."""
     body_pos = self.motion_loader.get_motion_data(
       self.motion_indices, self.time_steps, "body_pos_w"
     )
     return body_pos[:, self.motion_anchor_body_index] + self._env.scene.env_origins
 
+  def get_anchor_pos_w_horizon(self, horizon: int) -> torch.Tensor:
+    """Get anchor position for horizon timesteps. For observation use."""
+    body_pos = self.motion_loader.get_motion_data_horizon(
+      self.motion_indices, self.time_steps, "body_pos_w", horizon
+    )
+    # body_pos: (num_envs, horizon, num_bodies, 3)
+    # Select anchor body: (num_envs, horizon, 3)
+    return (
+      body_pos[:, :, self.motion_anchor_body_index]
+      + self._env.scene.env_origins[:, None, :]
+    )
+
   @property
   def anchor_quat_w(self) -> torch.Tensor:
+    """Get anchor quaternion for current timestep only."""
     body_quat = self.motion_loader.get_motion_data(
       self.motion_indices, self.time_steps, "body_quat_w"
     )
     return body_quat[:, self.motion_anchor_body_index]
 
+  def get_anchor_quat_w_horizon(self, horizon: int) -> torch.Tensor:
+    """Get anchor quaternion for horizon timesteps. For observation use."""
+    body_quat = self.motion_loader.get_motion_data_horizon(
+      self.motion_indices, self.time_steps, "body_quat_w", horizon
+    )
+    # body_quat: (num_envs, horizon, num_bodies, 4)
+    # Select anchor body: (num_envs, horizon, 4)
+    return body_quat[:, :, self.motion_anchor_body_index]
+
   @property
   def anchor_lin_vel_w(self) -> torch.Tensor:
+    """Get anchor linear velocity for current timestep only."""
     body_lin_vel = self.motion_loader.get_motion_data(
       self.motion_indices, self.time_steps, "body_lin_vel_w"
     )
     return body_lin_vel[:, self.motion_anchor_body_index]
 
+  def get_anchor_lin_vel_w_horizon(self, horizon: int) -> torch.Tensor:
+    """Get anchor linear velocity for horizon timesteps. For observation use."""
+    body_lin_vel = self.motion_loader.get_motion_data_horizon(
+      self.motion_indices, self.time_steps, "body_lin_vel_w", horizon
+    )
+    # body_lin_vel: (num_envs, horizon, num_bodies, 3)
+    # Select anchor body: (num_envs, horizon, 3)
+    return body_lin_vel[:, :, self.motion_anchor_body_index]
+
   @property
   def anchor_ang_vel_w(self) -> torch.Tensor:
+    """Get anchor angular velocity for current timestep only."""
     body_ang_vel = self.motion_loader.get_motion_data(
       self.motion_indices, self.time_steps, "body_ang_vel_w"
     )
     return body_ang_vel[:, self.motion_anchor_body_index]
+
+  def get_anchor_ang_vel_w_horizon(self, horizon: int) -> torch.Tensor:
+    """Get anchor angular velocity for horizon timesteps. For observation use."""
+    body_ang_vel = self.motion_loader.get_motion_data_horizon(
+      self.motion_indices, self.time_steps, "body_ang_vel_w", horizon
+    )
+    # body_ang_vel: (num_envs, horizon, num_bodies, 3)
+    # Select anchor body: (num_envs, horizon, 3)
+    return body_ang_vel[:, :, self.motion_anchor_body_index]
 
   @property
   def robot_joint_pos(self) -> torch.Tensor:
@@ -1335,34 +1514,66 @@ class MultiMotionCommand(CommandTerm):
 
   @property
   def object_pos_w(self) -> torch.Tensor:
+    """Get object position for current timestep only."""
     pos = self.motion_loader.get_motion_data(
       self.motion_indices, self.time_steps, "object_pos_w"
     )
     return pos + self._env.scene.env_origins
 
+  def get_object_pos_w_horizon(self, horizon: int) -> torch.Tensor:
+    """Get object position for horizon timesteps. For observation use."""
+    pos = self.motion_loader.get_motion_data_horizon(
+      self.motion_indices, self.time_steps, "object_pos_w", horizon
+    )
+    # pos: (num_envs, horizon, 3)
+    return pos + self._env.scene.env_origins[:, None, :]
+
   @property
   def object_quat_w(self) -> torch.Tensor:
+    """Get object quaternion for current timestep only."""
     return self.motion_loader.get_motion_data(
       self.motion_indices, self.time_steps, "object_quat_w"
     )
 
+  def get_object_quat_w_horizon(self, horizon: int) -> torch.Tensor:
+    """Get object quaternion for horizon timesteps. For observation use."""
+    return self.motion_loader.get_motion_data_horizon(
+      self.motion_indices, self.time_steps, "object_quat_w", horizon
+    )
+
   @property
   def object_lin_vel_w(self) -> torch.Tensor | None:
+    """Get object linear velocity for current timestep only."""
     if getattr(self.motion_loader, "_batched_object_lin_vel_w", None) is None:
       return None
-    data = self.motion_loader.get_motion_data(
+    return self.motion_loader.get_motion_data(
       self.motion_indices, self.time_steps, "object_lin_vel_w"
     )
-    return data
+
+  def get_object_lin_vel_w_horizon(self, horizon: int) -> torch.Tensor | None:
+    """Get object linear velocity for horizon timesteps. For observation use."""
+    if getattr(self.motion_loader, "_batched_object_lin_vel_w", None) is None:
+      return None
+    return self.motion_loader.get_motion_data_horizon(
+      self.motion_indices, self.time_steps, "object_lin_vel_w", horizon
+    )
 
   @property
   def object_ang_vel_w(self) -> torch.Tensor | None:
+    """Get object angular velocity for current timestep only."""
     if getattr(self.motion_loader, "_batched_object_ang_vel_w", None) is None:
       return None
-    data = self.motion_loader.get_motion_data(
+    return self.motion_loader.get_motion_data(
       self.motion_indices, self.time_steps, "object_ang_vel_w"
     )
-    return data
+
+  def get_object_ang_vel_w_horizon(self, horizon: int) -> torch.Tensor | None:
+    """Get object angular velocity for horizon timesteps. For observation use."""
+    if getattr(self.motion_loader, "_batched_object_ang_vel_w", None) is None:
+      return None
+    return self.motion_loader.get_motion_data_horizon(
+      self.motion_indices, self.time_steps, "object_ang_vel_w", horizon
+    )
 
   @property
   def contact_positions(self) -> torch.Tensor | None:
@@ -1578,6 +1789,7 @@ class MultiMotionCommand(CommandTerm):
     rand_samples = sample_uniform(
       ranges[:, 0], ranges[:, 1], (len(env_ids), 6), device=self.device
     )
+
     root_pos[env_ids] += rand_samples[:, 0:3]
     orientations_delta = quat_from_euler_xyz(
       rand_samples[:, 3], rand_samples[:, 4], rand_samples[:, 5]
@@ -1802,6 +2014,10 @@ class MultiMotionCommandCfg(CommandTermCfg):
   adaptive_alpha: float = 0.001
   sampling_mode: Literal["adaptive", "uniform", "start"] = "adaptive"
   motion_assignment_mode: Literal["random", "linear"] = "random"
+  horizon: int = 0
+  """Horizon for future motion data. If > 0, properties will return sequences
+  of shape (num_envs, horizon, ...) instead of (num_envs, ...). 
+  If 0, returns single timestep data as before."""
 
   @dataclass
   class VizCfg:

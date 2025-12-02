@@ -436,6 +436,7 @@ def unitree_g1_flat_multitracking_env_cfg_box(
     traj_name_patterns=[".*"],
     debug_vis=True,
     resampling_time_range=(1e9, 1e9),
+    horizon=5,
   )
 
   # Apply play mode overrides.
