@@ -3,7 +3,7 @@
 import math
 
 import mjlab.tasks.tracking.mdp as mdp
-from mjlab.asset_zoo.robots import G1_ACTION_SCALE, get_box_cfg, get_g1_robot_cfg
+from mjlab.asset_zoo.robots import G1_ACTION_SCALE, get_box_cfg, get_g1_robot_cfg, get_largebox_cfg
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import (
   JointPositionActionCfg,
@@ -354,5 +354,16 @@ def unitree_g1_flat_tracking_env_cfg_box(
     # motion_cmd.velocity_range = {}
 
     motion_cmd.sampling_mode = "start"
+
+  return cfg
+
+
+def unitree_g1_flat_tracking_env_cfg_largebox(
+  has_state_estimation: bool = True,
+  play: bool = False,
+) -> ManagerBasedRlEnvCfg:
+  """Create Unitree G1 flat terrain tracking configuration with a box and no state estimation."""
+  cfg = unitree_g1_flat_tracking_env_cfg_box(has_state_estimation=has_state_estimation, play=play)
+  cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_largebox_cfg()}
 
   return cfg
