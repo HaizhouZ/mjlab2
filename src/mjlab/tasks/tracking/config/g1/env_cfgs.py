@@ -215,6 +215,16 @@ def unitree_g1_flat_tracking_env_cfg_box(
     func=mdp.is_terminated,
     weight=-100.0,
   )
+  cfg.rewards["dof_acc_l2"] = RewardTermCfg(
+    func=mdp.joint_acc_l2,
+    weight=-1e-7,
+    params={"asset_cfg": SceneEntityCfg("robot", joint_names=(".*",))},
+  )
+  cfg.rewards["joint_torques_l2"] = RewardTermCfg(
+    func=mdp.joint_torques_l2,
+    weight=-2e-6,
+    params={"asset_cfg": SceneEntityCfg("robot", joint_names=(".*",))},
+  )
 
   ###
   # Object Tracking Termination Terms
