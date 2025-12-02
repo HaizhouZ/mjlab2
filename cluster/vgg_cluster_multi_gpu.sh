@@ -25,4 +25,5 @@ MUJOCO_GL=egl uv run train Mjlab-MultiTracking-Flat-Unitree-G1-Box-No-State-Esti
   --motion_dir motions/output/diverse  --env.scene.num_envs 8192 \
   --agent.max-iterations 30000 \
   --device cuda:0 \
-  --agent.wandb-project single-vs-multi
+  --agent.wandb-project single-vs-multi \
+  --gpu-ids all
