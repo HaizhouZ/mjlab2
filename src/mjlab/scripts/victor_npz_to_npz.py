@@ -11,10 +11,7 @@ from tqdm import tqdm
 from mjlab.entity import Entity
 from mjlab.scene import Scene
 from mjlab.sim.sim import Simulation, SimulationCfg
-from mjlab.tasks.tracking.config.g1.env_cfgs import (
-  unitree_g1_flat_tracking_env_cfg,
-  unitree_g1_flat_tracking_env_cfg_box,
-)
+from mjlab.tasks.registry import load_env_cfg
 from mjlab.utils.lab_api.math import (
   axis_angle_from_quat,
   quat_apply,
@@ -789,6 +786,7 @@ def convert(
   object_position_offset: tuple[float, float, float] | None = None,
   object_rotation_offset: tuple[float, float, float, float] | None = None,
   align_first_frame: bool = False,
+  task_name: str | None = None,
 ):
   """Convert dataset NPZ (qpos in x) to mjlab motion.npz using simulation states.
 
@@ -818,6 +816,7 @@ def convert(
     object_position_offset: Optional constant XYZ offset (meters) applied to the tracked object's pose
     object_rotation_offset: Optional constant quaternion (w, x, y, z) applied to the tracked object's pose
     align_first_frame: Translate XY and rotate yaw so the first frame aligns with world axes
+    task_name: Task name to use for environment configuration. If None, defaults to "Mjlab-Tracking-Flat-Unitree-G1-Box" when extract_object_states is True, otherwise "Mjlab-Tracking-Flat-Unitree-G1"
   """
   # Construct output path: motions/output/<output_name>/motion.npz
   output_path = f"motions/output/{output_name}/motion.npz"
@@ -830,10 +829,17 @@ def convert(
 
   sim_cfg = SimulationCfg()
   sim_cfg.mujoco.timestep = 1.0 / float(output_fps)
-  if extract_object_states:
-    scene = Scene(unitree_g1_flat_tracking_env_cfg_box().scene, device=device)
-  else:
-    scene = Scene(unitree_g1_flat_tracking_env_cfg().scene, device=device)
+
+  # Determine task name if not provided
+  if task_name is None:
+    task_name = (
+      "Mjlab-Tracking-Flat-Unitree-G1-Box"
+      if extract_object_states
+      else "Mjlab-Tracking-Flat-Unitree-G1"
+    )
+
+  env_cfg = load_env_cfg(task_name, play=False)
+  scene = Scene(env_cfg.scene, device=device)
   model = scene.compile()
   sim = Simulation(num_envs=1, cfg=sim_cfg, model=model, device=device)
   scene.initialize(sim.mj_model, sim.model, sim.data)
@@ -962,26 +968,26 @@ def convert(
   print(f"Robot has {len(robot.body_names)} bodies: {robot.body_names}")
 
   # End effector site names for contact detection
-  # eef_names = ["left_palm", "right_palm"]
-  # # Get end effector site indices in robot.site_names
-  # eef_indices, eef_names_found = robot.find_sites(eef_names, preserve_order=True)
-  # for i, eef_name in enumerate(eef_names):
-  #   if i >= len(eef_indices) or eef_indices[i] < 0:
-  #     print(f"Warning: End effector site '{eef_name}' not found in robot site names")
-  #     if i >= len(eef_indices):
-  #       eef_indices.append(-1)
-  #     else:
-  #       eef_indices[i] = -1
-
-  eef_names = ["left_wrist_yaw_link", "right_wrist_yaw_link"]
-  eef_indices, eef_names_found = robot.find_bodies(eef_names, preserve_order=True)
+  eef_names = ["left_palm", "right_palm", "left_foot_tip", "right_foot_tip"]
+  # Get end effector site indices in robot.site_names
+  eef_indices, eef_names_found = robot.find_sites(eef_names, preserve_order=True)
   for i, eef_name in enumerate(eef_names):
     if i >= len(eef_indices) or eef_indices[i] < 0:
-      print(f"Warning: End effector body '{eef_name}' not found in robot body names")
+      print(f"Warning: End effector site '{eef_name}' not found in robot site names")
       if i >= len(eef_indices):
         eef_indices.append(-1)
       else:
         eef_indices[i] = -1
+
+  # eef_names = ["left_wrist_yaw_link", "right_wrist_yaw_link"]
+  # eef_indices, eef_names_found = robot.find_bodies(eef_names, preserve_order=True)
+  # for i, eef_name in enumerate(eef_names):
+  #   if i >= len(eef_indices) or eef_indices[i] < 0:
+  #     print(f"Warning: End effector body '{eef_name}' not found in robot body names")
+  #     if i >= len(eef_indices):
+  #       eef_indices.append(-1)
+  #     else:
+  #       eef_indices[i] = -1
 
   # Store object size for distance method (will be set during first frame if using distance method)
   object_size_global = None
@@ -1144,22 +1150,22 @@ def convert(
 
       # Use distance threshold method (simpler fallback)
       # Get end effector positions from site_pos_w
-      # site_pos_w = robot.data.site_pos_w[0, :].cpu().numpy().copy()
-      # eef_positions = np.array(
-      #   [
-      #     site_pos_w[idx] if idx >= 0 else np.array([np.nan, np.nan, np.nan])
-      #     for idx in eef_indices
-      #   ]
-      # )
-      body_pos_w = (
-        robot.data.body_link_pos_w[0, :, :3].cpu().numpy().copy()
-      )  # (num_bodies, 3)
+      site_pos_w = robot.data.site_pos_w[0, :].cpu().numpy().copy()
       eef_positions = np.array(
         [
-          body_pos_w[idx] if idx >= 0 else np.array([np.nan, np.nan, np.nan])
+          site_pos_w[idx] if idx >= 0 else np.array([np.nan, np.nan, np.nan])
           for idx in eef_indices
         ]
       )
+      # body_pos_w = (
+      #   robot.data.body_link_pos_w[0, :, :3].cpu().numpy().copy()
+      # )  # (num_bodies, 3)
+      # eef_positions = np.array(
+      #   [
+      #     body_pos_w[idx] if idx >= 0 else np.array([np.nan, np.nan, np.nan])
+      #     for idx in eef_indices
+      #   ]
+      # )
 
       # Get object size from MuJoCo model (half-extents for box geometry)
       object_size = None
@@ -1369,6 +1375,7 @@ def main(
   object_position_offset: tuple[float, float, float] | None = None,
   object_rotation_offset: tuple[float, float, float, float] | None = None,
   align_first_frame: bool = True,
+  task_name: str | None = None,
 ):
   """Convert trajectory NPZ file to mjlab motion format with contact extraction.
 
@@ -1391,6 +1398,7 @@ def main(
     object_position_offset: Optional constant XYZ offset (meters) applied to tracked object
     object_rotation_offset: Optional constant quaternion (w, x, y, z) applied to tracked object
     align_first_frame: Translate XY and rotate yaw so first frame aligns with world axes
+    task_name: Task name to use for environment configuration. If None, defaults to "Mjlab-Tracking-Flat-Unitree-G1-Box" when extract_object_states is True, otherwise "Mjlab-Tracking-Flat-Unitree-G1"
 
   Example usage:
     MUJOCO_GL=egl CUDA_VISIBLE_DEVICES=0 uv run src/mjlab/scripts/victor_npz_to_npz.py
@@ -1422,6 +1430,7 @@ def main(
     object_position_offset=object_position_offset,
     object_rotation_offset=object_rotation_offset,
     align_first_frame=align_first_frame,
+    task_name=task_name,
   )
 
 

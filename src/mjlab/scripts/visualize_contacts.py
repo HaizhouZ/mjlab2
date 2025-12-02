@@ -7,7 +7,9 @@ This script loads a motion NPZ file with contact data and visualizes:
 - Contact boolean indicators (color-coded)
 """
 
+import threading
 import time
+from pathlib import Path
 from typing import Any
 
 import mujoco
@@ -19,10 +21,58 @@ import warp as wp
 
 from mjlab.scene import Scene
 from mjlab.sim.sim import Simulation, SimulationCfg
-from mjlab.tasks.tracking.config.g1.env_cfgs import unitree_g1_flat_tracking_env_cfg_box
+from mjlab.tasks.registry import load_env_cfg
 
 # Suppress Warp kernel loading messages for cleaner output
 wp.config.quiet = True
+
+
+def find_trajectory_directories(file_dir: str) -> list[tuple[str, str]]:
+  """Find all trajectory directories containing motion.npz files.
+
+  Args:
+    file_dir: Base directory containing trajectory subdirectories
+
+  Returns:
+    List of tuples (traj_name, motion_file_path) sorted by trajectory name
+  """
+  file_dir_path = Path(file_dir)
+  if not file_dir_path.exists():
+    raise ValueError(f"Directory does not exist: {file_dir}")
+
+  traj_dirs = []
+  for item in file_dir_path.iterdir():
+    if item.is_dir():
+      motion_file = item / "motion.npz"
+      if motion_file.exists():
+        traj_dirs.append((item.name, str(motion_file)))
+
+  # Sort by trajectory name for reproducibility
+  traj_dirs.sort(key=lambda x: x[0])
+  return traj_dirs
+
+
+def setup_terminal_input() -> tuple[threading.Thread, threading.Event]:
+  """Setup simple terminal input detection using input().
+
+  Returns:
+    Tuple of (input_thread, next_trajectory_event)
+    The event is set when user presses Enter
+  """
+  next_trajectory_event = threading.Event()
+
+  def input_thread():
+    """Thread that waits for terminal input."""
+    try:
+      while True:
+        input()  # Wait for Enter key
+        next_trajectory_event.set()
+    except (EOFError, KeyboardInterrupt):
+      pass
+
+  thread = threading.Thread(target=input_thread, daemon=True)
+  thread.start()
+  return thread, next_trajectory_event
 
 
 def load_motion_data(npz_file: str) -> dict[str, Any]:
@@ -137,7 +187,9 @@ def visualize_contacts(
   playback_speed: float = 1.0,
   show_contact_markers: bool = True,
   contact_marker_size: float = 0.05,
-) -> None:
+  next_trajectory_event: threading.Event | None = None,
+  task_name: str = "Mjlab-Tracking-Flat-Unitree-G1-Box",
+) -> bool:
   """Visualize robot and object trajectories with contact information.
 
   Args:
@@ -146,6 +198,10 @@ def visualize_contacts(
     playback_speed: Playback speed multiplier (1.0 = normal speed)
     show_contact_markers: Whether to show contact location markers
     contact_marker_size: Size of contact markers in meters
+    next_trajectory_event: Optional event that when set, indicates to load next trajectory
+
+  Returns:
+    True if should continue to next trajectory, False if should stop
   """
   print(f"Loading motion data from: {npz_file}")
   motion_data = load_motion_data(npz_file)
@@ -183,13 +239,23 @@ def visualize_contacts(
 
   # Setup simulation
   print("Setting up simulation...")
-  sim_cfg = SimulationCfg()
-  sim_cfg.mujoco.timestep = dt
+  try:
+    sim_cfg = SimulationCfg()
+    sim_cfg.mujoco.timestep = dt
 
-  scene = Scene(unitree_g1_flat_tracking_env_cfg_box().scene, device=device)
+    env_cfg = load_env_cfg(task_name, play=False)
+    scene = Scene(env_cfg.scene, device=device)
+  except Exception as e:
+    print(f"Error during scene creation: {e}")
+    raise
 
   # End effector names
-  eef_names = ["left_wrist_yaw_link", "right_wrist_yaw_link"]
+  eef_names = [
+    "left_wrist_yaw_link",
+    "right_wrist_yaw_link",
+    "left_ankle_roll_link",
+    "right_ankle_roll_link",
+  ]
 
   # Add contact visualization sites to the scene spec before compilation
   contact_site_ids = []
@@ -201,16 +267,16 @@ def visualize_contacts(
       eef_name = eef_names[eef_idx] if eef_idx < len(eef_names) else f"eef_{eef_idx}"
       site_name = f"contact_{eef_name}"
       # Add site to worldbody for contact visualization
-      # site = scene.spec.worldbody.add_site(
-      #   name=site_name,
-      #   pos=(0, 0, -10),  # Start hidden below ground
-      #   size=(contact_marker_size,) * 3,
-      #   type=mujoco.mjtGeom.mjGEOM_SPHERE,
-      #   rgba=(1.0, 0.0, 0.0, 0.8)
-      #   if eef_idx == 0
-      #   else (0.0, 0.0, 1.0, 0.8),  # Red for left, blue for right
-      #   group=3,  # Use group 3 for contact visualization
-      # )
+      _ = scene.spec.worldbody.add_site(
+        name=site_name,
+        pos=(0, 0, -10),  # Start hidden below ground
+        size=(contact_marker_size,) * 3,
+        type=mujoco.mjtGeom.mjGEOM_SPHERE,
+        rgba=(1.0, 0.0, 0.0, 0.8)
+        if eef_idx == 0
+        else (0.0, 0.0, 1.0, 0.8),  # Red for left, blue for right
+        group=3,  # Use group 3 for contact visualization
+      )
       contact_site_ids.append(site_name)
 
   model = scene.compile()
@@ -231,7 +297,14 @@ def visualize_contacts(
       if site_id >= 0:
         contact_site_indices.append(site_id)
       else:
+        # Site doesn't exist, skip it
         contact_site_indices.append(-1)
+    # If no valid sites found, disable contact marker visualization
+    if all(site_id < 0 for site_id in contact_site_indices):
+      print(
+        "Warning: No contact visualization sites found in model, disabling contact markers"
+      )
+      show_contact_markers = False
 
   # Control state
   paused = {"active": False}
@@ -256,12 +329,14 @@ def visualize_contacts(
       step["current"] = 0
       paused["active"] = True
 
-  print("\nControls:")
-  print("  Space: Pause/Resume")
-  print("  Left Arrow: Step backward")
-  print("  Right Arrow: Step forward")
-  print("  R: Reset to beginning")
-  print("\nStarting visualization...")
+    print("\nControls:")
+    print("  Space: Pause/Resume")
+    print("  Left Arrow: Step backward")
+    print("  Right Arrow: Step forward")
+    print("  R: Reset to beginning")
+    if next_trajectory_event is not None:
+      print("  Press Enter in terminal: Load next trajectory")
+    print("\nStarting visualization...")
 
   with mujoco.viewer.launch_passive(
     mj_model, mj_data, key_callback=key_callback
@@ -277,6 +352,12 @@ def visualize_contacts(
     last_time = time.time()
 
     while viewer.is_running():
+      # Check if user wants to load next trajectory
+      if next_trajectory_event is not None and next_trajectory_event.is_set():
+        next_trajectory_event.clear()
+        print("\nLoading next trajectory...")
+        return True
+
       current_time = time.time()
 
       # Handle step requests
@@ -342,25 +423,27 @@ def visualize_contacts(
         and has_contacts
         and contact_indicators is not None
         and contact_positions is not None
+        and len(contact_site_indices) > 0
       ):
         for eef_idx in range(num_eefs):
-          if eef_idx < len(contact_site_indices) and contact_site_indices[eef_idx] >= 0:
+          if eef_idx < len(contact_site_indices):
             site_id = contact_site_indices[eef_idx]
-            if contact_indicators[frame_idx, eef_idx]:
-              contact_pos = contact_positions[frame_idx, eef_idx]
-              if not np.isnan(contact_pos).any():
-                # Update site position to show contact
-                mj_data.site_xpos[site_id] = contact_pos
-                # Make site visible (ensure alpha > 0)
-                mj_model.site_rgba[site_id, 3] = 0.8  # Set alpha
+            if site_id >= 0 and site_id < mj_model.nsite:
+              if contact_indicators[frame_idx, eef_idx]:
+                contact_pos = contact_positions[frame_idx, eef_idx]
+                if not np.isnan(contact_pos).any():
+                  # Update site position to show contact
+                  mj_data.site_xpos[site_id] = contact_pos
+                  # Make site visible (ensure alpha > 0)
+                  mj_model.site_rgba[site_id, 3] = 0.8  # Set alpha
+                else:
+                  # Hide site if position is invalid
+                  mj_data.site_xpos[site_id, 2] = -10  # Move below ground
+                  mj_model.site_rgba[site_id, 3] = 0.0  # Make transparent
               else:
-                # Hide site if position is invalid
+                # Hide site if no contact
                 mj_data.site_xpos[site_id, 2] = -10  # Move below ground
                 mj_model.site_rgba[site_id, 3] = 0.0  # Make transparent
-            else:
-              # Hide site if no contact
-              mj_data.site_xpos[site_id, 2] = -10  # Move below ground
-              mj_model.site_rgba[site_id, 3] = 0.0  # Make transparent
 
         # Print contact info periodically (every 50 frames to avoid spam)
         if (
@@ -389,31 +472,97 @@ def visualize_contacts(
       viewer.sync()
 
   print("Visualization closed.")
+  return False
 
 
 def main(
-  npz_file: str,
+  npz_file: str | None = None,
+  file_dir: str | None = None,
   device: str = "cpu",
   playback_speed: float = 1.0,
   show_contact_markers: bool = True,
   contact_marker_size: float = 0.02,
+  task_name: str = "Mjlab-Tracking-Flat-Unitree-G1-Box",
 ) -> None:
   """Main entry point for contact visualization.
 
   Args:
-    npz_file: Path to motion NPZ file with contact data
+    npz_file: Path to motion NPZ file with contact data (mutually exclusive with file_dir)
+    file_dir: Directory containing trajectory subdirectories with motion.npz files (mutually exclusive with npz_file)
     device: Device to use (cpu or cuda)
     playback_speed: Playback speed multiplier (1.0 = normal speed)
     show_contact_markers: Whether to show contact location markers
     contact_marker_size: Size of contact markers in meters (default: 2cm)
+    task_name: Task name to use for environment configuration (default: "Mjlab-Tracking-Flat-Unitree-G1-Box")
   """
-  visualize_contacts(
-    npz_file=npz_file,
-    device=device,
-    playback_speed=playback_speed,
-    show_contact_markers=show_contact_markers,
-    contact_marker_size=contact_marker_size,
-  )
+  # Validate that exactly one of npz_file or file_dir is provided
+  if (npz_file is None) == (file_dir is None):
+    raise ValueError("Must provide exactly one of --npz-file or --file-dir")
+
+  if npz_file is not None:
+    # Single file mode
+    visualize_contacts(
+      npz_file=npz_file,
+      device=device,
+      playback_speed=playback_speed,
+      show_contact_markers=show_contact_markers,
+      contact_marker_size=contact_marker_size,
+      next_trajectory_event=None,
+      task_name=task_name,
+    )
+  else:
+    # Directory mode - loop through trajectories
+    assert file_dir is not None
+    trajectories = find_trajectory_directories(file_dir)
+
+    if not trajectories:
+      raise ValueError(f"No trajectory directories found in {file_dir}")
+
+    print(f"Found {len(trajectories)} trajectories:")
+    for traj_name, _ in trajectories:
+      print(f"  - {traj_name}")
+
+    # Setup terminal input detection
+    input_thread, next_trajectory_event = setup_terminal_input()
+    print("\nPress Enter in the terminal to load the next trajectory...")
+    print("(Note: The MuJoCo viewer window must be focused for Space/Arrow keys)")
+
+    traj_idx = 0
+    while traj_idx < len(trajectories):
+      traj_name, motion_file = trajectories[traj_idx]
+      print(f"\n{'=' * 60}")
+      print(f"Trajectory {traj_idx + 1}/{len(trajectories)}: {traj_name}")
+      print(f"{'=' * 60}")
+
+      try:
+        should_continue = visualize_contacts(
+          npz_file=motion_file,
+          device=device,
+          playback_speed=playback_speed,
+          show_contact_markers=show_contact_markers,
+          contact_marker_size=contact_marker_size,
+          next_trajectory_event=next_trajectory_event,
+          task_name=task_name,
+        )
+      except Exception as e:
+        print(f"Error visualizing trajectory {traj_name}: {e}")
+        print("Skipping to next trajectory...")
+        should_continue = True
+        traj_idx += 1
+        # Small delay to ensure cleanup
+        time.sleep(0.5)
+        continue
+
+      if should_continue:
+        traj_idx += 1
+        # Small delay to ensure viewer is fully closed before starting next
+        time.sleep(0.5)
+      else:
+        # Viewer was closed, exit
+        break
+
+    if traj_idx >= len(trajectories):
+      print("\nAll trajectories visualized.")
 
 
 if __name__ == "__main__":

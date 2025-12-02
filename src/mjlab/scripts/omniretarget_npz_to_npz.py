@@ -17,10 +17,7 @@ from mjlab.asset_zoo.robots.unitree_g1.g1_constants import (
 from mjlab.entity import Entity
 from mjlab.scene import Scene
 from mjlab.sim.sim import Simulation, SimulationCfg
-from mjlab.tasks.tracking.config.g1.env_cfgs import (
-  unitree_g1_flat_tracking_env_cfg,
-  unitree_g1_flat_tracking_env_cfg_box,
-)
+from mjlab.tasks.registry import load_env_cfg
 from mjlab.utils.lab_api.math import (
   axis_angle_from_quat,
   quat_apply,
@@ -683,6 +680,7 @@ def convert(
   object_position_offset: tuple[float, float, float] | None = None,
   object_rotation_offset: tuple[float, float, float, float] | None = None,
   align_first_frame: bool = False,
+  task_name: str | None = None,
 ) -> tuple[dict[str, int] | None, str]:
   """Convert OmniRetarget NPZ file to mjlab motion.npz using simulation states.
 
@@ -715,6 +713,7 @@ def convert(
     object_position_offset: Optional constant XYZ offset (meters) applied to the tracked object's pose
     object_rotation_offset: Optional constant quaternion (w, x, y, z) applied to the tracked object's pose
     align_first_frame: Translate XY and rotate yaw so the first frame aligns with world axes
+    task_name: Task name to use for environment configuration. If None, defaults to "Mjlab-Tracking-Flat-Unitree-G1-Box" when extract_object_states is True, otherwise "Mjlab-Tracking-Flat-Unitree-G1"
   """
   # Construct output path: motions/output/<output_name>/motion.npz
   output_path = f"motions/output/{output_name}/motion.npz"
@@ -728,15 +727,21 @@ def convert(
   sim_cfg = SimulationCfg()
   sim_cfg.mujoco.timestep = 1.0 / float(output_fps)
 
+  # Determine task name if not provided
+  if task_name is None:
+    task_name = (
+      "Mjlab-Tracking-Flat-Unitree-G1-Box-No-State-Estimation"
+      if extract_object_states
+      else "Mjlab-Tracking-Flat-Unitree-G1-Box-No-State-Estimation"
+    )
+
+  env_cfg = load_env_cfg(task_name, play=False)
   if extract_object_states:
-    env_cfg = unitree_g1_flat_tracking_env_cfg_box()
     env_cfg.scene.entities = {
       "robot": get_g1_robot_cfg(),
       "box": get_largeboxmesh_cfg(),
     }
-    scene = Scene(env_cfg.scene, device=device)
-  else:
-    scene = Scene(unitree_g1_flat_tracking_env_cfg().scene, device=device)
+  scene = Scene(env_cfg.scene, device=device)
   model = scene.compile()
   sim = Simulation(num_envs=1, cfg=sim_cfg, model=model, device=device)
   scene.initialize(sim.mj_model, sim.model, sim.data)
@@ -865,22 +870,32 @@ def convert(
   print(f"Robot has {len(robot.body_names)} bodies: {robot.body_names}")
 
   # End effector body names for contact detection
-  eef_names = [
-    "left_wrist_yaw_link",
-    "right_wrist_yaw_link",
-    "left_ankle_roll_link",
-    "right_ankle_roll_link",
-  ]
-
-  # Get end effector body indices in robot.body_names
-  eef_indices, eef_names_found = robot.find_bodies(eef_names, preserve_order=True)
+  eef_names = ["left_palm", "right_palm", "left_foot_tip", "right_foot_tip"]
+  eef_indices, eef_names_found = robot.find_sites(eef_names, preserve_order=True)
   for i, eef_name in enumerate(eef_names):
     if i >= len(eef_indices) or eef_indices[i] < 0:
-      print(f"Warning: End effector body '{eef_name}' not found in robot body names")
+      print(f"Warning: End effector site '{eef_name}' not found in robot site names")
       if i >= len(eef_indices):
         eef_indices.append(-1)
       else:
         eef_indices[i] = -1
+
+  # eef_names = [
+  #   "left_wrist_yaw_link",
+  #   "right_wrist_yaw_link",
+  #   "left_ankle_roll_link",
+  #   "right_ankle_roll_link",
+  # ]
+
+  # # Get end effector body indices in robot.body_names
+  # eef_indices, eef_names_found = robot.find_bodies(eef_names, preserve_order=True)
+  # for i, eef_name in enumerate(eef_names):
+  #   if i >= len(eef_indices) or eef_indices[i] < 0:
+  #     print(f"Warning: End effector body '{eef_name}' not found in robot body names")
+  #     if i >= len(eef_indices):
+  #       eef_indices.append(-1)
+  #     else:
+  #       eef_indices[i] = -1
 
   # Store object size for distance method (will be set during first frame if using distance method)
   object_size_global = None
@@ -1041,15 +1056,22 @@ def convert(
 
       # Use distance threshold method (simpler fallback)
       # Get end effector positions from body_link_pos_w
-      body_pos_w = (
-        robot.data.body_link_pos_w[0, :, :3].cpu().numpy().copy()
-      )  # (num_bodies, 3)
+      site_pos_w = robot.data.site_pos_w[0, :].cpu().numpy().copy()
       eef_positions = np.array(
         [
-          body_pos_w[idx] if idx >= 0 else np.array([np.nan, np.nan, np.nan])
+          site_pos_w[idx] if idx >= 0 else np.array([np.nan, np.nan, np.nan])
           for idx in eef_indices
         ]
       )
+      # body_pos_w = (
+      #   robot.data.body_link_pos_w[0, :, :3].cpu().numpy().copy()
+      # )  # (num_bodies, 3)
+      # eef_positions = np.array(
+      #   [
+      #     body_pos_w[idx] if idx >= 0 else np.array([np.nan, np.nan, np.nan])
+      #     for idx in eef_indices
+      #   ]
+      # )
 
       # Get object size from MuJoCo model (half-extents for box geometry or mesh bounding box)
       object_size = None
@@ -1291,7 +1313,7 @@ def main(
   append_reverse: bool = False,
   extract_object_states: bool = True,
   speed: float = 1.0,
-  contact_threshold: float = 0.08,
+  contact_threshold: float = 0.07,
   contact_method: str = "distance",
   output_dir: str = "motions/output/",
   device: str = "cuda:0",
@@ -1302,6 +1324,7 @@ def main(
   object_position_offset: tuple[float, float, float] | None = None,
   object_rotation_offset: tuple[float, float, float, float] | None = None,
   align_first_frame: bool = True,
+  task_name: str | None = None,
 ):
   """Convert OmniRetarget NPZ files to mjlab motion format with contact extraction.
 
@@ -1332,6 +1355,7 @@ def main(
     object_position_offset: Optional constant XYZ offset (meters) applied to tracked object
     object_rotation_offset: Optional constant quaternion (w, x, y, z) applied to tracked object
     align_first_frame: Translate XY and rotate yaw so first frame aligns with world axes
+    task_name: Task name to use for environment configuration. If None, defaults to "Mjlab-Tracking-Flat-Unitree-G1-Box" when extract_object_states is True, otherwise "Mjlab-Tracking-Flat-Unitree-G1"
 
   Example usage:
     # Convert one file for testing
@@ -1376,6 +1400,9 @@ def main(
       print("To convert all files, use --convert-all flag")
       if output_name is None:
         output_name = all_files[0].stem
+
+  # Track converted files for wandb logging
+  converted_files: list[tuple[str, str]] = []  # List of (output_name, output_file_path)
 
   # Convert each file
   for file_path in files_to_convert:
@@ -1472,6 +1499,7 @@ def main(
       object_position_offset=object_position_offset,
       object_rotation_offset=object_rotation_offset,
       align_first_frame=align_first_frame,
+      task_name=task_name,
     )
 
     # Rename output directory to include contact statistics if available
@@ -1520,6 +1548,49 @@ def main(
         print(
           f"  Format: <{frames_with_both} frames with both contacts>-<{total_frames} total frames>-<{original_name}>"
         )
+        # Update output_file to the renamed path
+        output_file = new_output_file
+        # Update file_output_name to reflect the renamed directory for artifact naming
+        file_output_name = (
+          new_name
+          if len(output_parts) == 1
+          else f"{'/'.join(output_parts[:-1])}/{new_name}"
+        )
+
+    # Track this converted file for wandb logging
+    # Use the final output_name (which may include contact stats in the directory name)
+    converted_files.append((file_output_name, output_file))
+
+  # Log all converted motions to wandb in a single run
+  if converted_files:
+    print("\n" + "=" * 60)
+    print("Uploading all motions to Weights & Biases...")
+    print("=" * 60)
+    import wandb
+
+    # Create a single run for all conversions
+    run_name = output_name if output_name else "omniretarget_batch"
+    run = wandb.init(project="omniretarget_motions", name=run_name)
+    REGISTRY = "motions"
+
+    for output_name_item, output_file_path in converted_files:
+      # Sanitize artifact name: wandb only allows alphanumeric, dashes, underscores, and dots
+      # Replace forward slashes with underscores
+      COLLECTION = output_name_item.replace("/", "_")
+      print(f"[INFO]: Logging motion to wandb: {COLLECTION} (from {output_name_item})")
+      logged_artifact = run.log_artifact(
+        artifact_or_path=output_file_path, name=COLLECTION, type=REGISTRY
+      )
+      run.link_artifact(
+        artifact=logged_artifact,
+        target_path=f"wandb-registry-{REGISTRY}/{COLLECTION}",
+      )
+      print(f"[INFO]: Motion saved to wandb registry: {REGISTRY}/{COLLECTION}")
+
+    wandb.finish()
+    print(
+      f"\n[INFO]: Successfully logged {len(converted_files)} motion(s) to wandb registry"
+    )
 
 
 if __name__ == "__main__":
