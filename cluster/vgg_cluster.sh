@@ -22,7 +22,7 @@ echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
 nvidia-smi
 
 MUJOCO_GL=egl uv run train Mjlab-Tracking-Flat-Unitree-G1-Box-No-State-Estimation \
-  --motion-file motions/output/motion.npz \
+  --motion-file motions/output/pick_from_floor_box_small/motion.npz \
   --env.scene.num_envs 4096 \
   --agent.max-iterations 30000 \
   --device cuda:0
