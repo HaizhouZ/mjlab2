@@ -52,6 +52,42 @@ def unitree_g1_tracking_ppo_runner_cfg_multitracking_box() -> RslRlOnPolicyRunne
   """Create RL runner configuration for Unitree G1 multi-tracking task with a box."""
 
   cfg = unitree_g1_tracking_ppo_runner_cfg_box()
+  cfg.policy.actor_hidden_dims = (
+    1024,
+    1024,
+    1024,
+    1024,
+    512,
+    512,
+    512,
+    512,
+    256,
+    256,
+    256,
+    256,
+    128,
+    128,
+    128,
+    128,
+  )
+  cfg.policy.critic_hidden_dims = (
+    1024,
+    1024,
+    1024,
+    1024,
+    512,
+    512,
+    512,
+    512,
+    256,
+    256,
+    256,
+    256,
+    128,
+    128,
+    128,
+    128,
+  )
   cfg.experiment_name = "g1_object_multitracking"
 
   return cfg
