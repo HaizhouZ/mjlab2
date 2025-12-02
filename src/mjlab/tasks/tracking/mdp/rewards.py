@@ -231,7 +231,6 @@ def eef_contact_indicator_match(
   command_name: str,
   eef_body_names: list[str],
   sensor_names: list[str] | None = None,
-  gain: float = 1.0,
   force_threshold: float = 10.0,
   force_penalty_std: float = 10.0,
 ) -> torch.Tensor:
@@ -269,7 +268,12 @@ def eef_contact_indicator_match(
 
   # Default sensor names if not provided
   if sensor_names is None:
-    sensor_names = ["left_eef_contact", "right_eef_contact"]
+    sensor_names = [
+      "left_eef_contact",
+      "right_eef_contact",
+      "left_foot_contact",
+      "right_foot_contact",
+    ]
 
   num_eefs = len(eef_body_names)
   num_contacts = contact_indicators.shape[1]
@@ -380,6 +384,5 @@ def eef_contact_indicator_match(
   # Vectorized reward computation with force penalty
   # Reward = gain * sum(contact_detected * force_penalty) for each environment
   # The force_penalty multiplies the reward, reducing it when forces exceed threshold
-  reward = gain * (contact_detected.float() * force_penalty).sum(dim=1)  # (num_envs,)
-  # print(reward)
+  reward = (contact_detected.float() * force_penalty).sum(dim=1)  # (num_envs,)
   return reward

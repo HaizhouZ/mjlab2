@@ -35,7 +35,7 @@ def unitree_g1_tracking_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
     experiment_name="g1_tracking",
     save_interval=500,
     num_steps_per_env=24,
-    max_iterations=30_000,
+    max_iterations=5_000,
   )
 
 
