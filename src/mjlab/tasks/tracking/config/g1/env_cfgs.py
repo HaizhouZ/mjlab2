@@ -194,6 +194,8 @@ def unitree_g1_flat_tracking_env_cfg_box(
   motion_cmd.eef_body_names = (
     "left_wrist_yaw_link",
     "right_wrist_yaw_link",
+    "left_ankle_roll_link",
+    "right_ankle_roll_link",
   )
 
   ###
@@ -222,8 +224,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
         "left_foot_contact",
         "right_foot_contact",
       ],
-      "gain": 1.0,
-      "force_threshold": 10.0,
+      "force_threshold": 20.0,
       "force_penalty_std": 10.0,
     },
   )
@@ -242,7 +243,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     params={
       "command_name": "motion",
       "object_asset_cfg": SceneEntityCfg("box"),
-      "std": 0.3,
+      "std": 0.35,
     },
   )
   cfg.rewards["bad_termination"] = RewardTermCfg(
@@ -257,6 +258,15 @@ def unitree_g1_flat_tracking_env_cfg_box(
     func=mdp.base_ang_vel_exceed,
     params={"threshold": _MAX_ANG_VEL},
   )
+
+  # cfg.terminations["object_pos_exceed"] = TerminationTermCfg(
+  #   func=mdp.object_too_far,
+  #   params={
+  #     "command_name": "motion",
+  #     "asset_cfg": SceneEntityCfg("box"),
+  #     "threshold": 0.5,
+  #   },
+  # )
 
   ###
   # Object Tracking Event Terms
@@ -292,6 +302,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   cfg.events["hand_friction"] = EventTermCfg(
     func=mdp.randomize_field,
     mode="startup",
+    domain_randomization=True,
     params={
       "asset_cfg": SceneEntityCfg(
         "robot", geom_names=("left_wrist_collision", "right_wrist_collision")
@@ -301,6 +312,34 @@ def unitree_g1_flat_tracking_env_cfg_box(
       "ranges": (0.3, 1.2),
     },
   )
+
+  cfg.events["box_friction"] = EventTermCfg(
+    func=mdp.randomize_field,
+    domain_randomization=True,
+    mode="startup",
+    params={
+      "asset_cfg": SceneEntityCfg("box", geom_names=("largebox_geom",)),
+      "operation": "abs",
+      "field": "geom_friction",
+      "ranges": (0.2, 0.8),
+    },
+  )
+
+  # cfg.events["box_size"] = EventTermCfg(
+  #   func=mdp.randomize_field,
+  #   mode="startup",
+  #   domain_randomization=True,
+  #   params={
+  #     "asset_cfg": SceneEntityCfg("box"),
+  #     "operation": "scale",
+  #     "field": "geom_size",
+  #     "ranges": {
+  #       0: (0.7, 1.3),
+  #       1: (0.7, 1.3),
+  #       2: (1.0, 1.0),
+  #     },  # Only randomize axis 1 (breadth/y), keep length (0) and height (2) fixed
+  #   },
+  # )
 
   ###
   # Actor (Policy) Object Tracking Observation Terms
@@ -431,7 +470,12 @@ def unitree_g1_flat_multitracking_env_cfg_box(
       "yaw": (-0.78, 0.78),
     },
     joint_position_range=(-0.1, 0.1),
-    eef_body_names=("left_wrist_yaw_link", "right_wrist_yaw_link"),
+    eef_body_names=(
+      "left_wrist_yaw_link",
+      "right_wrist_yaw_link",
+      "left_ankle_roll_link",
+      "right_ankle_roll_link",
+    ),
     motion_dir="motions/output/multi",
     traj_name_patterns=[".*"],
     debug_vis=True,
@@ -460,3 +504,14 @@ def unitree_g1_flat_multitracking_env_cfg_box(
     cfg.commands["motion"].motion_assignment_mode = "linear"
 
   return cfg
+
+
+# def unitree_g1_flat_multitracking_env_cfg_largebox(
+#   has_state_estimation: bool = True,
+#   play: bool = False,
+# ) -> ManagerBasedRlEnvCfg:
+#   """Create Unitree G1 flat terrain tracking configuration with a large box."""
+#   cfg = unitree_g1_flat_tracking_env_cfg_box(has_state_estimation=has_state_estimation)
+#   cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_largebox_cfg()}
+
+#   return cfg
