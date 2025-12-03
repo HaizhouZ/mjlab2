@@ -157,6 +157,34 @@ def object_global_orientation_error_exp(
   return torch.exp(-error / (std**2))
 
 
+def object_global_linear_velocity_error_exp(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  object_asset_cfg: SceneEntityCfg,
+  std: float,
+) -> torch.Tensor:
+  command = cast(MotionCommand, env.command_manager.get_term(command_name))
+  box: Entity = env.scene[object_asset_cfg.name]
+  target_lin_vel = command.object_lin_vel_w  # (N, 3)
+  current_lin_vel = box.data.body_link_lin_vel_w[:, 0]  # (N, 3) root body
+  error = torch.sum(torch.square(target_lin_vel - current_lin_vel), dim=-1)
+  return torch.exp(-error / (std**2))
+
+
+def object_global_angular_velocity_error_exp(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  object_asset_cfg: SceneEntityCfg,
+  std: float,
+) -> torch.Tensor:
+  command = cast(MotionCommand, env.command_manager.get_term(command_name))
+  box: Entity = env.scene[object_asset_cfg.name]
+  target_ang_vel = command.object_ang_vel_w  # (N, 3)
+  current_ang_vel = box.data.body_link_ang_vel_w[:, 0]  # (N, 3) root body
+  error = torch.sum(torch.square(target_ang_vel - current_ang_vel), dim=-1)
+  return torch.exp(-error / (std**2))
+
+
 def combined_object_motion_global_pos_tracking(
   env: ManagerBasedRlEnv,
   command_name: str,
