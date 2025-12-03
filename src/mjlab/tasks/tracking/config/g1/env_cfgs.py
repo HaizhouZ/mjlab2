@@ -563,3 +563,34 @@ def unitree_g1_flat_tracking_env_cfg_largebox(
     cfg.commands["motion"].sampling_mode = "start"
 
   return cfg
+
+
+def unitree_g1_flat_multitracking_env_cfg_largebox(
+  has_state_estimation: bool = True,
+  play: bool = False,
+) -> ManagerBasedRlEnvCfg:
+  """Create Unitree G1 flat terrain multi-tracking configuration with a large box."""
+  cfg = unitree_g1_flat_multitracking_env_cfg_box(
+    has_state_estimation=has_state_estimation
+  )
+  cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_largebox_cfg()}
+
+  # Apply play mode overrides.
+  if play:
+    # Effectively infinite episode length.
+    cfg.episode_length_s = int(1e9)
+
+    cfg.observations["policy"].enable_corruption = False
+    cfg.events.pop("push_robot", None)
+    cfg.events.pop("push_object", None)
+
+    # # Disable RSI randomization.
+    # motion_cmd.pose_range = {}
+    # motion_cmd.velocity_range = {}
+    # cfg.terminations["base_ang_vel_exceed"] = None
+    # cfg.terminations["ee_body_pos"] = None
+    # cfg.terminations["anchor_pos"] = None
+    # cfg.terminations["anchor_ori"] = None
+    cfg.commands["motion"].sampling_mode = "start"
+
+  return cfg

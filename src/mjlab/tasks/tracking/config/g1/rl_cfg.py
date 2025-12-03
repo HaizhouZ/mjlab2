@@ -14,8 +14,8 @@ def unitree_g1_tracking_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
       init_noise_std=1.0,
       actor_obs_normalization=True,
       critic_obs_normalization=True,
-      actor_hidden_dims=(1024, 512, 256, 128),
-      critic_hidden_dims=(1024, 512, 256, 128),
+      actor_hidden_dims=(512, 256, 128),
+      critic_hidden_dims=(512, 256, 128),
       activation="elu",
     ),
     algorithm=RslRlPpoAlgorithmCfg(
@@ -97,4 +97,13 @@ def unitree_g1_tracking_ppo_runner_cfg_largebox() -> RslRlOnPolicyRunnerCfg:
   """Create RL runner configuration for Unitree G1 tracking task with a large box."""
   cfg = unitree_g1_tracking_ppo_runner_cfg_box()
   cfg.experiment_name = "g1_largebox_tracking"
+  return cfg
+
+
+def unitree_g1_tracking_ppo_runner_cfg_multitracking_largebox() -> (
+  RslRlOnPolicyRunnerCfg
+):
+  """Create RL runner configuration for Unitree G1 multi-tracking task with a large box."""
+  cfg = unitree_g1_tracking_ppo_runner_cfg_largebox()
+  cfg.experiment_name = "g1_largebox_multitracking"
   return cfg
