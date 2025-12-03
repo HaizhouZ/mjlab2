@@ -385,6 +385,27 @@ def run_train_single_motion_from_file(
     dump_yaml(log_dir / "params" / "env.yaml", env_cfg_dict)
     dump_yaml(log_dir / "params" / "agent.yaml", agent_cfg_dict)
 
+  # Log motion file as artifact to wandb if using local file (only on rank 0)
+  # Note: wandb may not be initialized until learn() is called, so we'll try to log it
+  # after learn() starts. For now, we'll attempt it here, but it may need to be logged
+  # after the first save (similar to how registry artifacts are linked).
+  if rank == 0:
+    motion_file_path = Path(motion_file)
+    if motion_file_path.exists() and wandb.run is not None:
+      # Log the motion file as an artifact
+      artifact_name = f"{motion_name}_motion"
+      print(f"[INFO]: Logging motion file as artifact: {artifact_name}")
+      try:
+        _ = wandb.run.log_artifact(
+          artifact_or_path=str(motion_file_path),
+          name=artifact_name,
+          type="motions",
+        )
+        print(f"[INFO]: Motion artifact logged: {artifact_name}")
+      except Exception as e:
+        print(f"[WARN]: Failed to log motion artifact: {e}")
+        print("[WARN]: Motion artifact will need to be provided manually when playing")
+
   runner.learn(
     num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True
   )
