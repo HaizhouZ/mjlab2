@@ -246,6 +246,24 @@ def unitree_g1_flat_tracking_env_cfg_box(
       "std": 0.35,
     },
   )
+  cfg.rewards["object_global_lin_vel"] = RewardTermCfg(
+    func=mdp.object_global_linear_velocity_error_exp,
+    weight=1.0,
+    params={
+      "command_name": "motion",
+      "object_asset_cfg": SceneEntityCfg("box"),
+      "std": 1.0,
+    },
+  )
+  cfg.rewards["object_global_ang_vel"] = RewardTermCfg(
+    func=mdp.object_global_angular_velocity_error_exp,
+    weight=1.0,
+    params={
+      "command_name": "motion",
+      "object_asset_cfg": SceneEntityCfg("box"),
+      "std": 3.14,
+    },
+  )
   cfg.rewards["bad_termination"] = RewardTermCfg(
     func=mdp.is_terminated,
     weight=-100.0,
@@ -430,7 +448,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     # motion_cmd.pose_range = {}
     # motion_cmd.velocity_range = {}
 
-    motion_cmd.sampling_mode = "uniform"
+    motion_cmd.sampling_mode = "start"
 
   return cfg
 
@@ -525,5 +543,23 @@ def unitree_g1_flat_tracking_env_cfg_largebox(
     has_state_estimation=has_state_estimation, play=play
   )
   cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_largebox_cfg()}
+
+  # Apply play mode overrides.
+  if play:
+    # Effectively infinite episode length.
+    cfg.episode_length_s = int(1e9)
+
+    cfg.observations["policy"].enable_corruption = False
+    cfg.events.pop("push_robot", None)
+    cfg.events.pop("push_object", None)
+
+    # # Disable RSI randomization.
+    # motion_cmd.pose_range = {}
+    # motion_cmd.velocity_range = {}
+    # cfg.terminations["base_ang_vel_exceed"] = None
+    # cfg.terminations["ee_body_pos"] = None
+    # cfg.terminations["anchor_pos"] = None
+    # cfg.terminations["anchor_ori"] = None
+    cfg.commands["motion"].sampling_mode = "start"
 
   return cfg
