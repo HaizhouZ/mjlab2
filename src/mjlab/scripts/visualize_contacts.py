@@ -52,29 +52,6 @@ def find_trajectory_directories(file_dir: str) -> list[tuple[str, str]]:
   return traj_dirs
 
 
-def setup_terminal_input() -> tuple[threading.Thread, threading.Event]:
-  """Setup simple terminal input detection using input().
-
-  Returns:
-    Tuple of (input_thread, next_trajectory_event)
-    The event is set when user presses Enter
-  """
-  next_trajectory_event = threading.Event()
-
-  def input_thread():
-    """Thread that waits for terminal input."""
-    try:
-      while True:
-        input()  # Wait for Enter key
-        next_trajectory_event.set()
-    except (EOFError, KeyboardInterrupt):
-      pass
-
-  thread = threading.Thread(target=input_thread, daemon=True)
-  thread.start()
-  return thread, next_trajectory_event
-
-
 def load_motion_data(npz_file: str) -> dict[str, Any]:
   """Load motion data from NPZ file."""
   data = np.load(npz_file, allow_pickle=True)
@@ -328,15 +305,16 @@ def visualize_contacts(
     elif keycode == 114:  # 'r'
       step["current"] = 0
       paused["active"] = True
-
-    print("\nControls:")
-    print("  Space: Pause/Resume")
-    print("  Left Arrow: Step backward")
-    print("  Right Arrow: Step forward")
-    print("  R: Reset to beginning")
-    if next_trajectory_event is not None:
-      print("  Press Enter in terminal: Load next trajectory")
-    print("\nStarting visualization...")
+    # Enter/Return: load next trajectory (GLFW keycode 257)
+    elif keycode == 257:  # KEY_ENTER in GLFW/MuJoCo
+      if next_trajectory_event is not None:
+        print("\nEnter pressed: Loading next trajectory...")
+        next_trajectory_event.set()
+    # 'N': load next trajectory (alternative)
+    elif keycode == 78:  # 'N' (uppercase)
+      if next_trajectory_event is not None:
+        print("\nN pressed: Loading next trajectory...")
+        next_trajectory_event.set()
 
   with mujoco.viewer.launch_passive(
     mj_model, mj_data, key_callback=key_callback
@@ -463,10 +441,10 @@ def visualize_contacts(
                   f"{eef_name}: [{contact_pos[0]:.3f}, {contact_pos[1]:.3f}, {contact_pos[2]:.3f}]"
                 )
 
-          if contact_info:
-            print(
-              f"Frame {frame_idx}/{num_frames}: Contacts - {', '.join(contact_info)}"
-            )
+          # if contact_info:
+          #   print(
+          #     f"Frame {frame_idx}/{num_frames}: Contacts - {', '.join(contact_info)}"
+          #   )
 
       # Sync viewer
       viewer.sync()
@@ -522,10 +500,15 @@ def main(
     for traj_name, _ in trajectories:
       print(f"  - {traj_name}")
 
-    # Setup terminal input detection
-    input_thread, next_trajectory_event = setup_terminal_input()
-    print("\nPress Enter in the terminal to load the next trajectory...")
-    print("(Note: The MuJoCo viewer window must be focused for Space/Arrow keys)")
+    # Create event for next trajectory (no terminal input thread needed)
+    next_trajectory_event = threading.Event()
+    print("\nControls:")
+    print("  Space: Pause/Resume")
+    print("  Left Arrow: Step backward")
+    print("  Right Arrow: Step forward")
+    print("  R: Reset to beginning")
+    print("  Enter or N: Load next trajectory")
+    print("(Make sure the MuJoCo viewer window is focused for keyboard input)")
 
     traj_idx = 0
     while traj_idx < len(trajectories):
