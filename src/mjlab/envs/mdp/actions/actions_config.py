@@ -37,5 +37,10 @@ class JointEffortActionCfg(JointActionCfg):
 @dataclass(kw_only=True)
 class MotionTrackingJointPositionActionCfg(JointActionCfg):
   class_type: type[ActionTerm] = joint_actions.MotionTrackingJointPositionAction
-  use_default_offset: bool = True
+  command_name: str = "motion"
+
+
+@dataclass(kw_only=True)
+class MotionTrackingPDTargetsActionCfg(MotionTrackingJointPositionActionCfg):
+  class_type: type[ActionTerm] = joint_actions.MotionTrackingPDTargetsAction
   command_name: str = "motion"
