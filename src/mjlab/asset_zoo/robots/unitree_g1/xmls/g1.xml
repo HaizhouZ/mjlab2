@@ -240,8 +240,9 @@
                           <joint name="left_wrist_yaw_joint" axis="0 0 1" range="-1.61443 1.61443"/>
                           <geom class="visual" mesh="left_wrist_yaw_link"/>
                           <!-- <geom pos="0.09 -0.05 -0.05" quat="0.7071 0 -0.7071 0" class="visual" mesh="left_rubber_hand"/> -->
-                          <geom name="left_hand_collision" class="collision" size="0.02 0.02075" pos="0.02075 0 0" quat="0.707107 0 -0.707107 0" type="cylinder" rgba="0.2 0.6 0.2 0.2"/>
-                          <site name="left_palm" pos="0.0415 0 0" size="0.01"/>
+                          <site name="left_palm" pos="0.05 0 0" size="0.01"/>
+                          <!-- <geom name="left_hand_collision" class="collision" size="0.02 0.02075" pos="0.02075 0 0" quat="0.707107 0 -0.707107 0" type="cylinder" rgba="0.2 0.6 0.2 0.2"/>
+                          <site name="left_palm" pos="0.0415 0 0" size="0.01"/> -->
                         </body>
                       </body>
                     </body>
@@ -289,9 +290,10 @@
                             mass="0.254576" diaginertia="0.000646113 0.000559993 0.000147566"/>
                           <joint name="right_wrist_yaw_joint" axis="0 0 1" range="-1.61443 1.61443"/>
                           <geom class="visual" mesh="right_wrist_yaw_link"/>
+                          <site name="right_palm" pos="0.05 0 0" size="0.01"/>
                           <!-- <geom pos="0.09 -0.05 -0.05" quat="0.7071 0 -0.7071 0" class="visual" mesh="right_rubber_hand"/> -->
-                          <geom name="right_hand_collision" class="collision" size="0.02 0.02075" pos="0.02075 0 0" quat="0.707107 0 -0.707107 0" type="cylinder" rgba="0.2 0.6 0.2 0.2"/>
-                          <site name="right_palm" pos="0.0415 0 0" size="0.01"/>
+                          <!-- <geom name="right_hand_collision" class="collision" size="0.02 0.02075" pos="0.02075 0 0" quat="0.707107 0 -0.707107 0" type="cylinder" rgba="0.2 0.6 0.2 0.2"/>
+                          <site name="right_palm" pos="0.0415 0 0" size="0.01"/> -->
                         </body>
                       </body>
                     </body>
@@ -309,8 +311,8 @@
     <exclude body1="right_elbow_link" body2="right_wrist_pitch_link"/>
     <exclude body1="pelvis" body2="right_hip_roll_link"/>
     <exclude body1="pelvis" body2="left_hip_roll_link"/>
-    <exclude body1="left_wrist_yaw_link" body2="left_wrist_pitch_link"/>
-    <exclude body1="right_wrist_yaw_link" body2="right_wrist_pitch_link"/>
+    <!-- <exclude body1="left_wrist_yaw_link" body2="left_wrist_pitch_link"/>
+    <exclude body1="right_wrist_yaw_link" body2="right_wrist_pitch_link"/> -->
   </contact>
   <sensor>
     <gyro name="imu_ang_vel" site="imu_in_pelvis"/>
