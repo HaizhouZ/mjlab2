@@ -7,7 +7,7 @@ import torch
 from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactData, ContactSensor
-from mjlab.utils.lab_api.math import quat_error_magnitude
+from mjlab.utils.lab_api.math import quat_error_magnitude, subtract_frame_transforms
 
 from .commands import MotionCommand
 
@@ -157,6 +157,86 @@ def object_global_orientation_error_exp(
   return torch.exp(-error / (std**2))
 
 
+def object_relative_position_error_exp(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  object_asset_cfg: SceneEntityCfg,
+  std: float,
+) -> torch.Tensor:
+  """Tracks object position relative to anchor frame.
+
+  Rewards the vector from the anchor frame to the object position.
+  Compares the target relative position (from motion) with the current
+  relative position (from simulation).
+
+  Args:
+    env: The RL environment.
+    command_name: Name of the motion command.
+    object_asset_cfg: SceneEntityCfg identifying the object entity (e.g., "box").
+    std: Standard deviation for the exponential reward.
+  """
+  command = cast(MotionCommand, env.command_manager.get_term(command_name))
+  box: Entity = env.scene[object_asset_cfg.name]
+
+  # Target relative position: vector from anchor to object in reference motion
+  target_anchor_pos = command.anchor_pos_w  # (N, 3)
+  target_object_pos = command.object_pos_w  # (N, 3)
+  target_relative_pos = target_object_pos - target_anchor_pos  # (N, 3)
+
+  # Current relative position: vector from robot anchor to current object
+  current_anchor_pos = command.robot_anchor_pos_w  # (N, 3)
+  current_object_pos = box.data.body_link_pos_w[:, 0]  # (N, 3)
+  current_relative_pos = current_object_pos - current_anchor_pos  # (N, 3)
+
+  # Compute squared error
+  error = torch.sum(torch.square(target_relative_pos - current_relative_pos), dim=-1)
+  return torch.exp(-error / (std**2))
+
+
+def object_relative_orientation_error_exp(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  object_asset_cfg: SceneEntityCfg,
+  std: float,
+) -> torch.Tensor:
+  """Tracks object orientation relative to anchor frame.
+
+  Rewards the relative orientation quaternion from the anchor frame to the object.
+  Compares the target relative orientation (from motion) with the current
+  relative orientation (from simulation).
+
+  Args:
+    env: The RL environment.
+    command_name: Name of the motion command.
+    object_asset_cfg: SceneEntityCfg identifying the object entity (e.g., "box").
+    std: Standard deviation for the exponential reward.
+  """
+  command = cast(MotionCommand, env.command_manager.get_term(command_name))
+  box: Entity = env.scene[object_asset_cfg.name]
+
+  # Target relative orientation: from anchor to object in reference motion
+  target_anchor_pos = command.anchor_pos_w  # (N, 3)
+  target_anchor_quat = command.anchor_quat_w  # (N, 4)
+  target_object_pos = command.object_pos_w  # (N, 3)
+  target_object_quat = command.object_quat_w  # (N, 4)
+  _, target_relative_quat = subtract_frame_transforms(
+    target_anchor_pos, target_anchor_quat, target_object_pos, target_object_quat
+  )  # (N, 4)
+
+  # Current relative orientation: from robot anchor to current object
+  current_anchor_pos = command.robot_anchor_pos_w  # (N, 3)
+  current_anchor_quat = command.robot_anchor_quat_w  # (N, 4)
+  current_object_pos = box.data.body_link_pos_w[:, 0]  # (N, 3)
+  current_object_quat = box.data.body_link_quat_w[:, 0]  # (N, 4)
+  _, current_relative_quat = subtract_frame_transforms(
+    current_anchor_pos, current_anchor_quat, current_object_pos, current_object_quat
+  )  # (N, 4)
+
+  # Compute quaternion error magnitude
+  error = quat_error_magnitude(target_relative_quat, current_relative_quat) ** 2
+  return torch.exp(-error / (std**2))
+
+
 def object_global_linear_velocity_error_exp(
   env: ManagerBasedRlEnv,
   command_name: str,
@@ -165,10 +245,17 @@ def object_global_linear_velocity_error_exp(
 ) -> torch.Tensor:
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
   box: Entity = env.scene[object_asset_cfg.name]
-  target_lin_vel = command.object_lin_vel_w  # (N, 3)
+  target_lin_vel = command.object_lin_vel_w  # (N, 3) | None
   current_lin_vel = box.data.body_link_lin_vel_w[:, 0]  # (N, 3) root body
+  if target_lin_vel is None:
+    return torch.zeros(env.num_envs, device=env.device)
+  # Only apply reward if target velocity is nonzero
+  target_vel_magnitude = torch.norm(target_lin_vel, dim=-1)  # (N,)
+  is_nonzero = target_vel_magnitude > 0.05
   error = torch.sum(torch.square(target_lin_vel - current_lin_vel), dim=-1)
-  return torch.exp(-error / (std**2))
+  reward = torch.exp(-error / (std**2))
+  # Return reward only when target velocity is nonzero, otherwise return 0.0
+  return torch.where(is_nonzero, reward, reward * 0.1)
 
 
 def object_global_angular_velocity_error_exp(
@@ -179,10 +266,17 @@ def object_global_angular_velocity_error_exp(
 ) -> torch.Tensor:
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
   box: Entity = env.scene[object_asset_cfg.name]
-  target_ang_vel = command.object_ang_vel_w  # (N, 3)
+  target_ang_vel = command.object_ang_vel_w  # (N, 3) | None
   current_ang_vel = box.data.body_link_ang_vel_w[:, 0]  # (N, 3) root body
+  if target_ang_vel is None:
+    return torch.zeros(env.num_envs, device=env.device)
+  # Only apply reward if target velocity is nonzero
+  target_vel_magnitude = torch.norm(target_ang_vel, dim=-1)  # (N,)
+  is_nonzero = target_vel_magnitude > 0.05
   error = torch.sum(torch.square(target_ang_vel - current_ang_vel), dim=-1)
-  return torch.exp(-error / (std**2))
+  reward = torch.exp(-error / (std**2))
+  # Return reward only when target velocity is nonzero, otherwise return 0.0
+  return torch.where(is_nonzero, reward, reward * 0.1)
 
 
 def combined_object_motion_global_pos_tracking(
@@ -299,8 +393,8 @@ def eef_contact_indicator_match(
     sensor_names = [
       "left_eef_contact",
       "right_eef_contact",
-      "left_foot_contact",
-      "right_foot_contact",
+      # "left_foot_contact",
+      # "right_foot_contact",
     ]
 
   num_eefs = len(eef_body_names)
@@ -414,3 +508,19 @@ def eef_contact_indicator_match(
   # The force_penalty multiplies the reward, reducing it when forces exceed threshold
   reward = (contact_detected.float() * force_penalty).sum(dim=1)  # (num_envs,)
   return reward
+
+
+def pd_tracking_error_exp(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  std: float,
+) -> torch.Tensor:
+  command = cast(MotionCommand, env.command_manager.get_term(command_name))
+
+  motion_pd_targets: torch.Tensor = command.joint_pd_targets  # (N, num_joints)
+  applied_pd_actions: torch.Tensor = env.action_manager.get_term(
+    "joint_pos"
+  )._processed_actions  # (N, num_joints)
+  pd_errors = torch.sum(torch.square(motion_pd_targets - applied_pd_actions), dim=-1)
+
+  return torch.exp(-pd_errors / (std**2))
