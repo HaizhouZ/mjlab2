@@ -13,6 +13,7 @@ from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import (
   JointPositionActionCfg,
   MotionTrackingJointPositionActionCfg,
+  MotionTrackingPDTargetsActionCfg,
 )
 from mjlab.managers.manager_term_config import (
   EventTermCfg,
@@ -205,7 +206,6 @@ def unitree_g1_flat_tracking_env_cfg_box(
     asset_name="robot",
     actuator_names=(".*",),
     scale=G1_ACTION_SCALE,
-    use_default_offset=True,
     command_name="motion",
   )
 
@@ -224,10 +224,28 @@ def unitree_g1_flat_tracking_env_cfg_box(
         "left_foot_contact",
         "right_foot_contact",
       ],
-      "force_threshold": 20.0,
+      "force_threshold": 150.0,
       "force_penalty_std": 10.0,
     },
   )
+  # cfg.rewards["object_relative_pos"] = RewardTermCfg(
+  #   func=mdp.object_relative_position_error_exp,
+  #   weight=1.0,
+  #   params={
+  #     "command_name": "motion",
+  #     "object_asset_cfg": SceneEntityCfg("box"),
+  #     "std": 0.2,
+  #   },
+  # )
+  # cfg.rewards["object_relative_ori"] = RewardTermCfg(
+  #   func=mdp.object_relative_orientation_error_exp,
+  #   weight=1.2,
+  #   params={
+  #     "command_name": "motion",
+  #     "object_asset_cfg": SceneEntityCfg("box"),
+  #     "std": 0.3,
+  #   },
+  # )
   cfg.rewards["object_global_pos"] = RewardTermCfg(
     func=mdp.object_global_position_error_exp,
     weight=1.0,
@@ -243,7 +261,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     params={
       "command_name": "motion",
       "object_asset_cfg": SceneEntityCfg("box"),
-      "std": 0.35,
+      "std": 0.3,
     },
   )
   cfg.rewards["object_global_lin_vel"] = RewardTermCfg(
@@ -264,21 +282,18 @@ def unitree_g1_flat_tracking_env_cfg_box(
       "std": 3.14,
     },
   )
+  cfg.rewards["pd_tracking"] = RewardTermCfg(
+    func=mdp.pd_tracking_error_exp,
+    weight=3.0,
+    params={
+      "command_name": "motion",
+      "std": 0.3,
+    },
+  )
   cfg.rewards["bad_termination"] = RewardTermCfg(
     func=mdp.is_terminated,
     weight=-100.0,
   )
-  cfg.rewards["dof_acc_l2"] = RewardTermCfg(
-    func=mdp.joint_acc_l2,
-    weight=-1e-7,
-    params={"asset_cfg": SceneEntityCfg("robot", joint_names=(".*",))},
-  )
-  cfg.rewards["joint_torques_l2"] = RewardTermCfg(
-    func=mdp.joint_torques_l2,
-    weight=-2e-6,
-    params={"asset_cfg": SceneEntityCfg("robot", joint_names=(".*",))},
-  )
-
   ###
   # Object Tracking Termination Terms
   ###
@@ -287,12 +302,31 @@ def unitree_g1_flat_tracking_env_cfg_box(
     params={"threshold": _MAX_ANG_VEL},
   )
 
+  # cfg.terminations["object_pos_z"] = TerminationTermCfg(
+  #   func=mdp.object_pos_z,
+  #   params={
+  #     "command_name": "motion",
+  #     "asset_cfg": SceneEntityCfg("box"),
+  #     "threshold": 0.5,
+  #   },
+  # )
+
   # cfg.terminations["object_pos_exceed"] = TerminationTermCfg(
   #   func=mdp.object_too_far,
   #   params={
   #     "command_name": "motion",
   #     "asset_cfg": SceneEntityCfg("box"),
   #     "threshold": 0.5,
+  #   },
+  # )
+
+  #   cfg.terminations["contact_mismatch"] = TerminationTermCfg(
+  #   func=mdp.contact_mismatch_consecutive,
+  #   params={
+  #     "command_name": "motion",
+  #     "eef_body_names": ["left_wrist_yaw_link", "right_wrist_yaw_link"],
+  #     "sensor_names": ["left_eef_contact", "right_eef_contact"],
+  #     "consecutive_steps": 15,
   #   },
   # )
 
@@ -330,7 +364,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   cfg.events["hand_friction"] = EventTermCfg(
     func=mdp.randomize_field,
     mode="startup",
-    domain_randomization=True,
+    # domain_randomization=True,
     params={
       "asset_cfg": SceneEntityCfg(
         "robot", geom_names=("left_wrist_collision", "right_wrist_collision")
@@ -341,17 +375,17 @@ def unitree_g1_flat_tracking_env_cfg_box(
     },
   )
 
-  cfg.events["box_friction"] = EventTermCfg(
-    func=mdp.randomize_field,
-    domain_randomization=True,
-    mode="startup",
-    params={
-      "asset_cfg": SceneEntityCfg("box", geom_names=("largebox_geom",)),
-      "operation": "abs",
-      "field": "geom_friction",
-      "ranges": (0.2, 0.8),
-    },
-  )
+  # cfg.events["box_friction"] = EventTermCfg(
+  #   func=mdp.randomize_field,
+  #   domain_randomization=True,
+  #   mode="startup",
+  #   params={
+  #     "asset_cfg": SceneEntityCfg("box", geom_names=("largebox_geom",)),
+  #     "operation": "abs",
+  #     "field": "geom_friction",
+  #     "ranges": (0.2, 0.8),
+  #   },
+  # )
 
   # cfg.events["box_size"] = EventTermCfg(
   #   func=mdp.randomize_field,
@@ -372,10 +406,25 @@ def unitree_g1_flat_tracking_env_cfg_box(
   ###
   # Actor (Policy) Object Tracking Observation Terms
   ###
-  cfg.observations["policy"].terms["object_global_pos"] = ObservationTermCfg(
+  cfg.observations["policy"].terms["object_pos_b"] = ObservationTermCfg(
     func=mdp.object_pos_b,
     noise=Unoise(n_min=-0.1, n_max=0.1),
     params={"command_name": "motion"},
+  )
+  cfg.observations["policy"].terms["object_ori_b"] = ObservationTermCfg(
+    func=mdp.object_ori_b,
+    noise=Unoise(n_min=-0.05, n_max=0.05),
+    params={"command_name": "motion"},
+  )
+  cfg.observations["policy"].terms["object_lin_vel_w"] = ObservationTermCfg(
+    func=mdp.object_lin_vel_w,
+    noise=Unoise(n_min=-0.25, n_max=0.25),
+    params={"asset_cfg": SceneEntityCfg("box")},
+  )
+  cfg.observations["policy"].terms["object_ang_vel_w"] = ObservationTermCfg(
+    func=mdp.object_ang_vel_w,
+    noise=Unoise(n_min=-0.25, n_max=0.25),
+    params={"asset_cfg": SceneEntityCfg("box")},
   )
   cfg.observations["policy"].terms["object_pos_error"] = ObservationTermCfg(
     func=mdp.object_position_error,
@@ -391,10 +440,10 @@ def unitree_g1_flat_tracking_env_cfg_box(
   ###
   # Critic Object Tracking Observation Terms
   ###
-  cfg.observations["critic"].terms["object_global_pos"] = ObservationTermCfg(
+  cfg.observations["critic"].terms["object_pos_b"] = ObservationTermCfg(
     func=mdp.object_pos_b, history_length=10, params={"command_name": "motion"}
   )
-  cfg.observations["critic"].terms["object_global_ori"] = ObservationTermCfg(
+  cfg.observations["critic"].terms["object_ori_b"] = ObservationTermCfg(
     func=mdp.object_ori_b, history_length=10, params={"command_name": "motion"}
   )
   cfg.observations["critic"].terms["object_lin_vel_w"] = ObservationTermCfg(
@@ -417,10 +466,10 @@ def unitree_g1_flat_tracking_env_cfg_box(
     history_length=10,
     params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
   )
-  cfg.observations["critic"].terms["object_contact"] = ObservationTermCfg(
-    func=mdp.contact_indicator,
-    params={"command_name": "motion"},
-  )
+  # cfg.observations["critic"].terms["object_contact"] = ObservationTermCfg(
+  #   func=mdp.contact_indicator,
+  #   params={"command_name": "motion"},
+  # )
 
   # Modify observations if we don't have state estimation.
   if not has_state_estimation:
@@ -565,6 +614,50 @@ def unitree_g1_flat_tracking_env_cfg_largebox(
   return cfg
 
 
+def unitree_g1_flat_tracking_env_cfg_largebox_pdtargets(
+  has_state_estimation: bool = True,
+  play: bool = False,
+) -> ManagerBasedRlEnvCfg:
+  """Create Unitree G1 flat terrain tracking configuration with a box and PD targets."""
+  cfg = unitree_g1_flat_tracking_env_cfg_largebox(
+    has_state_estimation=has_state_estimation, play=play
+  )
+
+  ###
+  # Motion Tracking PD Targets Action
+  ###
+  g1_action_scale = {k: v / 2.0 for k, v in G1_ACTION_SCALE.items()}
+  cfg.actions["joint_pos"] = MotionTrackingPDTargetsActionCfg(
+    asset_name="robot",
+    actuator_names=(".*",),
+    scale=g1_action_scale,
+    command_name="motion",
+  )
+
+  # Remove PD tracking reward
+  cfg.rewards.pop("pd_tracking")
+
+  # Apply play mode overrides.
+  if play:
+    # Effectively infinite episode length.
+    cfg.episode_length_s = int(1e9)
+
+    cfg.observations["policy"].enable_corruption = False
+    cfg.events.pop("push_robot", None)
+    cfg.events.pop("push_object", None)
+
+    # # Disable RSI randomization.
+    # motion_cmd.pose_range = {}
+    # motion_cmd.velocity_range = {}
+    # cfg.terminations["base_ang_vel_exceed"] = None
+    # cfg.terminations["ee_body_pos"] = None
+    # cfg.terminations["anchor_pos"] = None
+    # cfg.terminations["anchor_ori"] = None
+    cfg.commands["motion"].sampling_mode = "start"
+
+  return cfg
+
+
 def unitree_g1_flat_multitracking_env_cfg_largebox(
   has_state_estimation: bool = True,
   play: bool = False,
@@ -587,10 +680,10 @@ def unitree_g1_flat_multitracking_env_cfg_largebox(
     # # Disable RSI randomization.
     # motion_cmd.pose_range = {}
     # motion_cmd.velocity_range = {}
-    # cfg.terminations["base_ang_vel_exceed"] = None
-    # cfg.terminations["ee_body_pos"] = None
-    # cfg.terminations["anchor_pos"] = None
-    # cfg.terminations["anchor_ori"] = None
+    cfg.terminations["base_ang_vel_exceed"] = None
+    cfg.terminations["ee_body_pos"] = None
+    cfg.terminations["anchor_pos"] = None
+    cfg.terminations["anchor_ori"] = None
     cfg.commands["motion"].sampling_mode = "start"
 
   return cfg
