@@ -64,11 +64,11 @@ def get_spec_largebox() -> mujoco.MjSpec:
   geom = body.add_geom(
     name="largebox_geom",
     type=mujoco.mjtGeom.mjGEOM_BOX,
-    friction=(0.8, 0.005, 0.0001),
-    size=(0.14, 0.155, 0.16),
+    friction=(0.6, 0.005, 0.0001),
+    size=(0.155, 0.155, 0.17),
     # pos=(0.01, 0, 0.03),
     # quat=(0.00991298, 0.849052, -0.523456, 0.0707591),
-    mass=0.5,
+    mass=0.6,
   )
   # Slightly translucent color similar to user's cube
   geom.rgba = np.array([0.2, 0.6, 0.8, 1.0], dtype=np.float32)
@@ -274,8 +274,8 @@ FULL_COLLISION = CollisionCfg(
   condim={r"^(left|right)_(foot|wrist|hand)[1-7]?_collision$": 3, ".*_collision": 1},
   priority={r"^(left|right)_(foot|wrist|hand)[1-7]?_collision$": 1},
   friction={
-    r"^(left|right)_foot[1-7]?_collision$": (0.6,),
-    r"^(left|right)_wrist[1-7]?_collision$": (0.6,),
+    r"^(left|right)_(foot|wrist|hand)[1-7]?_collision$": (0.6,),
+    # r"^(left|right)_wrist[1-7]?_collision$": (0.6,),
   },
   # condim={r"^(left|right)_foot[1-7]_collision$": 3, ".*_collision": 1},
   # priority={r"^(left|right)_foot[1-7]_collision$": 1},
@@ -348,7 +348,7 @@ def get_largebox_cfg() -> EntityCfg:
   """Get a fresh largebox configuration instance."""
   return EntityCfg(
     init_state=EntityCfg.InitialStateCfg(
-      pos=(0.4, 0.0, 0.1),
+      pos=(0.35, 0.0, 0.115),
       rot=(1.0, 0.0, 0.0, 0.0),
     ),
     spec_fn=get_spec_largebox,
@@ -360,7 +360,7 @@ def get_largeboxmesh_cfg() -> EntityCfg:
   largebox_xml = "src/mjlab/asset_zoo/objects/largebox.xml"
   return EntityCfg(
     init_state=EntityCfg.InitialStateCfg(
-      pos=(0.4, 0.0, 0.1),
+      pos=(0.35, 0.0, 0.115),
       rot=(1.0, 0.0, 0.0, 0.0),
     ),
     spec_fn=lambda: mujoco.MjSpec.from_file(str(largebox_xml)),
