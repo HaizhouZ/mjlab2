@@ -1,0 +1,19 @@
+# Example experiments list
+# Lines starting with # are ignored
+# One config name per line
+
+# Basic architectures
+unet
+tcn
+2dcnn
+
+# Latent dimension experiments
+experiments/unet_large_latent
+experiments/tcn_small_latent
+
+# Horizon experiments
+experiments/horizon64
+
+# Scheduler experiments
+experiments/onecycle_scheduler
+

@@ -1,0 +1,15 @@
+# @package _global_
+defaults:
+  - config
+
+architecture: "unet_simple"
+latent_dim: 128
+output_dir: "logs/trajectory_autoencoder/unet_simple"
+
+# U-Net Simple specific parameters (uses linear layers instead of conv layers)
+model:
+  encoder_hidden_dims: [512, 256, 128]  # Hidden layer sizes for encoder
+  decoder_hidden_dims: [128, 256, 512]  # Hidden layer sizes for decoder
+  use_batch_norm: true
+  dropout: 0.0  # Dropout probability (0.0 = no dropout)
+

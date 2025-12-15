@@ -1,0 +1,9 @@
+# @package _global_
+defaults:
+  - config
+
+architecture: "tcn"
+latent_dim: 64
+output_dir: "checkpoints/trajectory_autoencoder/tcn_small_latent"
+wandb_run_name: "tcn_latent64"
+

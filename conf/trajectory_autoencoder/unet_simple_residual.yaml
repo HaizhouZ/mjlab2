@@ -1,0 +1,16 @@
+# @package _global_
+defaults:
+  - config
+
+architecture: "unet_simple_residual"
+latent_dim: 256
+output_dir: "logs/trajectory_autoencoder/unet_simple_residual"
+
+# U-Net Simple Residual specific parameters (uses linear layers with residual connections)
+model:
+  encoder_hidden_dims: [512, 256, 128]  # Hidden layer sizes for encoder
+  decoder_hidden_dims: [128, 256, 512]  # Hidden layer sizes for decoder
+  use_batch_norm: true
+  dropout: 0.0  # Dropout probability (0.0 = no dropout)
+  use_residual: true  # Whether to use residual connections
+

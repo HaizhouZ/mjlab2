@@ -1,0 +1,9 @@
+# @package _global_
+defaults:
+  - config
+
+scheduler: "onecycle"
+max_lr: 0.01
+output_dir: "checkpoints/trajectory_autoencoder/onecycle"
+wandb_run_name: "onecycle_scheduler"
+

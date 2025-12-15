@@ -1,0 +1,14 @@
+# @package _global_
+defaults:
+  - config
+
+architecture: "2dcnn"
+latent_dim: 128
+output_dir: "logs/trajectory_autoencoder/2dcnn"
+
+# 2D CNN specific parameters
+model:
+  encoder_channels: [32, 64, 128, 256]
+  decoder_channels: [256, 128, 64, 32]
+  kernel_size: 3
+  use_batch_norm: true

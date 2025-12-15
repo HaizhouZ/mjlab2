@@ -1,0 +1,9 @@
+# @package _global_
+defaults:
+  - config
+
+architecture: "unet"
+latent_dim: 256
+output_dir: "checkpoints/trajectory_autoencoder/unet_large_latent"
+wandb_run_name: "unet_latent256"
+

@@ -1,0 +1,8 @@
+# @package _global_
+defaults:
+  - config
+
+horizon: 64
+output_dir: "checkpoints/trajectory_autoencoder/horizon64"
+wandb_run_name: "horizon64"
+

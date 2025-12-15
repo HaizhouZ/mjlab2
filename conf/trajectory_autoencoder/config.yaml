@@ -1,0 +1,90 @@
+# @package _global_
+
+# Data configuration
+motion_dir: "motions/output/SBTO_OmniRetarget_Dataset"
+traj_patterns:
+  - ".*"
+horizon: 32
+stride: 1
+val_split: 0.1
+
+# Model configuration
+architecture: "unet"  # Options: unet, unet_residual, unet_simple, tcn, 2dcnn, 2dcnn_causal, transformer
+latent_dim: 128
+feature_dim: 72  # Will be computed from data, but can be overridden
+
+# Architecture-specific model parameters
+# These can be overridden in architecture-specific config files
+model:
+  # Common parameters (used by multiple architectures)
+  encoder_channels: null  # Will use defaults if null
+  decoder_channels: null  # Will use defaults if null
+  use_batch_norm: true
+  kernel_size: 3
+  
+  # TCN-specific
+  num_channels: null  # Will use defaults if null
+  dropout: 0.2
+  
+  # Transformer-specific
+  d_model: 256
+  nhead: 8
+  num_encoder_layers: 4
+  num_decoder_layers: 4
+  dim_feedforward: 1024
+  activation: "relu"
+
+# Training configuration
+batch_size: 128
+epochs: 1000
+lr: 0.001
+device: "cuda"  # Will be set to "cpu" if CUDA not available
+
+# Body configuration
+anchor_body_name: "torso_link"
+body_names:
+  - "pelvis"
+  - "left_hip_roll_link"
+  - "left_knee_link"
+  - "left_ankle_roll_link"
+  - "right_hip_roll_link"
+  - "right_knee_link"
+  - "right_ankle_roll_link"
+  - "torso_link"
+  - "left_shoulder_roll_link"
+  - "left_elbow_link"
+  - "left_wrist_yaw_link"
+  - "right_shoulder_roll_link"
+  - "right_elbow_link"
+  - "right_wrist_yaw_link"
+
+# Normalization
+normalize: true
+normalizer_file: null  # Will save to output_dir/normalizer.pt if null
+
+# Early stopping
+early_stopping:
+  enabled: true
+  patience: 25  # Number of epochs to wait before stopping
+  min_delta: 0.0  # Minimum change to qualify as an improvement
+  restore_best_weights: true  # Restore best model weights at the end
+
+# Output configuration
+output_dir: "logs/trajectory_autoencoder"
+
+# Hydra configuration - output directory will be <output_dir>/<config_name>/<date>/<time>
+# For multirun/sweeps, use <output_dir>/multirun/<date>/<time>
+hydra:
+  run:
+    dir: ${output_dir}/${hydra.job.config_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: ${output_dir}/multirun/${hydra.job.config_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+
+# Learning rate scheduler
+scheduler: "reduce_on_plateau"  # Options: none, onecycle, cosine_annealing, cosine_restarts, reduce_on_plateau, warmup_cosine
+warmup_epochs: 10
+max_lr: null  # Will use lr * 10 for OneCycleLR if null
+min_lr: null  # Will use lr * 0.01 if null
+t_0: 10  # For cosine_restarts
+t_mult: 2  # For cosine_restarts
