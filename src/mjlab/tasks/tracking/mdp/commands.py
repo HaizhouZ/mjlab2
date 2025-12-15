@@ -53,7 +53,13 @@ class MotionLoader:
     self._body_indexes = body_indexes
     self.time_step_total = self.joint_pos.shape[0]
 
-    # Optional object arrays
+    if "pd_targets" in data:
+      self._joint_pd_targets = torch.tensor(
+        data["pd_targets"], dtype=torch.float32, device=device
+      )
+    else:
+      self._joint_pd_targets = None
+
     if "object_pos_w" in data and "object_quat_w" in data:
       self._object_pos_w = torch.tensor(
         data["object_pos_w"], dtype=torch.float32, device=device
@@ -141,6 +147,13 @@ class MotionLoader:
       return None
     return self._contact_positions
 
+  @property
+  def joint_pd_targets(self) -> torch.Tensor | None:
+    """PD targets from motion data. Shape: (time_step_total, num_joints)"""
+    if not hasattr(self, "_joint_pd_targets") or self._joint_pd_targets is None:
+      return None
+    return self._joint_pd_targets
+
 
 class MultiMotionLoader:
   """Loader for multiple motion files that can be selected per environment."""
@@ -215,6 +228,7 @@ class MultiMotionLoader:
     self._has_contact_positions = any(
       m.contact_positions is not None for m in self.motions
     )
+    self._has_pd_targets = any(m.joint_pd_targets is not None for m in self.motions)
 
     # Get shapes from first motion to determine tensor dimensions
     first_motion = self.motions[0]
@@ -280,6 +294,17 @@ class MultiMotionLoader:
       device=device,
     )
 
+    if self._has_pd_targets:
+      self._batched_pd_targets = torch.zeros(
+        self.num_motions,
+        self.max_time_steps,
+        num_joints,
+        dtype=torch.float32,
+        device=device,
+      )
+    else:
+      self._batched_pd_targets = None
+
     # Optional object tensors
     if self._has_object:
       self._batched_object_pos_w = torch.zeros(
@@ -334,6 +359,13 @@ class MultiMotionLoader:
       self._batched_body_quat_w[i, :t] = motion.body_quat_w
       self._batched_body_lin_vel_w[i, :t] = motion.body_lin_vel_w
       self._batched_body_ang_vel_w[i, :t] = motion.body_ang_vel_w
+
+      if (
+        self._has_pd_targets
+        and self._batched_pd_targets is not None
+        and motion.joint_pd_targets is not None
+      ):
+        self._batched_pd_targets[i, :t] = motion.joint_pd_targets
 
       if self._has_object and self._batched_object_pos_w is not None:
         if hasattr(motion, "_object_pos_w"):
@@ -405,6 +437,16 @@ class MultiMotionLoader:
       return self._batched_body_lin_vel_w[motion_indices, time_steps_clamped]
     elif field_name == "body_ang_vel_w":
       return self._batched_body_ang_vel_w[motion_indices, time_steps_clamped]
+    elif field_name == "joint_pd_targets":
+      if self._batched_pd_targets is None:
+        num_envs = motion_indices.shape[0]
+        return torch.zeros(
+          num_envs,
+          self._batched_joint_pos.shape[2],
+          dtype=torch.float32,
+          device=self.device,
+        )
+      return self._batched_pd_targets[motion_indices, time_steps_clamped]
     elif field_name == "object_pos_w":
       if self._batched_object_pos_w is None:
         num_envs = motion_indices.shape[0]
@@ -494,6 +536,16 @@ class MultiMotionLoader:
       return self._batched_body_lin_vel_w[motion_indices[:, None], timestep_indices]
     elif field_name == "body_ang_vel_w":
       return self._batched_body_ang_vel_w[motion_indices[:, None], timestep_indices]
+    elif field_name == "joint_pd_targets":
+      if self._batched_pd_targets is None:
+        return torch.zeros(
+          num_envs,
+          horizon,
+          self._batched_joint_pos.shape[2],
+          dtype=torch.float32,
+          device=self.device,
+        )
+      return self._batched_pd_targets[motion_indices[:, None], timestep_indices]
     elif field_name == "object_pos_w":
       if self._batched_object_pos_w is None:
         return torch.zeros(
@@ -601,6 +653,7 @@ class MotionCommand(CommandTerm):
     self.metrics["error_body_rot"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["error_joint_pos"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["error_joint_vel"] = torch.zeros(self.num_envs, device=self.device)
+    self.metrics["sbto_pd_deviation"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["sampling_entropy"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["sampling_top1_prob"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["sampling_top1_bin"] = torch.zeros(self.num_envs, device=self.device)
@@ -636,6 +689,11 @@ class MotionCommand(CommandTerm):
     else:
       self.ref_object_contact_future = None
       self.ref_object_contact = None
+
+    # Contact mismatch counter for termination condition
+    self.contact_mismatch_count = torch.zeros(
+      self.num_envs, dtype=torch.long, device=self.device
+    )
 
     # # Contact target positions (reconstructed from offsets in YAML/config)
     # # These will be set in _update_command based on object pose and offsets
@@ -801,6 +859,16 @@ class MotionCommand(CommandTerm):
     # env_origins: (num_envs, 3), need to expand to (num_envs, 1, 3) for broadcasting
     return pos + self._env.scene.env_origins[:, None, :]
 
+  @property
+  def joint_pd_targets(self) -> torch.Tensor | None:
+    """PD targets from motion data. Shape: (time_step_total, num_joints)"""
+    if (
+      not hasattr(self.motion, "_joint_pd_targets")
+      or self.motion.joint_pd_targets is None
+    ):
+      return None
+    return self.motion.joint_pd_targets[self.time_steps]
+
   def _update_metrics(self):
     self.metrics["error_anchor_pos"] = torch.norm(
       self.anchor_pos_w - self.robot_anchor_pos_w, dim=-1
@@ -836,6 +904,13 @@ class MotionCommand(CommandTerm):
       self.joint_vel - self.robot_joint_vel, dim=-1
     )
 
+    joint_pos_action_term = self._env.action_manager.get_term("joint_pos")
+    if hasattr(joint_pos_action_term, "_processed_actions"):
+      applied_pd_actions = joint_pos_action_term._processed_actions  # type: ignore[attr-defined]
+      # Compute sum of squared errors
+      self.metrics["sbto_pd_deviation"] = torch.norm(
+        self.joint_pd_targets - applied_pd_actions, dim=-1
+      )
     if self._has_object:
       # Get actual object pose from simulation
       try:
@@ -1027,6 +1102,9 @@ class MotionCommand(CommandTerm):
     if box is not None:
       box.clear_state(env_ids=env_ids)
 
+    # Reset contact mismatch counter
+    self.contact_mismatch_count[env_ids] = 0
+
   def _update_command(self):
     self.time_steps += 1
     env_ids = torch.where(self.time_steps >= self.motion.time_step_total)[0]
@@ -1078,6 +1156,61 @@ class MotionCommand(CommandTerm):
         1
       )  # (num_envs, 1, num_contacts)
       self.ref_object_contact = contact_at_timesteps  # (num_envs, num_contacts)
+
+  def check_contact_mismatch(self, sensor_names: list[str]) -> torch.Tensor:
+    """Check if actual contacts match reference contacts.
+
+    Args:
+      sensor_names: List of contact sensor names to check
+
+    Returns:
+      Boolean tensor of shape (num_envs,) indicating which environments have mismatched contacts
+    """
+    if self.ref_object_contact is None:
+      return torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+
+    contact_indicators = self.ref_object_contact  # (num_envs, num_contacts)
+    num_matches = min(contact_indicators.shape[1], len(sensor_names))
+
+    # Collect sensor found tensors (minimal Python loop for object access)
+    found_tensors = []
+    valid_indices = []
+    for i in range(num_matches):
+      if sensor_names[i] in self._env.scene.sensors:
+        found = self._env.scene.sensors[sensor_names[i]].data.found
+        if found is not None:
+          found_tensors.append(found)
+          valid_indices.append(i)
+
+    if not found_tensors:
+      return torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+
+    # Process each tensor to extract contact flags using torch operations
+    has_contact_list = []
+    for found in found_tensors:
+      has_contact = (found > 0).any(dim=1) if found.dim() > 1 else (found > 0)
+      has_contact_list.append(has_contact)
+
+    # Stack into tensor: (num_valid_sensors, num_envs) -> (num_envs, num_valid_sensors)
+    has_contact_stacked = (
+      torch.stack(has_contact_list, dim=0).transpose(0, 1)
+      if len(has_contact_list) > 1
+      else has_contact_list[0].unsqueeze(1)
+    )
+
+    # Map to full num_matches shape using advanced indexing
+    has_contact_all = torch.zeros(
+      self.num_envs, num_matches, device=self.device, dtype=torch.bool
+    )
+    if valid_indices:
+      has_contact_all[:, torch.tensor(valid_indices, device=self.device)] = (
+        has_contact_stacked
+      )
+
+    # Compare reference and actual contacts: mismatch if not all match
+    return ~(
+      contact_indicators[:, :num_matches] == has_contact_all[:, :num_matches]
+    ).all(dim=1)
 
   def _debug_vis_impl(self, visualizer: DebugVisualizer) -> None:
     """Draw ghost robot or frames based on visualization mode."""
@@ -1270,6 +1403,7 @@ class MultiMotionCommand(CommandTerm):
     self.metrics["error_body_rot"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["error_joint_pos"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["error_joint_vel"] = torch.zeros(self.num_envs, device=self.device)
+    self.metrics["sbto_pd_deviation"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["sampling_entropy"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["sampling_top1_prob"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["sampling_top1_bin"] = torch.zeros(self.num_envs, device=self.device)
@@ -1304,6 +1438,11 @@ class MultiMotionCommand(CommandTerm):
     else:
       self.ref_object_contact_future = None
       self.ref_object_contact = None
+
+    # Contact mismatch counter for termination condition
+    self.contact_mismatch_count = torch.zeros(
+      self.num_envs, dtype=torch.long, device=self.device
+    )
 
   @property
   def command(self) -> torch.Tensor:
@@ -1626,6 +1765,14 @@ class MultiMotionCommand(CommandTerm):
       self.joint_vel - self.robot_joint_vel, dim=-1
     )
 
+    # joint_pos_action_term = self._env.action_manager.get_term("joint_pos")
+    # if hasattr(joint_pos_action_term, "_processed_actions"):
+    #   applied_pd_actions = joint_pos_action_term._processed_actions  # type: ignore[attr-defined]
+    #   # Compute sum of squared errors
+    #   self.metrics["sbto_pd_deviation"] = torch.norm(
+    #     self.joint_pd_targets - applied_pd_actions, dim=-1
+    #   )
+
     if self._has_object:
       try:
         box = self._env.scene.entities.get("box")  # type: ignore[attr-defined]
@@ -1876,6 +2023,9 @@ class MultiMotionCommand(CommandTerm):
     if box is not None:
       box.clear_state(env_ids=env_ids)
 
+    # Reset contact mismatch counter
+    self.contact_mismatch_count[env_ids] = 0
+
   def _update_command(self):
     self.time_steps += 1
     # Check which envs have exceeded their motion's time steps
@@ -1926,6 +2076,61 @@ class MultiMotionCommand(CommandTerm):
         contact_data = contact_data.unsqueeze(1)
       self.ref_object_contact_future = contact_data.unsqueeze(1)
       self.ref_object_contact = contact_data
+
+  def check_contact_mismatch(self, sensor_names: list[str]) -> torch.Tensor:
+    """Check if actual contacts match reference contacts.
+
+    Args:
+      sensor_names: List of contact sensor names to check
+
+    Returns:
+      Boolean tensor of shape (num_envs,) indicating which environments have mismatched contacts
+    """
+    if self.ref_object_contact is None:
+      return torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+
+    contact_indicators = self.ref_object_contact  # (num_envs, num_contacts)
+    num_matches = min(contact_indicators.shape[1], len(sensor_names))
+
+    # Collect sensor found tensors (minimal Python loop for object access)
+    found_tensors = []
+    valid_indices = []
+    for i in range(num_matches):
+      if sensor_names[i] in self._env.scene.sensors:
+        found = self._env.scene.sensors[sensor_names[i]].data.found
+        if found is not None:
+          found_tensors.append(found)
+          valid_indices.append(i)
+
+    if not found_tensors:
+      return torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+
+    # Process each tensor to extract contact flags using torch operations
+    has_contact_list = []
+    for found in found_tensors:
+      has_contact = (found > 0).any(dim=1) if found.dim() > 1 else (found > 0)
+      has_contact_list.append(has_contact)
+
+    # Stack into tensor: (num_valid_sensors, num_envs) -> (num_envs, num_valid_sensors)
+    has_contact_stacked = (
+      torch.stack(has_contact_list, dim=0).transpose(0, 1)
+      if len(has_contact_list) > 1
+      else has_contact_list[0].unsqueeze(1)
+    )
+
+    # Map to full num_matches shape using advanced indexing
+    has_contact_all = torch.zeros(
+      self.num_envs, num_matches, device=self.device, dtype=torch.bool
+    )
+    if valid_indices:
+      has_contact_all[:, torch.tensor(valid_indices, device=self.device)] = (
+        has_contact_stacked
+      )
+
+    # Compare reference and actual contacts: mismatch if not all match
+    return ~(
+      contact_indicators[:, :num_matches] == has_contact_all[:, :num_matches]
+    ).all(dim=1)
 
   def _debug_vis_impl(self, visualizer: DebugVisualizer) -> None:
     """Draw ghost robot or frames based on visualization mode."""
