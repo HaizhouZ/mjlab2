@@ -905,12 +905,11 @@ class MotionCommand(CommandTerm):
     )
 
     joint_pos_action_term = self._env.action_manager.get_term("joint_pos")
-    if hasattr(joint_pos_action_term, "_processed_actions"):
-      applied_pd_actions = joint_pos_action_term._processed_actions  # type: ignore[attr-defined]
-      # Compute sum of squared errors
-      self.metrics["sbto_pd_deviation"] = torch.norm(
-        self.joint_pd_targets - applied_pd_actions, dim=-1
-      )
+    applied_pd_actions = joint_pos_action_term._processed_actions  # type: ignore[attr-defined]
+    # Compute sum of squared errors
+    self.metrics["sbto_pd_deviation"] = torch.norm(
+      self.joint_pd_targets - applied_pd_actions, dim=-1
+    )
     if self._has_object:
       # Get actual object pose from simulation
       try:

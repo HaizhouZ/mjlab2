@@ -626,11 +626,11 @@ def unitree_g1_flat_tracking_env_cfg_largebox_pdtargets(
   ###
   # Motion Tracking PD Targets Action
   ###
-  g1_action_scale = {k: v / 2.0 for k, v in G1_ACTION_SCALE.items()}
+  # g1_action_scale = {k: v / 2.0 for k, v in G1_ACTION_SCALE.items()}
   cfg.actions["joint_pos"] = MotionTrackingPDTargetsActionCfg(
     asset_name="robot",
     actuator_names=(".*",),
-    scale=g1_action_scale,
+    scale=G1_ACTION_SCALE,
     command_name="motion",
   )
 
