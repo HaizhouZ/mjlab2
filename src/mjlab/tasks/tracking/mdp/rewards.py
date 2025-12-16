@@ -521,6 +521,6 @@ def pd_tracking_error_exp(
   applied_pd_actions: torch.Tensor = env.action_manager.get_term(
     "joint_pos"
   )._processed_actions  # (N, num_joints)
-  pd_errors = torch.sum(torch.square(motion_pd_targets - applied_pd_actions), dim=-1)
+  error = (motion_pd_targets - applied_pd_actions).abs().clamp_min(0.0).mean(dim=1)
 
-  return torch.exp(-pd_errors / (std**2))
+  return torch.exp(-error / (std**2))

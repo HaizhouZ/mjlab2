@@ -7,6 +7,7 @@ from mjlab.envs import ManagerBasedRlEnv
 from mjlab.envs.mdp.actions import (
   JointPositionActionCfg,
   MotionTrackingJointPositionActionCfg,
+  MotionTrackingPDTargetsActionCfg,
 )
 from mjlab.rl.exporter_utils import (
   attach_metadata_to_onnx,
@@ -69,6 +70,10 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
         self.contact_positions = (
           contact_positions.to("cpu") if contact_positions is not None else None
         )
+        joint_pd_targets = first_motion.joint_pd_targets
+        self.joint_pd_targets = (
+          joint_pd_targets.to("cpu") if joint_pd_targets is not None else None
+        )
     else:
       # Original MotionCommand handling
       cmd = cast(MotionCommand, cmd)
@@ -99,6 +104,10 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
         self.contact_positions = (
           contact_positions.to("cpu") if contact_positions is not None else None
         )
+        joint_pd_targets = cmd.motion.joint_pd_targets
+        self.joint_pd_targets = (
+          joint_pd_targets.to("cpu") if joint_pd_targets is not None else None
+        )
 
     self.time_step_total: int = self.joint_pos.shape[0]
 
@@ -114,6 +123,9 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
       self.body_quat_w[time_step_clamped],
       self.body_lin_vel_w[time_step_clamped],
       self.body_ang_vel_w[time_step_clamped],
+      self.joint_pd_targets[time_step_clamped]
+      if self.joint_pd_targets is not None
+      else torch.zeros(len(time_step_clamped), self.joint_pd_targets.shape[1]),
     )
 
     # Only include object outputs if object data exists
@@ -164,6 +176,7 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
           "object_ang_vel_w",
           "contact_indicators",
           "contact_positions",
+          "joint_pd_targets",
         ]
       )
 
@@ -210,17 +223,23 @@ def attach_onnx_metadata(
   joint_pos_action = env.cfg.actions.get("joint_pos")
   if isinstance(joint_pos_action, MotionTrackingJointPositionActionCfg):
     use_motion_offset = True
+    use_motion_pd_offset = False
+  elif isinstance(joint_pos_action, MotionTrackingPDTargetsActionCfg):
+    use_motion_offset = False
+    use_motion_pd_offset = True
   elif isinstance(joint_pos_action, JointPositionActionCfg):
     use_motion_offset = False
+    use_motion_pd_offset = False
   else:
     # Default to False if action type is unknown
     use_motion_offset = False
-
+    use_motion_pd_offset = False
   metadata.update(
     {
       "anchor_body_name": motion_term_cfg.anchor_body_name,
       "body_names": list(motion_term_cfg.body_names),
       "use_motion_offset": use_motion_offset,
+      "use_motion_pd_offset": use_motion_pd_offset,
     }
   )
   attach_metadata_to_onnx(onnx_path, metadata)

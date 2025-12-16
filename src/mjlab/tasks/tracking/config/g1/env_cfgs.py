@@ -145,7 +145,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     primary=ContactMatch(mode="geom", pattern="left_wrist_collision", entity="robot"),
     secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="box"),
     fields=("found", "force", "pos"),
-    reduce="netforce",
+    reduce="maxforce",
     num_slots=3,
   )
 
@@ -154,7 +154,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     primary=ContactMatch(mode="geom", pattern="right_wrist_collision", entity="robot"),
     secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="box"),
     fields=("found", "force", "pos"),
-    reduce="netforce",
+    reduce="maxforce",
     num_slots=3,
   )
 
@@ -165,7 +165,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     ),
     secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="box"),
     fields=("found", "force", "pos"),
-    reduce="netforce",
+    reduce="maxforce",
     num_slots=3,
   )
 
@@ -176,7 +176,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     ),
     secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="box"),
     fields=("found", "force", "pos"),
-    reduce="netforce",
+    reduce="maxforce",
     num_slots=3,
   )
 
@@ -416,16 +416,16 @@ def unitree_g1_flat_tracking_env_cfg_box(
     noise=Unoise(n_min=-0.05, n_max=0.05),
     params={"command_name": "motion"},
   )
-  cfg.observations["policy"].terms["object_lin_vel_w"] = ObservationTermCfg(
-    func=mdp.object_lin_vel_w,
-    noise=Unoise(n_min=-0.25, n_max=0.25),
-    params={"asset_cfg": SceneEntityCfg("box")},
-  )
-  cfg.observations["policy"].terms["object_ang_vel_w"] = ObservationTermCfg(
-    func=mdp.object_ang_vel_w,
-    noise=Unoise(n_min=-0.25, n_max=0.25),
-    params={"asset_cfg": SceneEntityCfg("box")},
-  )
+  # cfg.observations["policy"].terms["object_lin_vel_w"] = ObservationTermCfg(
+  #   func=mdp.object_lin_vel_w,
+  #   noise=Unoise(n_min=-0.25, n_max=0.25),
+  #   params={"asset_cfg": SceneEntityCfg("box")},
+  # )
+  # cfg.observations["policy"].terms["object_ang_vel_w"] = ObservationTermCfg(
+  #   func=mdp.object_ang_vel_w,
+  #   noise=Unoise(n_min=-0.25, n_max=0.25),
+  #   params={"asset_cfg": SceneEntityCfg("box")},
+  # )
   cfg.observations["policy"].terms["object_pos_error"] = ObservationTermCfg(
     func=mdp.object_position_error,
     noise=Unoise(n_min=-0.05, n_max=0.05),
@@ -626,7 +626,6 @@ def unitree_g1_flat_tracking_env_cfg_largebox_pdtargets(
   ###
   # Motion Tracking PD Targets Action
   ###
-  # g1_action_scale = {k: v / 2.0 for k, v in G1_ACTION_SCALE.items()}
   cfg.actions["joint_pos"] = MotionTrackingPDTargetsActionCfg(
     asset_name="robot",
     actuator_names=(".*",),
