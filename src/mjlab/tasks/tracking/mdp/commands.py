@@ -53,13 +53,9 @@ class MotionLoader:
     self._body_indexes = body_indexes
     self.time_step_total = self.joint_pos.shape[0]
 
-    if "pd_targets" in data:
-      self._joint_pd_targets = torch.tensor(
-        data["pd_targets"], dtype=torch.float32, device=device
-      )
-    else:
-      self._joint_pd_targets = None
-
+    self._joint_pd_targets = torch.tensor(
+      data["joint_pd_targets"], dtype=torch.float32, device=device
+    )
     if "object_pos_w" in data and "object_quat_w" in data:
       self._object_pos_w = torch.tensor(
         data["object_pos_w"], dtype=torch.float32, device=device
