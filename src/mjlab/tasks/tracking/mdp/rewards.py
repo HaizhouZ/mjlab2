@@ -504,9 +504,15 @@ def eef_contact_indicator_match(
   )  # (num_envs, num_matches)
 
   # Vectorized reward computation with force penalty
-  # Reward = gain * sum(contact_detected * force_penalty) for each environment
-  # The force_penalty multiplies the reward, reducing it when forces exceed threshold
-  reward = (contact_detected.float() * force_penalty).sum(dim=1)  # (num_envs,)
+  # Reward = sum(contact_detected * force_penalty) / sum(contact_indicators)
+  # This normalizes the reward by the number of expected contacts to avoid bias
+  # towards trajectories with more end-effectors in contact
+  num_matches_per_env = (contact_detected.float() * force_penalty).sum(
+    dim=1
+  )  # (num_envs,)
+  num_expected = contact_indicators[:, :num_matches].float().sum(dim=1)  # (num_envs,)
+  # Normalize by expected contacts, clamp to avoid division by zero
+  reward = num_matches_per_env / num_expected.clamp_min(1.0)  # (num_envs,)
   return reward
 
 

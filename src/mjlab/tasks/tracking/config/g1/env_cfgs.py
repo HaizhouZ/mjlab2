@@ -214,7 +214,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   ###
   cfg.rewards["contact_match"] = RewardTermCfg(
     func=mdp.eef_contact_indicator_match,
-    weight=2.0,
+    weight=4.0,
     params={
       "command_name": "motion",
       "eef_body_names": motion_cmd.eef_body_names,
