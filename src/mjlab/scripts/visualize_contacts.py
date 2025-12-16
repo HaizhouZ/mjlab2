@@ -27,6 +27,65 @@ from mjlab.tasks.registry import load_env_cfg
 wp.config.quiet = True
 
 
+def download_from_wandb_registry(registry_name: str) -> tuple[str | None, str | None]:
+  """Download motion data from wandb registry.
+
+  Args:
+    registry_name: Wandb registry name (e.g., "entity/project/artifact_name:alias")
+
+  Returns:
+    Tuple of (npz_file, file_dir):
+    - If artifact contains single motion.npz: (path_to_motion.npz, None)
+    - If artifact contains motions/ directory: (None, path_to_motions_dir)
+    - Otherwise: raises ValueError
+  """
+  try:
+    import wandb
+  except ImportError:
+    raise ImportError(
+      "wandb is required to download from registry. Install with: pip install wandb"
+    ) from None
+
+  # Ensure registry name has alias
+  if ":" not in registry_name:
+    registry_name = registry_name + ":latest"
+
+  print(f"Downloading artifact from wandb registry: {registry_name}")
+  api = wandb.Api()
+  artifact = api.artifact(registry_name)
+  download_path = Path(artifact.download())
+  print(f"Artifact downloaded to: {download_path}")
+
+  # Check for single motion.npz file
+  motion_file = download_path / "motion.npz"
+  if motion_file.exists():
+    print("Found single motion.npz file")
+    return (str(motion_file), None)
+
+  # Check for motions/ directory
+  motions_dir = download_path / "motions"
+  if motions_dir.exists() and motions_dir.is_dir():
+    print("Found motions/ directory")
+    return (None, str(motions_dir))
+
+  # Check if download_path itself is a directory with trajectory subdirectories
+  if download_path.is_dir():
+    # Check if it has subdirectories with motion.npz files
+    has_trajectories = any(
+      (download_path / item / "motion.npz").exists()
+      for item in download_path.iterdir()
+      if item.is_dir()
+    )
+    if has_trajectories:
+      print("Found trajectory subdirectories in artifact root")
+      return (None, str(download_path))
+
+  raise ValueError(
+    f"Artifact does not contain motion.npz or motions/ directory. "
+    f"Contents: {list(download_path.iterdir())}"
+  )
+
+
 def find_trajectory_directories(file_dir: str) -> list[tuple[str, str]]:
   """Find all trajectory directories containing motion.npz files.
 
@@ -441,10 +500,10 @@ def visualize_contacts(
                   f"{eef_name}: [{contact_pos[0]:.3f}, {contact_pos[1]:.3f}, {contact_pos[2]:.3f}]"
                 )
 
-          # if contact_info:
-          #   print(
-          #     f"Frame {frame_idx}/{num_frames}: Contacts - {', '.join(contact_info)}"
-          #   )
+          if contact_info:
+            print(
+              f"Frame {frame_idx}/{num_frames}: Contacts - {', '.join(contact_info)}"
+            )
 
       # Sync viewer
       viewer.sync()
@@ -456,6 +515,7 @@ def visualize_contacts(
 def main(
   npz_file: str | None = None,
   file_dir: str | None = None,
+  registry_name: str | None = None,
   device: str = "cpu",
   playback_speed: float = 1.0,
   show_contact_markers: bool = True,
@@ -465,17 +525,33 @@ def main(
   """Main entry point for contact visualization.
 
   Args:
-    npz_file: Path to motion NPZ file with contact data (mutually exclusive with file_dir)
-    file_dir: Directory containing trajectory subdirectories with motion.npz files (mutually exclusive with npz_file)
+    npz_file: Path to motion NPZ file with contact data (mutually exclusive with file_dir and wandb_registry_name)
+    file_dir: Directory containing trajectory subdirectories with motion.npz files (mutually exclusive with npz_file and wandb_registry_name)
+    registry_name: Wandb registry name to download motion from (mutually exclusive with npz_file and file_dir)
     device: Device to use (cpu or cuda)
     playback_speed: Playback speed multiplier (1.0 = normal speed)
     show_contact_markers: Whether to show contact location markers
     contact_marker_size: Size of contact markers in meters (default: 2cm)
     task_name: Task name to use for environment configuration (default: "Mjlab-Tracking-Flat-Unitree-G1-Box")
   """
-  # Validate that exactly one of npz_file or file_dir is provided
-  if (npz_file is None) == (file_dir is None):
-    raise ValueError("Must provide exactly one of --npz-file or --file-dir")
+  # Validate that exactly one of npz_file, file_dir, or wandb_registry_name is provided
+  provided = sum(
+    [npz_file is not None, file_dir is not None, registry_name is not None]
+  )
+  if provided != 1:
+    raise ValueError(
+      "Must provide exactly one of --npz-file, --file-dir, or --registry-name"
+    )
+
+  # Handle wandb registry download
+  if registry_name is not None:
+    downloaded_npz, downloaded_dir = download_from_wandb_registry(registry_name)
+    if downloaded_npz is not None:
+      npz_file = downloaded_npz
+    elif downloaded_dir is not None:
+      file_dir = downloaded_dir
+    else:
+      raise ValueError("Failed to download motion data from wandb registry")
 
   if npz_file is not None:
     # Single file mode
