@@ -214,7 +214,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   ###
   cfg.rewards["contact_match"] = RewardTermCfg(
     func=mdp.eef_contact_indicator_match,
-    weight=1.0,
+    weight=2.0,
     params={
       "command_name": "motion",
       "eef_body_names": motion_cmd.eef_body_names,
@@ -270,7 +270,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     params={
       "command_name": "motion",
       "object_asset_cfg": SceneEntityCfg("box"),
-      "std": 1.0,
+      "std": 0.5,
     },
   )
   cfg.rewards["object_global_ang_vel"] = RewardTermCfg(
@@ -279,15 +279,15 @@ def unitree_g1_flat_tracking_env_cfg_box(
     params={
       "command_name": "motion",
       "object_asset_cfg": SceneEntityCfg("box"),
-      "std": 3.14,
+      "std": 1.57,
     },
   )
   cfg.rewards["pd_tracking"] = RewardTermCfg(
     func=mdp.pd_tracking_error_exp,
-    weight=3.0,
+    weight=1.5,
     params={
       "command_name": "motion",
-      "std": 0.3,
+      "std": 0.25,
     },
   )
   cfg.rewards["bad_termination"] = RewardTermCfg(
