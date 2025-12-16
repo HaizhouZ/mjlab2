@@ -3,7 +3,7 @@
 # Script to convert NPZ motion files to CSV and then to NPZ format
 # Usage: ./scripts/convert_motions.sh <motion-dir>
 
-set -e  # Exit on error
+# Note: set -e is removed to allow error handling and continuation
 
 # Check if motion-dir argument is provided
 if [ $# -lt 1 ]; then
@@ -23,6 +23,9 @@ fi
 # Create output directory if it doesn't exist
 OUTPUT_DIR="motions/output"
 mkdir -p "$OUTPUT_DIR"
+
+# Array to track failed motions
+FAILED_MOTIONS=()
 
 # Loop through all subdirectories in motion-dir
 for motion_path in "$MOTION_DIR"/*; do
@@ -57,29 +60,27 @@ for motion_path in "$MOTION_DIR"/*; do
     
     # Step 1: Run new_conversion_1.py
     echo "Step 1: Converting NPZ to CSV..."
-    uv run python -m mjlab.scripts.new_conversion_1 \
+    if ! uv run python -m mjlab.scripts.new_conversion_1 \
         --npz-file "$npz_file" \
         --csv-file "$CSV_FILE" \
         --add-start-transition \
         --add-end-transition \
         --transition-duration 1.5 \
-        --pad-duration 0.5
-    
-    if [ $? -ne 0 ]; then
+        --pad-duration 0.5; then
         echo "Error: Conversion 1 failed for motion '$motion_name'"
+        FAILED_MOTIONS+=("$motion_name")
         continue
     fi
     
     # Step 2: Run new_conversion_2.py
     echo "Step 2: Converting CSV to NPZ..."
-    uv run python -m mjlab.scripts.new_conversion_2 \
+    if ! uv run python -m mjlab.scripts.new_conversion_2 \
         --input-file "$CSV_FILE" \
         --project-name sbto_v1 \
         --render \
-        --output-fps 50.0
-    
-    if [ $? -ne 0 ]; then
+        --output-fps 50.0; then
         echo "Error: Conversion 2 failed for motion '$motion_name'"
+        FAILED_MOTIONS+=("$motion_name")
         continue
     fi
     
@@ -94,4 +95,19 @@ done
 echo "=========================================="
 echo "All motions processed!"
 echo "=========================================="
+
+# Print failed motions if any
+if [ ${#FAILED_MOTIONS[@]} -gt 0 ]; then
+    echo ""
+    echo "=========================================="
+    echo "Failed motions (${#FAILED_MOTIONS[@]} total):"
+    echo "=========================================="
+    for motion in "${FAILED_MOTIONS[@]}"; do
+        echo "  - $motion"
+    done
+    echo "=========================================="
+else
+    echo ""
+    echo "All motions processed successfully!"
+fi
 

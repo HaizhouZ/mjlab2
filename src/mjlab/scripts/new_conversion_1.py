@@ -196,7 +196,6 @@ def main(
   obj_quats_wxyz = obj[:, 3:7]  # (N, 4) - [qw, qx, qy, qz] = wxyz format
 
   # Apply quaternion offset (OBJECT_ROT_OFFSET is in wxyz format)
-  print("[Loader] Applying object quaternion offset...")
   obj_rot_offset_wxyz = normalize_quat_wxyz(OBJECT_ROT_OFFSET)
   # Multiply each quaternion with the offset: result = q * offset (same as victor_npz_to_npz.py)
   obj_quats_wxyz_offset = np.array(
@@ -205,6 +204,7 @@ def main(
       for i in range(obj_quats_wxyz.shape[0])
     ]
   )
+  print("[Loader] Applying object pos & quaternion offset...")
 
   # Convert object quaternion to axis-angle
   print("[Loader] Converting object quaternions to axis-angle...")
