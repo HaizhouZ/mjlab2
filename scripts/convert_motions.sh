@@ -24,9 +24,6 @@ fi
 OUTPUT_DIR="motions/output"
 mkdir -p "$OUTPUT_DIR"
 
-# CSV file path (will be overwritten for each motion)
-CSV_FILE="$OUTPUT_DIR/motion.csv"
-
 # Loop through all subdirectories in motion-dir
 for motion_path in "$MOTION_DIR"/*; do
     # Check if it's a directory
@@ -36,6 +33,14 @@ for motion_path in "$MOTION_DIR"/*; do
     
     # Get motion name (basename of the path)
     motion_name=$(basename "$motion_path")
+    
+    # Create subdirectory for this motion: motions/output/<motion-name>
+    MOTION_OUTPUT_DIR="$OUTPUT_DIR/$motion_name"
+    mkdir -p "$MOTION_OUTPUT_DIR"
+    
+    # CSV file path: motions/output/<motion-name>/motion.csv
+    # The parent directory name (<motion-name>) will be used as collection name
+    CSV_FILE="$MOTION_OUTPUT_DIR/motion.csv"
     
     # Path to best_trajectory.npz
     npz_file="$motion_path/best_trajectory.npz"
@@ -69,7 +74,7 @@ for motion_path in "$MOTION_DIR"/*; do
     echo "Step 2: Converting CSV to NPZ..."
     uv run python -m mjlab.scripts.new_conversion_2 \
         --input-file "$CSV_FILE" \
-        --output-name sbto_v1 \
+        --project-name sbto_v1 \
         --render \
         --output-fps 50.0
     
@@ -77,6 +82,10 @@ for motion_path in "$MOTION_DIR"/*; do
         echo "Error: Conversion 2 failed for motion '$motion_name'"
         continue
     fi
+    
+    # Delete CSV file and empty directory after processing
+    rm -f "$CSV_FILE"
+    rmdir "$MOTION_OUTPUT_DIR" 2>/dev/null || true
     
     echo "Successfully processed motion: $motion_name"
     echo ""
