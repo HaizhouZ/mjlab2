@@ -18,6 +18,7 @@ from mjlab.tasks.tracking.mdp import MotionCommandCfg, MultiMotionCommandCfg
 from mjlab.utils.gpu import select_gpus
 from mjlab.utils.os import dump_yaml, get_checkpoint_path, get_wandb_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
+from mjlab.utils.wandb import download_motions_from_wandb
 from mjlab.utils.wrappers import VideoRecorder
 
 
@@ -28,6 +29,7 @@ class TrainConfig:
   registry_name: str | None = None
   motion_file: str | None = None
   motion_dir: str | None = None
+  wandb_entity_project: str | None = None
   device: str = "cuda:0"
   video: bool = False
   video_length: int = 200
@@ -36,6 +38,18 @@ class TrainConfig:
   torchrunx_log_dir: str | None = None
   wandb_run_path: str | None = None
   gpu_ids: list[int] | Literal["all"] | None = field(default_factory=lambda: [0])
+
+  def get_wandb_entity_and_project(self) -> tuple[str | None, str | None]:
+    """Get wandb entity and project from combined format."""
+    if self.wandb_entity_project:
+      parts = self.wandb_entity_project.split("/", 1)
+      if len(parts) == 2:
+        return parts[0], parts[1]
+      else:
+        raise ValueError(
+          f"wandb_entity_project must be in format 'entity/project', got: {self.wandb_entity_project}"
+        )
+    return None, None
 
   @staticmethod
   def from_task(task_id: str) -> "TrainConfig":
@@ -83,7 +97,18 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
     motion_cmd = cfg.env.commands["motion"]
     assert isinstance(motion_cmd, (MotionCommandCfg, MultiMotionCommandCfg))
 
-    if cfg.registry_name:
+    wandb_entity, wandb_project = cfg.get_wandb_entity_and_project()
+    if isinstance(motion_cmd, MultiMotionCommandCfg) and wandb_entity and wandb_project:
+      # Use wandb registry to download multiple motions
+      print(f"[INFO] Downloading motions from wandb: {wandb_entity}/{wandb_project}")
+      motions_dir = download_motions_from_wandb(
+        wandb_entity=wandb_entity,
+        wandb_project=wandb_project,
+        artifact_type="motions",
+      )
+      motion_cmd.motion_dir = str(motions_dir)
+      motion_cmd.traj_name_patterns = [".*"]
+    elif cfg.registry_name:
       # Check if the registry name includes alias, if not, append ":latest".
       registry_name = cast(str, cfg.registry_name)
       if ":" not in registry_name:
@@ -120,9 +145,15 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
         motion_cmd.motion_dir = cfg.motion_dir
         motion_cmd.traj_name_patterns = [".*"]
     else:
-      raise ValueError(
-        "Must provide --registry-name or --motion-file or --motion-dir for tracking tasks."
-      )
+      if isinstance(motion_cmd, MultiMotionCommandCfg):
+        raise ValueError(
+          "Must provide --wandb-entity-project, or --registry-name, "
+          "or --motion-file or --motion-dir for multi-motion tracking tasks."
+        )
+      else:
+        raise ValueError(
+          "Must provide --registry-name or --motion-file for tracking tasks."
+        )
 
   # Enable NaN guard if requested.
   if cfg.enable_nan_guard:

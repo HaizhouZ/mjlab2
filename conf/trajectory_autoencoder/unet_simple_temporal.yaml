@@ -1,5 +1,6 @@
 # @package _global_
 defaults:
+  - _self_
   - config
 
 architecture: "unet_simple_temporal"
@@ -11,14 +12,15 @@ output_dir: "logs/trajectory_autoencoder/unet_simple_temporal"
 # - Temporal positional encodings (learnable embeddings for each timestep)
 # - Optional temporal convolutions to capture local temporal patterns
 model:
-  encoder_hidden_dims: [512, 256, 128]  # Hidden layer sizes for encoder
-  decoder_hidden_dims: [128, 256, 512]  # Hidden layer sizes for decoder
-  use_batch_norm: true
-  dropout: 0.0  # Dropout probability (0.0 = no dropout)
-  
-  # Temporal inductive bias options
-  use_temporal_pos_encoding: true  # Add learnable positional encodings for temporal ordering
-  use_temporal_conv: false  # Use temporal convolutions before/after linear layers (experimental)
-  temporal_conv_dim: null  # Hidden dim for temporal conv (default: input_dim)
-  temporal_conv_kernel_size: 3  # Kernel size for temporal convolutions
+  unet_simple_temporal:
+    encoder_hidden_dims: [512, 256, 128]  # Hidden layer sizes for encoder
+    decoder_hidden_dims: [128, 256, 512]  # Hidden layer sizes for decoder
+    use_batch_norm: true
+    dropout: 0.0  # Dropout probability (0.0 = no dropout)
+    
+    # Temporal inductive bias options
+    use_temporal_pos_encoding: true  # Add learnable positional encodings for temporal ordering
+    use_temporal_conv: false  # Use temporal convolutions before/after linear layers (experimental)
+    temporal_conv_dim: null  # Hidden dim for temporal conv (default: input_dim)
+    temporal_conv_kernel_size: 3  # Kernel size for temporal convolutions
 

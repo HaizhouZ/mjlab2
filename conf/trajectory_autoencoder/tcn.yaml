@@ -1,5 +1,6 @@
 # @package _global_
 defaults:
+  - _self_
   - config
 
 architecture: "tcn"
@@ -8,9 +9,10 @@ output_dir: "logs/trajectory_autoencoder/tcn"
 
 # TCN specific parameters
 model:
-  num_channels: [64, 128, 256]
-  kernel_size: 3
-  dropout: 0.2
+  tcn:
+    num_channels: [64, 128, 256]
+    kernel_size: 3
+    dropout: 0.2
 
 scheduler: warmup_cosine
 warmup_epochs: 5

@@ -1,5 +1,6 @@
 # @package _global_
 defaults:
+  - _self_
   - config
 
 architecture: "unet_residual"
@@ -8,7 +9,8 @@ output_dir: "logs/trajectory_autoencoder/unet_residual"
 
 # U-Net Residual specific parameters
 model:
-  encoder_channels: [64, 128, 256]
-  decoder_channels: [256, 128, 64]
-  use_batch_norm: true
+  unet_residual:
+    encoder_channels: [64, 128, 256]
+    decoder_channels: [256, 128, 64]
+    use_batch_norm: true
 

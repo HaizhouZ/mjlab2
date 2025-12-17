@@ -117,17 +117,55 @@ class TrajectoryNormalizer(nn.Module):
 
     return x * std + mean
 
-  def state_dict(self) -> dict[str, torch.Tensor]:
-    """Get state dict for saving."""
-    return {
-      "mean": self.mean,
-      "std": self.std,
-      "epsilon": torch.tensor(self.epsilon),
-    }
+  def state_dict(self, *args, **kwargs) -> dict[str, torch.Tensor]:
+    """Get state dict for saving.
 
-  def load_state_dict(self, state_dict: dict[str, torch.Tensor]) -> None:
-    """Load state dict."""
-    self.register_buffer("mean", state_dict["mean"])
-    self.register_buffer("std", state_dict["std"])
-    if "epsilon" in state_dict:
-      self.epsilon = state_dict["epsilon"].item()
+    Compatible with PyTorch's standard state_dict() signature.
+    """
+    # Call parent to get standard buffers (mean, std)
+    state = super().state_dict(*args, **kwargs)
+
+    # Add epsilon to the state dict
+    # Handle prefix from kwargs
+    prefix = kwargs.get("prefix", "")
+    if prefix:
+      state[f"{prefix}epsilon"] = torch.tensor(self.epsilon)
+    else:
+      state["epsilon"] = torch.tensor(self.epsilon)
+
+    return state
+
+  def load_state_dict(
+    self,
+    state_dict,
+    strict: bool = True,
+    assign: bool = False,
+  ):
+    """Load state dict.
+
+    Compatible with PyTorch's standard load_state_dict() signature.
+    Returns _IncompatibleKeys object with missing_keys and unexpected_keys.
+    """
+    # Make a copy to avoid modifying the original
+    state_dict = dict(state_dict)
+
+    # Extract epsilon if present (handle with or without prefix)
+    epsilon_value = None
+    for key in list(state_dict.keys()):
+      if key.endswith(".epsilon") or key == "epsilon":
+        epsilon_value = state_dict.pop(key)
+        break
+
+    # Load standard buffers (mean, std) via parent
+    incompatible_keys = super().load_state_dict(
+      state_dict, strict=strict, assign=assign
+    )
+
+    # Restore epsilon if it was in the state dict
+    if epsilon_value is not None:
+      if isinstance(epsilon_value, torch.Tensor):
+        self.epsilon = epsilon_value.item()
+      else:
+        self.epsilon = float(epsilon_value)
+
+    return incompatible_keys

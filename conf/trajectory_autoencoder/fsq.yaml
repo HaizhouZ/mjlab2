@@ -1,0 +1,24 @@
+# @package _global_
+defaults:
+  - _self_
+  - config
+
+architecture: "fsq"
+latent_dim: 128
+output_dir: "logs/trajectory_autoencoder/fsq"
+
+# FSQ (Finite Scalar Quantization) specific parameters
+model:
+  fsq:
+    hidden_dim: 256  # Hidden dimension for temporal convolutions
+    fsq_dim: 8  # Dimension of the FSQ quantized latent
+    fsq_levels: [4, 4, 4, 4, 4, 4, 4, 4]  # Quantization levels for each FSQ dimension (must match fsq_dim)
+    num_temporal_layers: 2  # Number of temporal convolution layers
+    use_batch_norm: true  # Whether to use batch normalization
+    dropout: 0.0  # Dropout probability (0.0 = no dropout)
+
+# Learning rate scheduler (FSQ may benefit from warmup)
+scheduler: warmup_cosine
+warmup_epochs: 10
+min_lr: 1e-6
+

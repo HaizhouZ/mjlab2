@@ -24,6 +24,14 @@ from mjlab.utils.lab_api.math import (
 )
 from mjlab.viewer.debug_visualizer import DebugVisualizer
 
+try:
+  from mjlab.utils.wandb import download_motions_from_wandb
+
+  WANDB_AVAILABLE = True
+except ImportError:
+  WANDB_AVAILABLE = False
+  download_motions_from_wandb = None  # type: ignore
+
 if TYPE_CHECKING:
   from mjlab.entity import Entity
   from mjlab.envs import ManagerBasedRlEnv
@@ -177,12 +185,19 @@ class MultiMotionLoader:
     traj_dirs = []
     for pattern in traj_name_patterns:
       regex = re.compile(pattern)
-      matching_dirs = [
-        d
-        for d in motion_dir_path.iterdir()
-        if d.is_dir() and regex.match(d.name) and (d / "motion.npz").exists()
-      ]
-      traj_dirs.extend(matching_dirs)
+      for d in motion_dir_path.iterdir():
+        if not d.is_dir() or not regex.match(d.name):
+          continue
+
+        # Check if motion.npz exists directly in this directory
+        motion_file = d / "motion.npz"
+        if motion_file.exists():
+          traj_dirs.append((d, motion_file))
+        else:
+          # Check for motion.npz in subdirectories (handles nested structure from wandb downloads)
+          for motion_candidate in d.rglob("motion.npz"):
+            traj_dirs.append((d, motion_candidate))
+            break  # Only take the first match per directory
 
     if not traj_dirs:
       raise ValueError(
@@ -190,13 +205,12 @@ class MultiMotionLoader:
       )
 
     # Remove duplicates and sort for reproducibility
-    traj_dirs = sorted(set(traj_dirs), key=lambda x: x.name)
+    traj_dirs = sorted(set(traj_dirs), key=lambda x: x[0].name)
 
     # Load all motions
     self.motions: list[MotionLoader] = []
     self.traj_names: list[str] = []
-    for traj_dir in traj_dirs:
-      motion_file = traj_dir / "motion.npz"
+    for traj_dir, motion_file in traj_dirs:
       try:
         motion = MotionLoader(str(motion_file), body_indexes, device=device)
         self.motions.append(motion)
@@ -289,17 +303,13 @@ class MultiMotionLoader:
       dtype=torch.float32,
       device=device,
     )
-
-    if self._has_pd_targets:
-      self._batched_pd_targets = torch.zeros(
-        self.num_motions,
-        self.max_time_steps,
-        num_joints,
-        dtype=torch.float32,
-        device=device,
-      )
-    else:
-      self._batched_pd_targets = None
+    self._batched_pd_targets = torch.zeros(
+      self.num_motions,
+      self.max_time_steps,
+      num_joints,
+      dtype=torch.float32,
+      device=device,
+    )
 
     # Optional object tensors
     if self._has_object:
@@ -356,11 +366,7 @@ class MultiMotionLoader:
       self._batched_body_lin_vel_w[i, :t] = motion.body_lin_vel_w
       self._batched_body_ang_vel_w[i, :t] = motion.body_ang_vel_w
 
-      if (
-        self._has_pd_targets
-        and self._batched_pd_targets is not None
-        and motion.joint_pd_targets is not None
-      ):
+      if self._batched_pd_targets is not None and motion.joint_pd_targets is not None:
         self._batched_pd_targets[i, :t] = motion.joint_pd_targets
 
       if self._has_object and self._batched_object_pos_w is not None:
@@ -419,8 +425,6 @@ class MultiMotionLoader:
     time_steps_clamped = torch.minimum(time_steps, max_times)
     time_steps_clamped = torch.clamp(time_steps_clamped, min=0)
 
-    # Use advanced indexing: batched_data[motion_indices, time_steps_clamped]
-    # This is fully vectorized with no loops
     if field_name == "joint_pos":
       return self._batched_joint_pos[motion_indices, time_steps_clamped]
     elif field_name == "joint_vel":
@@ -481,6 +485,16 @@ class MultiMotionLoader:
           num_envs, num_contacts, 3, dtype=torch.float32, device=self.device
         )
       return self._batched_contact_positions[motion_indices, time_steps_clamped]
+    elif field_name == "joint_pd_targets":
+      if self._batched_pd_targets is None:
+        num_envs = motion_indices.shape[0]
+        return torch.zeros(
+          num_envs,
+          self._batched_joint_pos.shape[2],
+          dtype=torch.float32,
+          device=self.device,
+        )
+      return self._batched_pd_targets[motion_indices, time_steps_clamped]
     else:
       raise ValueError(f"Unknown field name: {field_name}")
 
@@ -1334,13 +1348,43 @@ class MultiMotionCommand(CommandTerm):
       device=self.device,
     )
 
+    # Download motions from wandb if wandb_entity and wandb_project are provided
+    motion_dir = self.cfg.motion_dir
+    if self.cfg.wandb_entity is not None and self.cfg.wandb_project is not None:
+      if not WANDB_AVAILABLE or download_motions_from_wandb is None:
+        raise ImportError(
+          "wandb is required to download motions. Install with: pip install wandb"
+        )
+      print(
+        f"[INFO] Downloading motions from wandb: {self.cfg.wandb_entity}/{self.cfg.wandb_project}"
+      )
+      motion_dir = str(
+        download_motions_from_wandb(
+          wandb_entity=self.cfg.wandb_entity,
+          wandb_project=self.cfg.wandb_project,
+          artifact_type="motions",
+        )
+      )
+      print(f"[INFO] Using downloaded motions from: {motion_dir}")
+      # Set traj_name_patterns to match all if not explicitly set
+      if self.cfg.traj_name_patterns == [".*"]:
+        self.cfg.traj_name_patterns = [".*"]
+
     # Load multiple motions
     self.motion_loader = MultiMotionLoader(
-      motion_dir=self.cfg.motion_dir,
+      motion_dir=motion_dir,
       traj_name_patterns=self.cfg.traj_name_patterns,
       body_indexes=self.body_indexes,
       device=self.device,
     )
+
+    # Load trajectory encoder
+    if self.cfg.encoder_dir is not None:
+      self.trajectory_encoder = torch.jit.load(
+        self.cfg.encoder_dir, map_location=self.device
+      )
+    else:
+      self.trajectory_encoder = None
 
     # Assign motions to each environment based on assignment mode
     if self.cfg.motion_assignment_mode == "linear":
@@ -1442,10 +1486,12 @@ class MultiMotionCommand(CommandTerm):
   @property
   def command(self) -> torch.Tensor:
     """Get command (joint_pos + joint_vel) for current timestep only."""
+    horizon = 1
+    # horizon = self.cfg.horizon
     return torch.cat(
       [
-        self.get_joint_pos_horizon(self.cfg.horizon),
-        self.get_joint_vel_horizon(self.cfg.horizon),
+        self.get_joint_pos_horizon(horizon),
+        self.get_joint_vel_horizon(horizon),
       ],
       dim=1,
     ).view(self.num_envs, -1)
@@ -1724,6 +1770,13 @@ class MultiMotionCommand(CommandTerm):
       self.motion_indices, self.time_steps, "contact_positions"
     )
     return pos + self._env.scene.env_origins[:, None, :]
+
+  @property
+  def joint_pd_targets(self) -> torch.Tensor | None:
+    """PD targets from motion data. Shape: (time_step_total, num_joints)"""
+    return self.motion_loader.get_motion_data(
+      self.motion_indices, self.time_steps, "joint_pd_targets"
+    )
 
   def _update_metrics(self):
     self.metrics["error_anchor_pos"] = torch.norm(
@@ -2210,6 +2263,9 @@ class MultiMotionCommandCfg(CommandTermCfg):
   body_names: tuple[str, ...]
   eef_body_names: tuple[str, ...]
   asset_name: str
+  encoder_dir: str | None = None
+  wandb_entity: str | None = None
+  wandb_project: str | None = None
   class_type: type[CommandTerm] = MultiMotionCommand
   pose_range: dict[str, tuple[float, float]] = field(default_factory=dict)
   velocity_range: dict[str, tuple[float, float]] = field(default_factory=dict)

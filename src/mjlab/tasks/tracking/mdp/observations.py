@@ -47,7 +47,7 @@ def motion_anchor_pos_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tens
       f"Expected MotionCommand or MultiMotionCommand, got {type(command)}"
     )
 
-  horizon = _get_horizon(command)
+  horizon = 1
   robot_anchor_pos = command.robot_anchor_pos_w  # (num_envs, 3) - actual robot state
   robot_anchor_quat = command.robot_anchor_quat_w  # (num_envs, 4) - actual robot state
 
@@ -82,7 +82,7 @@ def motion_anchor_ori_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tens
       f"Expected MotionCommand or MultiMotionCommand, got {type(command)}"
     )
 
-  horizon = _get_horizon(command)
+  horizon = 1
   robot_anchor_pos = command.robot_anchor_pos_w  # (num_envs, 3) - actual robot state
   robot_anchor_quat = command.robot_anchor_quat_w  # (num_envs, 4) - actual robot state
 
@@ -119,7 +119,7 @@ def robot_body_pos_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
       f"Expected MotionCommand or MultiMotionCommand, got {type(command)}"
     )
 
-  horizon = _get_horizon(command)
+  horizon = 1
   num_bodies = len(command.cfg.body_names)
   robot_anchor_pos = command.robot_anchor_pos_w  # (num_envs, 3) - actual robot state
   robot_anchor_quat = command.robot_anchor_quat_w  # (num_envs, 4) - actual robot state
@@ -168,7 +168,7 @@ def robot_body_ori_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
       f"Expected MotionCommand or MultiMotionCommand, got {type(command)}"
     )
 
-  horizon = _get_horizon(command)
+  horizon = 1
   num_bodies = len(command.cfg.body_names)
   robot_anchor_pos = command.robot_anchor_pos_w  # (num_envs, 3) - actual robot state
   robot_anchor_quat = command.robot_anchor_quat_w  # (num_envs, 4) - actual robot state
@@ -221,7 +221,7 @@ def object_pos_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
       f"Expected MotionCommand or MultiMotionCommand, got {type(command)}"
     )
 
-  horizon = _get_horizon(command)
+  horizon = 1
   robot_anchor_pos = command.robot_anchor_pos_w  # (num_envs, 3) - actual robot state
   robot_anchor_quat = command.robot_anchor_quat_w  # (num_envs, 4) - actual robot state
 
@@ -275,7 +275,7 @@ def object_position_error(
     )
   box: Entity = env.scene[asset_cfg.name]
 
-  horizon = _get_horizon(command)
+  horizon = 1
 
   # Use horizon-aware methods if horizon > 0, otherwise use properties
   if horizon > 0 and isinstance(command, MultiMotionCommand):
@@ -309,7 +309,7 @@ def object_orientation_error(
     )
   box: Entity = env.scene[asset_cfg.name]
 
-  horizon = _get_horizon(command)
+  horizon = 1
 
   # Use horizon-aware methods if horizon > 0, otherwise use properties
   if horizon > 0 and isinstance(command, MultiMotionCommand):
@@ -350,7 +350,7 @@ def object_ori_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
       f"Expected MotionCommand or MultiMotionCommand, got {type(command)}"
     )
 
-  horizon = _get_horizon(command)
+  horizon = 1
   robot_anchor_pos = command.robot_anchor_pos_w  # (num_envs, 3) - actual robot state
   robot_anchor_quat = command.robot_anchor_quat_w  # (num_envs, 4) - actual robot state
 
@@ -391,3 +391,55 @@ def contact_indicator(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor
     # Return zeros if no contact data available
     return torch.zeros(env.num_envs, 1, device=env.device)
   return command.ref_object_contact.view(env.num_envs, -1)
+
+
+def trajectory_encoding(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
+  """Encode a trajectory with horizon from cfg.
+
+  The trajectory contains:
+    - joint_pos (29)
+    - joint_vel (29)
+    - anchor_pos (3)
+    - anchor_quat (4)
+    - object_pos (3)
+    - object_quat (4)
+  Total: 72 features per timestep
+
+  Args:
+    env: The environment instance
+    command_name: Name of the command term to use
+
+  Returns:
+    Flattened trajectory tensor of shape (num_envs, horizon * 72)
+  """
+  command = env.command_manager.get_term(command_name)
+  if not isinstance(command, (MotionCommand, MultiMotionCommand)):
+    raise TypeError(
+      f"Expected MotionCommand or MultiMotionCommand, got {type(command)}"
+    )
+
+  horizon = _get_horizon(command)
+
+  # Get trajectory data with horizon
+  joint_pos = command.get_joint_pos_horizon(horizon)  # (num_envs, horizon, 29)
+  joint_vel = command.get_joint_vel_horizon(horizon)  # (num_envs, horizon, 29)
+  anchor_pos = command.get_anchor_pos_w_horizon(horizon)  # (num_envs, horizon, 3)
+  anchor_quat = command.get_anchor_quat_w_horizon(horizon)  # (num_envs, horizon, 4)
+  object_pos = command.get_object_pos_w_horizon(horizon)  # (num_envs, horizon, 3)
+  object_quat = command.get_object_quat_w_horizon(horizon)  # (num_envs, horizon, 4)
+  # Concatenate along feature dimension: (num_envs, horizon, 72)
+  trajectory = torch.cat(
+    [
+      joint_pos,  # (num_envs, horizon, 29)
+      joint_vel,  # (num_envs, horizon, 29)
+      anchor_pos,  # (num_envs, horizon, 3)
+      anchor_quat,  # (num_envs, horizon, 4)
+      object_pos,  # (num_envs, horizon, 3)
+      object_quat,  # (num_envs, horizon, 4)
+    ],
+    dim=2,
+  )
+  if command.trajectory_encoder is not None:
+    trajectory = command.trajectory_encoder(trajectory)
+  # Flatten horizon dimension: (num_envs, horizon * 72)
+  return trajectory.reshape(env.num_envs, -1)

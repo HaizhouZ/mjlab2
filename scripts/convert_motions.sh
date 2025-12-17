@@ -3,7 +3,6 @@
 # Script to convert NPZ motion files to CSV and then to NPZ format
 # Usage: ./scripts/convert_motions.sh <motion-dir>
 
-# Note: set -e is removed to allow error handling and continuation
 
 # Check if motion-dir argument is provided
 if [ $# -lt 1 ]; then

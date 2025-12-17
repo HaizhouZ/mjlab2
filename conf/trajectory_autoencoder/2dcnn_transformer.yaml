@@ -1,5 +1,6 @@
 # @package _global_
 defaults:
+  - _self_
   - config
 
 architecture: "2dcnn_transformer"

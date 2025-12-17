@@ -197,8 +197,12 @@ class TrajectoryAutoencoderTCN(TrajectoryAutoencoderBase):
     # Initialize weights with best practices
     init_autoencoder_weights(self)
 
-  def encode(self, x: torch.Tensor) -> torch.Tensor:
-    """Encode trajectory to latent vector."""
+  def _encode_impl(self, x: torch.Tensor) -> torch.Tensor:
+    """Encode trajectory to latent vector.
+
+    Args:
+        x: Input trajectory of shape (batch_size, horizon, input_dim), already normalized if normalizer is present
+    """
     # Reshape: (batch_size, horizon, input_dim) -> (batch_size, input_dim, horizon)
     x = x.transpose(1, 2)
 

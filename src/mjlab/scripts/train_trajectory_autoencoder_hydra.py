@@ -21,7 +21,6 @@ try:
 except ImportError:
   WANDB_AVAILABLE = False
   wandb = None  # type: ignore
-  print("Warning: wandb not available. Install with: pip install wandb")
 
 from mjlab.asset_zoo.robots import get_g1_robot_cfg
 from mjlab.entity import Entity
@@ -29,6 +28,7 @@ from mjlab.models import (
   TrajectoryAutoencoder2DCNN,
   TrajectoryAutoencoder2DCNNCausal,
   TrajectoryAutoencoderBase,
+  TrajectoryAutoencoderFSQ,
   TrajectoryAutoencoderTCN,
   TrajectoryAutoencoderTransformer,
   TrajectoryAutoencoderUNet,
@@ -39,6 +39,66 @@ from mjlab.models import (
 )
 from mjlab.models.normalization import TrajectoryNormalizer
 from mjlab.models.trajectory_dataset import TrajectoryDataset
+from mjlab.utils.wandb import download_motions_from_wandb
+
+
+class JittedEncoder(nn.Module):
+  """Wrapper for encoder that can be JIT compiled.
+
+  The normalizer is now part of the model, so encode() handles normalization internally.
+  """
+
+  def __init__(self, model: TrajectoryAutoencoderBase):
+    """Initialize the jitted encoder wrapper.
+
+    Args:
+        model: The full autoencoder model (normalizer is attached if present)
+    """
+    super().__init__()
+    self.model = model
+
+  def forward(self, x: torch.Tensor) -> torch.Tensor:
+    """Encode trajectory to latent vector.
+
+    Args:
+        x: Input trajectory of shape (batch_size, horizon, input_dim)
+
+    Returns:
+        Latent vector of shape (batch_size, latent_dim)
+    """
+    # Model.encode() handles normalization internally if normalizer is attached
+    return self.model.encode(x)
+
+
+def save_jitted_encoder(
+  model: TrajectoryAutoencoderBase,
+  output_path: Path,
+  device: str = "cpu",
+) -> None:
+  """Save a JIT-compiled encoder version of the model.
+
+  Args:
+      model: The trained model (with normalizer attached if present)
+      output_path: Path to save the JIT-compiled encoder
+      device: Device to use for JIT compilation
+  """
+  model.eval()
+
+  # Create encoder wrapper
+  encoder_wrapper = JittedEncoder(model).to(device)
+  encoder_wrapper.eval()
+
+  # Create JIT-compiled version
+  try:
+    with torch.no_grad():
+      jitted_encoder = torch.jit.script(encoder_wrapper)
+
+    # Save JIT-compiled encoder
+    jitted_encoder.save(str(output_path))
+    print(f"  ✓ JIT-compiled encoder saved to {output_path}")
+  except Exception as e:
+    print(f"  ⚠ Warning: Failed to save JIT-compiled encoder: {e}")
+    print("    This is non-fatal - regular checkpoint was saved successfully")
 
 
 def print_model_architecture(
@@ -226,23 +286,17 @@ def train_epoch(
   num_batches = 0
 
   for batch_idx, batch in enumerate(dataloader):
-    # Normalize input if normalizer is provided
-    if normalizer is not None:
-      batch_normalized = normalizer(batch)
+    # Normalize batch once if normalizer is present (for loss computation)
+    if hasattr(model, "normalizer") and model.normalizer is not None:
+      batch_normalized = model.normalizer(batch)
     else:
       batch_normalized = batch
 
-    # Forward pass
-    reconstructed_normalized, latent = model(batch_normalized)
+    # Forward pass - model normalizes internally, but we use pre-normalized batch for loss
+    reconstructed_normalized, latent = model(batch)
 
     # Compute loss in normalized space
     loss = criterion(reconstructed_normalized, batch_normalized)
-
-    # Denormalize reconstruction for metric computation (not for loss)
-    if normalizer is not None:
-      reconstructed = normalizer.denormalize(reconstructed_normalized)
-    else:
-      reconstructed = reconstructed_normalized
 
     # Backward pass
     optimizer.zero_grad()
@@ -260,8 +314,10 @@ def train_epoch(
           f"  [Debug] Epoch {epoch + 1}, Batch {batch_idx + 1}: LR = {current_lr:.6e}, Scheduler step = {scheduler.last_epoch}"
         )
 
-    # Accumulate metrics
-    batch_metrics = compute_reconstruction_metrics(batch, reconstructed, input_dim)
+    # Accumulate metrics using normalized values
+    batch_metrics = compute_reconstruction_metrics(
+      batch_normalized, reconstructed_normalized, input_dim
+    )
     total_loss += loss.item()
     for key in all_metrics:
       all_metrics[key] += batch_metrics[key]
@@ -315,26 +371,22 @@ def validate(
 
   with torch.no_grad():
     for batch in dataloader:
-      # Normalize input if normalizer is provided
-      if normalizer is not None:
-        batch_normalized = normalizer(batch)
+      # Normalize batch once if normalizer is present (for loss computation)
+      if hasattr(model, "normalizer") and model.normalizer is not None:
+        batch_normalized = model.normalizer(batch)
       else:
         batch_normalized = batch
 
-      # Forward pass
-      reconstructed_normalized, latent = model(batch_normalized)
+      # Forward pass - model normalizes internally, but we use pre-normalized batch for loss
+      reconstructed_normalized, latent = model(batch)
 
       # Compute loss in normalized space
       loss = criterion(reconstructed_normalized, batch_normalized)
 
-      # Denormalize reconstruction for metric computation (not for loss)
-      if normalizer is not None:
-        reconstructed = normalizer.denormalize(reconstructed_normalized)
-      else:
-        reconstructed = reconstructed_normalized
-
-      # Accumulate metrics
-      batch_metrics = compute_reconstruction_metrics(batch, reconstructed, input_dim)
+      # Accumulate metrics using normalized values
+      batch_metrics = compute_reconstruction_metrics(
+        batch_normalized, reconstructed_normalized, input_dim
+      )
       total_loss += loss.item()
       for key in all_metrics:
         all_metrics[key] += batch_metrics[key]
@@ -367,8 +419,8 @@ def main(cfg: DictConfig) -> None:
   assert isinstance(cfg_dict, dict)
 
   # Debug: Print config keys to verify base config is loaded
-  if "motion_dir" not in cfg_dict:
-    print("WARNING: motion_dir not found in config!")
+  if "motion_dir" not in cfg_dict and "wandb_registry" not in cfg_dict:
+    print("WARNING: Neither motion_dir nor wandb_registry found in config!")
     print(f"Available keys: {list(cfg_dict.keys())[:20]}")
     print(f"Full config: {OmegaConf.to_yaml(cfg)}")
 
@@ -407,6 +459,12 @@ def main(cfg: DictConfig) -> None:
   output_dir = Path(hydra_cfg.run.dir)
   print(f"Output directory: {output_dir}")
 
+  # Get architecture from config name (e.g., "unet", "transformer", "tcn")
+  architecture = hydra_cfg.job.config_name
+  if architecture is None:
+    raise ValueError("Config name is None. Please specify a valid config name.")
+  print(f"Architecture: {architecture}")
+
   # Load robot and compute body indexes like in commands.py
   body_names = get_cfg("body_names", [])
   assert isinstance(body_names, list), (
@@ -423,12 +481,56 @@ def main(cfg: DictConfig) -> None:
     device=device,
   )
   # anchor_body_index should be the index within body_names (motion body names), not robot.body_names
-  # This matches commands.py: self.motion_anchor_body_index = self.cfg.body_names.index(self.cfg.anchor_body_name)
-  anchor_body_index = body_names.index(get_cfg("anchor_body_name", "torso_link"))
+  anchor_body_name = get_cfg("anchor_body_name", "torso_link")
+  if anchor_body_name not in body_names:
+    raise ValueError(
+      f"anchor_body_name '{anchor_body_name}' must be in body_names {body_names}"
+    )
+  anchor_body_index = body_names.index(anchor_body_name)
+
+  # Handle wandb download or local motion directory (simplified logic similar to commands.py)
+  motion_dir = get_cfg("motion_dir", None)
+  wandb_entity = get_cfg("wandb_entity", None)
+  wandb_project = get_cfg("wandb_project", None)
+
+  # Support legacy wandb_registry format for backward compatibility
+  wandb_registry = get_cfg("wandb_registry", None)
+  if wandb_registry is not None and isinstance(wandb_registry, dict):
+    if wandb_entity is None:
+      wandb_entity = wandb_registry.get("entity")
+    if wandb_project is None:
+      wandb_project = wandb_registry.get("project")
+
+  # Download motions from wandb if wandb_entity and wandb_project are provided
+  if wandb_entity is not None and wandb_project is not None:
+    if not WANDB_AVAILABLE:
+      raise ImportError(
+        "wandb is required to download motions. Install with: pip install wandb"
+      )
+    # Type assertions for type checker
+    assert isinstance(wandb_entity, str) and isinstance(wandb_project, str)
+    print(f"[INFO] Downloading motions from wandb: {wandb_entity}/{wandb_project}")
+    motion_dir = str(
+      download_motions_from_wandb(
+        wandb_entity=wandb_entity,
+        wandb_project=wandb_project,
+        artifact_type="motions",
+      )
+    )
+    print(f"[INFO] Using downloaded motions from: {motion_dir}")
+  elif motion_dir is not None:
+    # Use local motion directory
+    print(f"Using local motion directory: {motion_dir}")
+  else:
+    raise ValueError(
+      "Either 'motion_dir' must be specified, or 'wandb_entity' and "
+      "'wandb_project' must be set in config"
+    )
+
   # Create dataset (load directly on GPU)
-  print(f"Loading dataset from {get_cfg('motion_dir')} on {device}...")
+  print(f"Loading dataset from {motion_dir} on {device}...")
   dataset = TrajectoryDataset(
-    motion_dir=get_cfg("motion_dir"),
+    motion_dir=str(motion_dir),
     traj_name_patterns=get_cfg("traj_patterns", [".*"]),
     body_indexes=body_indexes,
     anchor_body_index=anchor_body_index,
@@ -503,7 +605,6 @@ def main(cfg: DictConfig) -> None:
 
   # Create model based on architecture type
   input_dim = dataset.get_input_dim()
-  architecture = get_cfg("architecture", "unet")
   horizon = get_cfg("horizon", 32)
   latent_dim = get_cfg("latent_dim", 128)
 
@@ -512,9 +613,16 @@ def main(cfg: DictConfig) -> None:
   if not isinstance(model_cfg, dict):
     model_cfg = {}
 
+  # Get the config section for this architecture (use architecture name directly as key)
+  # Handle special case: 2dcnn architectures use _2dcnn prefix in config
+  config_key = (
+    architecture if not architecture.startswith("2dcnn") else f"_{architecture}"
+  )
+  arch_cfg = model_cfg.get(config_key, {}) if isinstance(model_cfg, dict) else {}
+
   # Helper function to get model parameter with default
   def get_model_param(key: str, default: any = None) -> any:
-    return model_cfg.get(key, default) if isinstance(model_cfg, dict) else default
+    return arch_cfg.get(key, default) if isinstance(arch_cfg, dict) else default
 
   if architecture == "unet":
     model: TrajectoryAutoencoderBase = TrajectoryAutoencoderUNet(
@@ -611,10 +719,27 @@ def main(cfg: DictConfig) -> None:
       dropout=get_model_param("dropout", 0.1),
       activation=get_model_param("activation", "relu"),
     )
+  elif architecture == "fsq":
+    model = TrajectoryAutoencoderFSQ(
+      horizon=horizon,
+      input_dim=input_dim,
+      latent_dim=latent_dim,
+      hidden_dim=get_model_param("hidden_dim", 256),
+      fsq_dim=get_model_param("fsq_dim", 8),
+      fsq_levels=get_model_param("fsq_levels", None),
+      num_temporal_layers=get_model_param("num_temporal_layers", 2),
+      use_batch_norm=get_model_param("use_batch_norm", True),
+      dropout=get_model_param("dropout", 0.0),
+    )
   else:
     raise ValueError(f"Unknown architecture: {architecture}")
 
   model = model.to(device)
+
+  # Attach normalizer to model if available (so it's part of checkpoint)
+  if normalizer is not None:
+    model.normalizer = normalizer.to(device)
+    print("Normalizer attached to model (will be saved in checkpoint)")
 
   # Calculate trainable parameters
   trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -881,7 +1006,6 @@ def main(cfg: DictConfig) -> None:
 
     # Check for improvement and early stopping
     is_best = False
-    improvement = best_val_loss - val_loss
 
     if val_loss < best_val_loss - early_stopping_min_delta:
       # Significant improvement
@@ -904,24 +1028,33 @@ def main(cfg: DictConfig) -> None:
     # Save checkpoint
     if is_best:
       checkpoint_path = output_dir / "best_model.pt"
-      torch.save(
-        {
-          "epoch": epoch,
-          "model_state_dict": model.state_dict(),
-          "optimizer_state_dict": optimizer.state_dict(),
-          "val_loss": val_loss,
-          "train_loss": train_loss,
-          "horizon": horizon,
-          "latent_dim": latent_dim,
-          "input_dim": input_dim,
-          "architecture": architecture,
-          "normalizer_state_dict": normalizer.state_dict() if normalizer else None,
-        },
-        checkpoint_path,
-      )
-      print(
-        f"  ✓ New best model! (improvement: {improvement:.6f}) Saved to {checkpoint_path}"
-      )
+      # Normalizer is now part of model.state_dict(), but keep separate entry for backward compatibility
+      checkpoint_dict = {
+        "epoch": epoch,
+        "model_state_dict": model.state_dict(),  # Includes normalizer if attached
+        "optimizer_state_dict": optimizer.state_dict(),
+        "val_loss": val_loss,
+        "train_loss": train_loss,
+        "horizon": horizon,
+        "latent_dim": latent_dim,
+        "input_dim": input_dim,
+        "architecture": architecture,
+      }
+      # Keep normalizer_state_dict for backward compatibility with old checkpoints
+      if normalizer is not None:
+        checkpoint_dict["normalizer_state_dict"] = normalizer.state_dict()
+      else:
+        checkpoint_dict["normalizer_state_dict"] = None
+      #   torch.save(checkpoint_dict, checkpoint_path)
+      #   print(
+      #     f"  ✓ New best model! (improvement: {improvement:.6f}) Saved to {checkpoint_path}"
+      #   )
+
+      # Optionally save JIT-compiled encoder
+      save_jit = get_cfg("save_jit", False)
+      if save_jit:
+        jit_path = output_dir / "best_model.jit"
+        save_jitted_encoder(model, jit_path, device)
 
     # Early stopping check
     if early_stopping_enabled and epochs_without_improvement >= early_stopping_patience:
@@ -958,17 +1091,20 @@ def main(cfg: DictConfig) -> None:
     # Save periodic checkpoint
     if (epoch + 1) % 50 == 0:
       checkpoint_path = output_dir / f"checkpoint_epoch_{epoch + 1}.pt"
-      torch.save(
-        {
-          "epoch": epoch,
-          "model_state_dict": model.state_dict(),
-          "optimizer_state_dict": optimizer.state_dict(),
-          "val_loss": val_loss,
-          "train_loss": train_loss,
-          "normalizer_state_dict": normalizer.state_dict() if normalizer else None,
-        },
-        checkpoint_path,
-      )
+      # Normalizer is now part of model.state_dict(), but keep separate entry for backward compatibility
+      checkpoint_dict = {
+        "epoch": epoch,
+        "model_state_dict": model.state_dict(),  # Includes normalizer if attached
+        "optimizer_state_dict": optimizer.state_dict(),
+        "val_loss": val_loss,
+        "train_loss": train_loss,
+      }
+      # Keep normalizer_state_dict for backward compatibility with old checkpoints
+      if normalizer is not None:
+        checkpoint_dict["normalizer_state_dict"] = normalizer.state_dict()
+      else:
+        checkpoint_dict["normalizer_state_dict"] = None
+      torch.save(checkpoint_dict, checkpoint_path)
 
   print("\nTraining complete!")
   print(f"Best validation loss: {best_val_loss:.6f} (epoch {best_epoch + 1})")

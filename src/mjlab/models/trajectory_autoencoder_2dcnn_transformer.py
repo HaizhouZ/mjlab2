@@ -399,11 +399,11 @@ class TrajectoryAutoencoder2DCNNTransformer(TrajectoryAutoencoderBase):
 
     return latent, encoder_output
 
-  def encode(self, x: torch.Tensor) -> torch.Tensor:
+  def _encode_impl(self, x: torch.Tensor) -> torch.Tensor:
     """Encode trajectory to latent vector.
 
     Args:
-        x: Input trajectory of shape (batch_size, horizon, feature_dim)
+        x: Input trajectory of shape (batch_size, horizon, feature_dim), already normalized if normalizer is present
 
     Returns:
         Latent vector of shape (batch_size, latent_dim)

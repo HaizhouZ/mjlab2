@@ -1,5 +1,6 @@
 # @package _global_
 defaults:
+  - _self_
   - config
 
 architecture: "unet"
@@ -8,7 +9,7 @@ output_dir: "logs/trajectory_autoencoder/unet"
 
 # U-Net specific parameters
 model:
-  encoder_channels: [1024, 1024, 512, 512, 256, 256]
-  decoder_channels: [256, 256, 512, 512, 1024, 1024]
-  use_batch_norm: true
-  dropout: 0.0
+  unet:
+    encoder_channels: [1024, 1024, 512, 512, 256, 256]
+    decoder_channels: [256, 256, 512, 512, 1024, 1024]
+    use_batch_norm: true

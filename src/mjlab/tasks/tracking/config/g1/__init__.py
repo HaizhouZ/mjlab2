@@ -18,6 +18,10 @@ from .rl_cfg import (
   unitree_g1_tracking_ppo_runner_cfg_multitracking_largebox,
 )
 
+################################################################################
+# Robot Tracking Only Tasks
+################################################################################
+
 register_mjlab_task(
   task_id="Mjlab-Tracking-Flat-Unitree-G1",
   env_cfg=unitree_g1_flat_tracking_env_cfg(),
@@ -33,6 +37,10 @@ register_mjlab_task(
   rl_cfg=unitree_g1_tracking_ppo_runner_cfg(),
   runner_cls=MotionTrackingOnPolicyRunner,
 )
+
+################################################################################
+# Robot and Box Tracking Tasks
+################################################################################
 
 register_mjlab_task(
   task_id="Mjlab-Tracking-Flat-Unitree-G1-Box",
@@ -52,13 +60,17 @@ register_mjlab_task(
   runner_cls=MotionTrackingOnPolicyRunner,
 )
 
+################################################################################
+# Robot and LargeBox Tracking Tasks
+################################################################################
+
 register_mjlab_task(
-  task_id="Mjlab-MultiTracking-Flat-Unitree-G1-Box-No-State-Estimation",
-  env_cfg=unitree_g1_flat_multitracking_env_cfg_box(has_state_estimation=False),
-  play_env_cfg=unitree_g1_flat_multitracking_env_cfg_box(
-    has_state_estimation=False, play=True
+  task_id="Mjlab-Tracking-Flat-Unitree-G1-LargeBox",
+  env_cfg=unitree_g1_flat_tracking_env_cfg_largebox(has_state_estimation=True),
+  play_env_cfg=unitree_g1_flat_tracking_env_cfg_largebox(
+    has_state_estimation=True, play=True
   ),
-  rl_cfg=unitree_g1_tracking_ppo_runner_cfg_multitracking_box(),
+  rl_cfg=unitree_g1_tracking_ppo_runner_cfg_largebox(),
   runner_cls=MotionTrackingOnPolicyRunner,
 )
 
@@ -72,17 +84,6 @@ register_mjlab_task(
   runner_cls=MotionTrackingOnPolicyRunner,
 )
 
-
-register_mjlab_task(
-  task_id="Mjlab-MultiTracking-Flat-Unitree-G1-LargeBox-No-State-Estimation",
-  env_cfg=unitree_g1_flat_multitracking_env_cfg_largebox(has_state_estimation=False),
-  play_env_cfg=unitree_g1_flat_multitracking_env_cfg_largebox(
-    has_state_estimation=False, play=True
-  ),
-  rl_cfg=unitree_g1_tracking_ppo_runner_cfg_multitracking_largebox(),
-  runner_cls=MotionTrackingOnPolicyRunner,
-)
-
 register_mjlab_task(
   task_id="Mjlab-Tracking-Flat-Unitree-G1-LargeBox-PDTargets-No-State-Estimation",
   env_cfg=unitree_g1_flat_tracking_env_cfg_largebox_pdtargets(
@@ -92,5 +93,31 @@ register_mjlab_task(
     has_state_estimation=False, play=True
   ),
   rl_cfg=unitree_g1_tracking_ppo_runner_cfg_largebox_pdtargets(),
+  runner_cls=MotionTrackingOnPolicyRunner,
+)
+
+
+################################################################################
+# Multi-Trajectory Tracking Tasks
+################################################################################
+
+register_mjlab_task(
+  task_id="Mjlab-MultiTracking-Flat-Unitree-G1-Box-No-State-Estimation",
+  env_cfg=unitree_g1_flat_multitracking_env_cfg_box(has_state_estimation=False),
+  play_env_cfg=unitree_g1_flat_multitracking_env_cfg_box(
+    has_state_estimation=False, play=True
+  ),
+  rl_cfg=unitree_g1_tracking_ppo_runner_cfg_multitracking_box(),
+  runner_cls=MotionTrackingOnPolicyRunner,
+)
+
+
+register_mjlab_task(
+  task_id="Mjlab-MultiTracking-Flat-Unitree-G1-LargeBox-No-State-Estimation",
+  env_cfg=unitree_g1_flat_multitracking_env_cfg_largebox(has_state_estimation=False),
+  play_env_cfg=unitree_g1_flat_multitracking_env_cfg_largebox(
+    has_state_estimation=False, play=True
+  ),
+  rl_cfg=unitree_g1_tracking_ppo_runner_cfg_multitracking_largebox(),
   runner_cls=MotionTrackingOnPolicyRunner,
 )

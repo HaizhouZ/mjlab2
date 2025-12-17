@@ -6,6 +6,7 @@ from mjlab.models.trajectory_autoencoder_2dcnn_causal import (
   TrajectoryAutoencoder2DCNNCausal,
 )
 from mjlab.models.trajectory_autoencoder_base import TrajectoryAutoencoderBase
+from mjlab.models.trajectory_autoencoder_fsq import TrajectoryAutoencoderFSQ
 from mjlab.models.trajectory_autoencoder_tcn import TrajectoryAutoencoderTCN
 from mjlab.models.trajectory_autoencoder_transformer import (
   TrajectoryAutoencoderTransformer,
@@ -35,5 +36,6 @@ __all__ = [
   "TrajectoryAutoencoderBase",
   "TrajectoryAutoencoderTCN",
   "TrajectoryAutoencoderTransformer",
+  "TrajectoryAutoencoderFSQ",
   "TrajectoryNormalizer",
 ]

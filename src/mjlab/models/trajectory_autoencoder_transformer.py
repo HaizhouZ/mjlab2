@@ -259,11 +259,11 @@ class TrajectoryAutoencoderTransformer(TrajectoryAutoencoderBase):
     # Initialize weights
     init_autoencoder_weights(self)
 
-  def encode(self, x: torch.Tensor) -> torch.Tensor:
+  def _encode_impl(self, x: torch.Tensor) -> torch.Tensor:
     """Encode trajectory to latent vector.
 
     Args:
-        x: Input trajectory of shape (batch_size, horizon, input_dim)
+        x: Input trajectory of shape (batch_size, horizon, input_dim), already normalized if normalizer is present
 
     Returns:
         Latent vector of shape (batch_size, latent_dim)

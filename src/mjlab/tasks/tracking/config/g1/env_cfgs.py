@@ -510,6 +510,19 @@ def unitree_g1_flat_multitracking_env_cfg_box(
   cfg = unitree_g1_flat_tracking_env_cfg_box(has_state_estimation=has_state_estimation)
   cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_largebox_cfg()}
 
+  ###
+  # Trajectory Encoding Observation Terms
+  ###
+  cfg.observations["policy"].terms["trajectory_encoding"] = ObservationTermCfg(
+    func=mdp.trajectory_encoding,
+    params={"command_name": "motion"},
+  )
+
+  cfg.observations["critic"].terms["trajectory_encoding"] = ObservationTermCfg(
+    func=mdp.trajectory_encoding,
+    params={"command_name": "motion"},
+  )
+
   assert cfg.commands is not None
   cfg.commands["motion"] = MultiMotionCommandCfg(
     asset_name="robot",
@@ -553,11 +566,14 @@ def unitree_g1_flat_multitracking_env_cfg_box(
       "left_ankle_roll_link",
       "right_ankle_roll_link",
     ),
-    motion_dir="motions/output/multi",
+    # motion_dir=str(motions_dir),
+    encoder_dir="logs/trajectory_autoencoder/unet_simple/2025-12-17/14-04-49/best_model.jit",
+    wandb_entity="ATARITUM",
+    wandb_project="sbto_v1",
     traj_name_patterns=[".*"],
     debug_vis=True,
     resampling_time_range=(1e9, 1e9),
-    horizon=5,
+    horizon=32,
   )
 
   # Apply play mode overrides.

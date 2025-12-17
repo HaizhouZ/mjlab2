@@ -1,41 +1,109 @@
 # @package _global_
 
 # Data configuration
-motion_dir: "motions/output/SBTO_OmniRetarget_Dataset"
+motion_dir: null  # Local directory path. Set to null to use wandb registry instead.
+wandb_registry:
+  entity: null
+  project: null
+  cache_dir: null
+  artifact_type: "motions"  # Type of artifact to download (default: "motions" to match registry)
 traj_patterns:
   - ".*"
 horizon: 32
 stride: 1
 val_split: 0.1
 
+# Export configuration
+save_jit: True  # Save JIT-compiled encoder alongside best model checkpoint (for faster inference/deployment)
+
 # Model configuration
-architecture: "unet"  # Options: unet, unet_residual, unet_simple, tcn, 2dcnn, 2dcnn_causal, transformer
+architecture: "unet"  # Options: unet, unet_residual, unet_simple, unet_simple_residual, unet_simple_temporal, tcn, 2dcnn, 2dcnn_causal, 2dcnn_transformer, transformer, fsq
 latent_dim: 128
 feature_dim: 72  # Will be computed from data, but can be overridden
 
 # Architecture-specific model parameters
+# Each architecture has its own config section
 # These can be overridden in architecture-specific config files
 model:
-  # Common parameters (used by multiple architectures)
-  encoder_channels: null  # Will use defaults if null
-  decoder_channels: null  # Will use defaults if null
-  use_batch_norm: true
-  kernel_size: 3
+  # UNet parameters
+  unet:
+    encoder_channels: null  # Will use defaults if null
+    decoder_channels: null  # Will use defaults if null
+    use_batch_norm: true
   
-  # TCN-specific
-  num_channels: null  # Will use defaults if null
-  dropout: 0.2
+  # UNetResidual parameters
+  unet_residual:
+    encoder_channels: null  # Will use defaults if null
+    decoder_channels: null  # Will use defaults if null
+    use_batch_norm: true
   
-  # Transformer-specific
-  d_model: 256
-  nhead: 8
-  num_encoder_layers: 4
-  num_decoder_layers: 4
-  dim_feedforward: 1024
-  activation: "relu"
+  # UNetSimple parameters
+  unet_simple:
+    encoder_hidden_dims: null  # Will use defaults if null
+    decoder_hidden_dims: null  # Will use defaults if null
+    use_batch_norm: true
+    dropout: 0.0
+  
+  # UNetSimpleResidual parameters
+  unet_simple_residual:
+    encoder_hidden_dims: null  # Will use defaults if null
+    decoder_hidden_dims: null  # Will use defaults if null
+    use_batch_norm: true
+    dropout: 0.0
+    use_residual: true
+  
+  # UNetSimpleTemporal parameters
+  unet_simple_temporal:
+    encoder_hidden_dims: null  # Will use defaults if null
+    decoder_hidden_dims: null  # Will use defaults if null
+    use_batch_norm: true
+    dropout: 0.0
+    use_temporal_pos_encoding: true
+    use_temporal_conv: false
+    temporal_conv_dim: null
+    temporal_conv_kernel_size: 3
+  
+  # TCN parameters
+  tcn:
+    num_channels: null  # Will use defaults if null
+    kernel_size: 3
+    dropout: 0.2
+  
+  # 2DCNN parameters
+  _2dcnn:
+    encoder_channels: null  # Will use defaults if null
+    decoder_channels: null  # Will use defaults if null
+    kernel_size: 3
+    use_batch_norm: true
+  
+  # 2DCNNCausal parameters
+  _2dcnn_causal:
+    encoder_channels: null  # Will use defaults if null
+    decoder_channels: null  # Will use defaults if null
+    kernel_size: 3
+    use_batch_norm: true
+  
+  # Transformer parameters
+  transformer:
+    d_model: 256
+    nhead: 8
+    num_encoder_layers: 4
+    num_decoder_layers: 4
+    dim_feedforward: 1024
+    dropout: 0.1
+    activation: "relu"
+  
+  # FSQ parameters
+  fsq:
+    hidden_dim: 256
+    fsq_dim: 8
+    fsq_levels: null  # Will use [4]*fsq_dim if null
+    num_temporal_layers: 2
+    use_batch_norm: true
+    dropout: 0.0
 
 # Training configuration
-batch_size: 128
+batch_size: 512
 epochs: 1000
 lr: 0.001
 device: "cuda"  # Will be set to "cpu" if CUDA not available

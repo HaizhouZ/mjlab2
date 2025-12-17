@@ -1,0 +1,17 @@
+# @package _global_
+defaults:
+  - _self_
+  - fsq
+
+# Use wandb registry instead of local motion directory
+# This example shows how to use wandb_registry with FSQ architecture
+# You can use the same pattern with any architecture by changing the defaults
+wandb_registry:
+  entity: "ATARITUM"
+  project: "sbto_v1"
+  cache_dir: null  # null = ~/.cache/mjlab/wandb_motions
+  artifact_type: "motions"  # Must match the type used when saving artifacts
+
+# Override motion_dir to null since we're using wandb_registry
+motion_dir: null
+
