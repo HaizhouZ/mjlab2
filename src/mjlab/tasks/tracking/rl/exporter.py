@@ -164,6 +164,7 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
       "body_quat_w",
       "body_lin_vel_w",
       "body_ang_vel_w",
+      "joint_pd_targets",
     ]
 
     # Only include object outputs if object data exists
@@ -176,7 +177,6 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
           "object_ang_vel_w",
           "contact_indicators",
           "contact_positions",
-          "joint_pd_targets",
         ]
       )
 
