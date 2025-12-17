@@ -411,11 +411,11 @@ def unitree_g1_flat_tracking_env_cfg_box(
     noise=Unoise(n_min=-0.1, n_max=0.1),
     params={"command_name": "motion"},
   )
-  cfg.observations["policy"].terms["object_ori_b"] = ObservationTermCfg(
-    func=mdp.object_ori_b,
-    noise=Unoise(n_min=-0.05, n_max=0.05),
-    params={"command_name": "motion"},
-  )
+  # cfg.observations["policy"].terms["object_ori_b"] = ObservationTermCfg(
+  #   func=mdp.object_ori_b,
+  #   noise=Unoise(n_min=-0.05, n_max=0.05),
+  #   params={"command_name": "motion"},
+  # )
   # cfg.observations["policy"].terms["object_lin_vel_w"] = ObservationTermCfg(
   #   func=mdp.object_lin_vel_w,
   #   noise=Unoise(n_min=-0.25, n_max=0.25),
