@@ -25,12 +25,12 @@ from mjlab.utils.lab_api.math import (
 from mjlab.viewer.debug_visualizer import DebugVisualizer
 
 try:
-  from mjlab.utils.wandb import download_motions_from_wandb
+  from mjlab.utils.wandb import get_wandb_motion_cache_dir
 
   WANDB_AVAILABLE = True
 except ImportError:
   WANDB_AVAILABLE = False
-  download_motions_from_wandb = None  # type: ignore
+  get_wandb_motion_cache_dir = None  # type: ignore
 
 if TYPE_CHECKING:
   from mjlab.entity import Entity
@@ -1348,27 +1348,53 @@ class MultiMotionCommand(CommandTerm):
       device=self.device,
     )
 
-    # Download motions from wandb if wandb_entity and wandb_project are provided
+    # Use motion_dir if already set (e.g., from train.py which downloads beforehand)
+    # Otherwise, use cached directory if wandb_entity and wandb_project are provided
     motion_dir = self.cfg.motion_dir
-    if self.cfg.wandb_entity is not None and self.cfg.wandb_project is not None:
-      if not WANDB_AVAILABLE or download_motions_from_wandb is None:
+    if (
+      motion_dir is None
+      and self.cfg.wandb_entity is not None
+      and self.cfg.wandb_project is not None
+    ):
+      if not WANDB_AVAILABLE or get_wandb_motion_cache_dir is None:
         raise ImportError(
-          "wandb is required to download motions. Install with: pip install wandb"
+          "wandb is required to get motion cache directory. Install with: pip install wandb"
         )
+      # Get cache directory path (motions should have been downloaded beforehand)
+      cache_dir = get_wandb_motion_cache_dir(
+        wandb_entity=self.cfg.wandb_entity,
+        wandb_project=self.cfg.wandb_project,
+      )
+      motion_dir = str(cache_dir)
+
+      # Verify cache directory exists and has motion files
+      if not cache_dir.exists():
+        raise RuntimeError(
+          f"Motion cache directory does not exist: {cache_dir}. "
+          f"Please download motions beforehand using download_motions_from_wandb() "
+          f"or set motion_dir explicitly."
+        )
+
+      motion_files = list(cache_dir.rglob("motion.npz"))
+      if not motion_files:
+        raise RuntimeError(
+          f"No motion.npz files found in cache directory: {cache_dir}. "
+          f"Please download motions beforehand using download_motions_from_wandb() "
+          f"or set motion_dir explicitly."
+        )
+
       print(
-        f"[INFO] Downloading motions from wandb: {self.cfg.wandb_entity}/{self.cfg.wandb_project}"
+        f"[INFO] Using cached motions from: {motion_dir} ({len(motion_files)} motions found)"
       )
-      motion_dir = str(
-        download_motions_from_wandb(
-          wandb_entity=self.cfg.wandb_entity,
-          wandb_project=self.cfg.wandb_project,
-          artifact_type="motions",
-        )
-      )
-      print(f"[INFO] Using downloaded motions from: {motion_dir}")
-      # Set traj_name_patterns to match all if not explicitly set
-      if self.cfg.traj_name_patterns == [".*"]:
-        self.cfg.traj_name_patterns = [".*"]
+    elif motion_dir is not None:
+      print(f"[INFO] Using motion directory: {motion_dir}")
+    else:
+      # motion_dir is None and no wandb info provided - will be handled by MultiMotionLoader
+      pass
+
+    # Set traj_name_patterns to match all if not explicitly set
+    if self.cfg.traj_name_patterns == [".*"]:
+      self.cfg.traj_name_patterns = [".*"]
 
     # Load multiple motions
     self.motion_loader = MultiMotionLoader(

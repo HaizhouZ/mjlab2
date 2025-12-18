@@ -63,19 +63,37 @@ def download_motions_from_wandb(
 
   # Try to get artifacts from registry first
   try:
-    registry_artifacts = api.artifacts(  # type: ignore
-      f"{wandb_entity}/{wandb_project}",
-      type=artifact_type,  # type: ignore
-    )
-    artifact_list = list(registry_artifacts)
+    # Get all runs from the project and collect artifacts from them
+    print(f"Collecting artifacts from {wandb_entity}/{wandb_project}...")
+    runs = api.runs(f"{wandb_entity}/{wandb_project}")
+    artifact_list = []
+    seen_artifact_names = set()
+
+    # Convert to list to get total count for progress bar
+    runs_list = list(runs)
+    for run in tqdm(runs_list, desc="Scanning runs", unit="run"):
+      # Check both used_artifacts and logged_artifacts
+      for artifact in list(run.used_artifacts()) + list(run.logged_artifacts()):
+        if artifact.type == artifact_type and artifact.name not in seen_artifact_names:
+          artifact_list.append(artifact)
+          seen_artifact_names.add(artifact.name)
 
     if not artifact_list:
       print(f"No artifacts found in {wandb_entity}/{wandb_project}")
       return motions_dir
 
+    print(f"Found {len(artifact_list)} artifacts to download")
     # Download artifacts from registry
-    for artifact in tqdm(artifact_list, desc="Downloading artifacts", unit="artifact"):
+    pbar = tqdm(artifact_list, desc="Downloading artifacts", unit="artifact")
+    for artifact in pbar:
       artifact_name = artifact.name
+      pbar.set_postfix(
+        {
+          "current": artifact_name[:30],
+          "downloaded": downloaded_count,
+          "skipped": skipped_count,
+        }
+      )
 
       # Use artifact name as the trajectory name (since it's the collection name)
       # Create directory: {artifact_name}
@@ -85,6 +103,13 @@ def download_motions_from_wandb(
       # Skip if already in cache
       if artifact_name in cached_motions or motion_file.exists():
         skipped_count += 1
+        pbar.set_postfix(
+          {
+            "current": artifact_name[:30],
+            "downloaded": downloaded_count,
+            "skipped": skipped_count,
+          }
+        )
         continue
 
       try:
@@ -93,6 +118,7 @@ def download_motions_from_wandb(
         temp_download_dir = artifact_dir / "temp"
         temp_download_dir.mkdir(exist_ok=True)
 
+        # Download with progress indication
         artifact_path = artifact.download(root=str(temp_download_dir))
 
         # Check if motion.npz is in the artifact root or a subdirectory
@@ -123,6 +149,13 @@ def download_motions_from_wandb(
           shutil.rmtree(temp_download_dir)
 
         downloaded_count += 1
+        pbar.set_postfix(
+          {
+            "current": artifact_name[:30],
+            "downloaded": downloaded_count,
+            "skipped": skipped_count,
+          }
+        )
 
       except Exception:
         # Clean up on error
@@ -146,4 +179,32 @@ def download_motions_from_wandb(
       f"Please check that artifacts are properly uploaded to wandb."
     )
 
+  return motions_dir
+
+
+def get_wandb_motion_cache_dir(
+  wandb_entity: str,
+  wandb_project: str,
+  cache_dir: Path | str | None = None,
+) -> Path:
+  """Get the cache directory path for wandb motions without downloading.
+
+  This is useful for checking if motions are already cached or for setting
+  motion_dir in configs before initialization.
+
+  Args:
+      wandb_entity: Wandb entity/username (e.g., "ATARITUM")
+      wandb_project: Wandb project name (e.g., "sbto_v1")
+      cache_dir: Base cache directory. If None, uses ~/.cache/mjlab/wandb_motions
+
+  Returns:
+      Path to the motions directory in cache (may not exist yet)
+  """
+  if cache_dir is None:
+    cache_dir = Path.home() / ".cache" / "mjlab" / "wandb_motions"
+  else:
+    cache_dir = Path(cache_dir)
+
+  project_cache_dir = cache_dir / wandb_project
+  motions_dir = project_cache_dir / "motions"
   return motions_dir
