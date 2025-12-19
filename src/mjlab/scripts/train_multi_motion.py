@@ -102,8 +102,8 @@ class TrainMultiMotionConfig:
   """Wandb run path for resuming training."""
   gpu_ids: list[int] | Literal["all"] | None = field(default_factory=lambda: [0])
   """GPU IDs to use for training."""
-  experiment_name_prefix: str = "multi_motion"
-  """Prefix for experiment names. Each motion will have its own experiment."""
+  experiment_name: str = "multi_motion"
+  """Experiment name."""
   run_name_suffix: str | None = None
   """Optional suffix to add to run names."""
 
@@ -181,12 +181,25 @@ def run_train_single_motion_from_registry(
 
   if rank == 0:
     print(f"[INFO] Logging experiment in directory: {log_dir}")
+    # Initialize wandb with motion name before runner initializes it
+    # This ensures the wandb run name is the motion name, not the log directory name
+    if agent_cfg.logger == "wandb" and wandb.run is None:
+      wandb.init(
+        project=agent_cfg.wandb_project,
+        name=motion_name,
+        config={},
+        dir=str(
+          log_dir.parent
+        ),  # Set dir to motion_name directory, not timestamp subdirectory
+      )
 
   env = ManagerBasedRlEnv(
     cfg=env_cfg, device=device, render_mode="rgb_array" if cfg.video else None
   )
 
-  log_root_path = log_dir.parent  # Go up from specific run dir to experiment dir.
+  log_root_path = (
+    log_dir.parent.parent
+  )  # Go up from timestamp dir to motion_name dir to experiment dir.
 
   resume_path: Path | None = None
   if agent_cfg.resume:
@@ -319,12 +332,25 @@ def run_train_single_motion_from_file(
 
   if rank == 0:
     print(f"[INFO] Logging experiment in directory: {log_dir}")
+    # Initialize wandb with motion name before runner initializes it
+    # This ensures the wandb run name is the motion name, not the log directory name
+    if agent_cfg.logger == "wandb" and wandb.run is None:
+      wandb.init(
+        project=agent_cfg.wandb_project,
+        name=motion_name,
+        config={},
+        dir=str(
+          log_dir.parent
+        ),  # Set dir to motion_name directory, not timestamp subdirectory
+      )
 
   env = ManagerBasedRlEnv(
     cfg=env_cfg, device=device, render_mode="rgb_array" if cfg.video else None
   )
 
-  log_root_path = log_dir.parent  # Go up from specific run dir to experiment dir.
+  log_root_path = (
+    log_dir.parent.parent
+  )  # Go up from timestamp dir to motion_name dir to experiment dir.
 
   resume_path: Path | None = None
   if agent_cfg.resume:
@@ -520,23 +546,21 @@ def launch_training_multi_motion(cfg: TrainMultiMotionConfig) -> None:
     print("=" * 80)
 
     # Create experiment name
-    experiment_name = f"{cfg.experiment_name_prefix}_{motion_name}"
-    if cfg.run_name_suffix:
-      experiment_name = f"{experiment_name}_{cfg.run_name_suffix}"
-
-    # Create log directory
-    log_root_path = Path("logs") / "rsl_rl" / experiment_name
-    log_root_path.resolve()
-    log_dir_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    if agent_cfg_default.run_name:
-      log_dir_name += f"_{agent_cfg_default.run_name}"
-    log_dir = log_root_path / log_dir_name
+    experiment_name = f"{cfg.experiment_name}"
 
     # Create a config for this specific motion
     # Deep copy configs to avoid mutation between motions
     motion_agent_cfg = deepcopy(agent_cfg_default)
-    # Set experiment name to motion name for wandb
-    motion_agent_cfg.experiment_name = motion_name
+    motion_agent_cfg.run_name = motion_name
+
+    # Create nested log directory structure: logs/rsl_rl/{experiment_name}/{motion_name}/{timestamp}
+    # This prevents overwriting while keeping motion name for wandb
+    log_root_path = Path("logs") / "rsl_rl" / experiment_name / motion_name
+    log_root_path.resolve()
+    log_dir_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    if cfg.run_name_suffix:
+      log_dir_name = f"{log_dir_name}_{cfg.run_name_suffix}"
+    log_dir = log_root_path / log_dir_name
 
     motion_cfg = TrainMultiMotionConfig(
       registry_names=[registry_name] if registry_name else [],
@@ -553,8 +577,7 @@ def launch_training_multi_motion(cfg: TrainMultiMotionConfig) -> None:
       torchrunx_log_dir=cfg.torchrunx_log_dir,
       wandb_run_path=cfg.wandb_run_path,
       gpu_ids=cfg.gpu_ids,
-      experiment_name_prefix=cfg.experiment_name_prefix,
-      run_name_suffix=cfg.run_name_suffix,
+      experiment_name=cfg.experiment_name,
     )
 
     if num_gpus <= 1:
@@ -691,7 +714,7 @@ def main():
         torchrunx_log_dir=args.torchrunx_log_dir,
         wandb_run_path=args.wandb_run_path,
         gpu_ids=args.gpu_ids,
-        experiment_name_prefix=args.experiment_name_prefix,
+        experiment_name=args.experiment_name,
         run_name_suffix=args.run_name_suffix,
       )
 
