@@ -534,13 +534,17 @@ def launch_training_multi_motion(cfg: TrainMultiMotionConfig) -> None:
 
     # Create a config for this specific motion
     # Deep copy configs to avoid mutation between motions
+    motion_agent_cfg = deepcopy(agent_cfg_default)
+    # Set experiment name to motion name for wandb
+    motion_agent_cfg.experiment_name = motion_name
+
     motion_cfg = TrainMultiMotionConfig(
       registry_names=[registry_name] if registry_name else [],
       motion_dir=None,
       traj_name_patterns=cfg.traj_name_patterns,
       task_id=cfg.task_id,
       env=deepcopy(env_cfg_default),
-      agent=deepcopy(agent_cfg_default),
+      agent=motion_agent_cfg,
       device=cfg.device,
       video=cfg.video,
       video_length=cfg.video_length,
