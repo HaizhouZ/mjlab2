@@ -8,18 +8,6 @@ Example usage:
     python scripts/download_motions_from_wandb.py \\
         --entity ATARITUM \\
         --project sbto_v1
-    
-    # Specify custom cache directory:
-    python scripts/download_motions_from_wandb.py \\
-        --entity ATARITUM \\
-        --project sbto_v1 \\
-        --cache-dir /path/to/cache
-    
-    # Download different artifact type:
-    python scripts/download_motions_from_wandb.py \\
-        --entity ATARITUM \\
-        --project sbto_v1 \\
-        --artifact-type motion
 """
 
 from __future__ import annotations

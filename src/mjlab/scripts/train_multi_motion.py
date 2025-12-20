@@ -61,7 +61,6 @@ from rsl_rl.runners import OnPolicyRunner
 from mjlab.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
 from mjlab.rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
 from mjlab.tasks.registry import load_env_cfg, load_rl_cfg, load_runner_cls
-from mjlab.tasks.tracking.mdp import MotionCommandCfg
 from mjlab.utils.gpu import select_gpus
 from mjlab.utils.os import dump_yaml, get_checkpoint_path, get_wandb_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
@@ -78,7 +77,7 @@ class TrainMultiMotionConfig:
   motion_dir: str | None = None
   """Directory containing motion trajectories. Each subdirectory should contain motion.npz.
   Mutually exclusive with registry_names. Structure: <motion_dir>/<traj_name>/motion.npz"""
-  traj_name_patterns: list[str] = field(default_factory=lambda: [".*"])
+  motion_name_pattern: list[str] = field(default_factory=lambda: [".*"])
   """Regex patterns to match trajectory names when using motion_dir. Default matches all."""
   task_id: str = "Mjlab-Tracking-Flat-Unitree-G1-Box-No-State-Estimation"
   """Task ID to use for training. Must be a tracking task with MotionCommandCfg."""
@@ -166,9 +165,9 @@ def run_train_single_motion_from_registry(
   assert env_cfg.commands is not None
   assert "motion" in env_cfg.commands
   motion_cmd = env_cfg.commands["motion"]
-  assert isinstance(motion_cmd, MotionCommandCfg), (
-    f"Task {task_id} must use MotionCommandCfg, not MultiMotionCommandCfg"
-  )
+  # assert isinstance(motion_cmd, MotionCommandCfg), (
+  #   f"Task {task_id} must use MotionCommandCfg, not MultiMotionCommandCfg"
+  # )
   motion_cmd.motion_file = motion_file_path
 
   print(f"[INFO] Using motion file from wandb: {motion_file_path}")
@@ -318,9 +317,9 @@ def run_train_single_motion_from_file(
   assert env_cfg.commands is not None
   assert "motion" in env_cfg.commands
   motion_cmd = env_cfg.commands["motion"]
-  assert isinstance(motion_cmd, MotionCommandCfg), (
-    f"Task {task_id} must use MotionCommandCfg, not MultiMotionCommandCfg"
-  )
+  # assert isinstance(motion_cmd, MotionCommandCfg), (
+  #   f"Task {task_id} must use MotionCommandCfg, not MultiMotionCommandCfg"
+  # )
   motion_cmd.motion_file = motion_file
 
   print(f"[INFO] Using motion file: {motion_file}")
@@ -444,13 +443,13 @@ def run_train_single_motion_from_file(
 
 
 def find_motion_trajectories(
-  motion_dir: str, traj_name_patterns: list[str]
+  motion_dir: str, motion_name_pattern: list[str]
 ) -> list[tuple[str, str]]:
   """Find all motion trajectories in a directory.
 
   Args:
     motion_dir: Base directory containing trajectory subdirectories.
-    traj_name_patterns: List of regex patterns to match trajectory names.
+    motion_name_pattern: List of regex patterns to match trajectory names.
 
   Returns:
     List of (trajectory_name, motion_file_path) tuples.
@@ -462,7 +461,7 @@ def find_motion_trajectories(
     raise ValueError(f"Motion directory does not exist: {motion_dir}")
 
   traj_files = []
-  for pattern in traj_name_patterns:
+  for pattern in motion_name_pattern:
     regex = re.compile(pattern)
     matching_dirs = [
       d
@@ -478,7 +477,7 @@ def find_motion_trajectories(
 
   if not traj_files:
     raise ValueError(
-      f"No matching trajectories found in {motion_dir} with patterns {traj_name_patterns}"
+      f"No matching trajectories found in {motion_dir} with patterns {motion_name_pattern}"
     )
 
   return traj_files
@@ -514,7 +513,7 @@ def launch_training_multi_motion(cfg: TrainMultiMotionConfig) -> None:
   ] = []  # (name, registry_name, motion_file)
   if cfg.motion_dir:
     # Find all trajectories in the motion directory
-    traj_files = find_motion_trajectories(cfg.motion_dir, cfg.traj_name_patterns)
+    traj_files = find_motion_trajectories(cfg.motion_dir, cfg.motion_name_pattern)
     print(f"[INFO] Found {len(traj_files)} trajectories in {cfg.motion_dir}")
     for traj_name, motion_file in traj_files:
       motions_to_train.append((traj_name, None, motion_file))
@@ -565,7 +564,7 @@ def launch_training_multi_motion(cfg: TrainMultiMotionConfig) -> None:
     motion_cfg = TrainMultiMotionConfig(
       registry_names=[registry_name] if registry_name else [],
       motion_dir=None,
-      traj_name_patterns=cfg.traj_name_patterns,
+      motion_name_pattern=cfg.motion_name_pattern,
       task_id=cfg.task_id,
       env=deepcopy(env_cfg_default),
       agent=motion_agent_cfg,
@@ -678,7 +677,7 @@ def main():
   default_cfg = TrainMultiMotionConfig(
     registry_names=[],  # Must provide either registry_names or motion_dir
     motion_dir=None,
-    traj_name_patterns=[".*"],
+    motion_name_pattern=[".*"],
     task_id=chosen_task,
     env=default_env_cfg,
     agent=default_agent_cfg,
