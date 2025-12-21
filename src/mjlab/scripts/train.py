@@ -18,7 +18,7 @@ from mjlab.tasks.tracking.mdp import MotionCommandCfg, MultiMotionCommandCfg
 from mjlab.utils.gpu import select_gpus
 from mjlab.utils.os import dump_yaml, get_checkpoint_path, get_wandb_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
-from mjlab.utils.wandb import download_motions_from_wandb
+from mjlab.utils.wandb import get_wandb_entity_and_project, get_wandb_motion_cache_dir
 from mjlab.utils.wrappers import VideoRecorder
 
 
@@ -29,6 +29,7 @@ class TrainConfig:
   registry_name: str | None = None
   motion_file: str | None = None
   motion_dir: str | None = None
+  motion_name_pattern: list[str] = field(default_factory=lambda: [".*"])
   wandb_entity_project: str | None = None
   device: str = "cuda:0"
   video: bool = False
@@ -39,18 +40,6 @@ class TrainConfig:
   wandb_run_path: str | None = None
   gpu_ids: list[int] | Literal["all"] | None = field(default_factory=lambda: [0])
 
-  def get_wandb_entity_and_project(self) -> tuple[str | None, str | None]:
-    """Get wandb entity and project from combined format."""
-    if self.wandb_entity_project:
-      parts = self.wandb_entity_project.split("/", 1)
-      if len(parts) == 2:
-        return parts[0], parts[1]
-      else:
-        raise ValueError(
-          f"wandb_entity_project must be in format 'entity/project', got: {self.wandb_entity_project}"
-        )
-    return None, None
-
   @staticmethod
   def from_task(task_id: str) -> "TrainConfig":
     env_cfg = load_env_cfg(task_id)
@@ -59,7 +48,9 @@ class TrainConfig:
     return TrainConfig(env=env_cfg, agent=agent_cfg)
 
 
-def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
+def run_train(
+  task_id: str, cfg: TrainConfig, log_dir: Path, motion_name: str | None = None
+) -> None:
   cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
   if cuda_visible == "":
     device = "cpu"
@@ -97,17 +88,16 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
     motion_cmd = cfg.env.commands["motion"]
     assert isinstance(motion_cmd, (MotionCommandCfg, MultiMotionCommandCfg))
 
-    wandb_entity, wandb_project = cfg.get_wandb_entity_and_project()
+    wandb_entity, wandb_project = get_wandb_entity_and_project(cfg.wandb_entity_project)
     if isinstance(motion_cmd, MultiMotionCommandCfg) and wandb_entity and wandb_project:
       # Use wandb registry to download multiple motions
-      print(f"[INFO] Downloading motions from wandb: {wandb_entity}/{wandb_project}")
-      motions_dir = download_motions_from_wandb(
-        wandb_entity=wandb_entity,
-        wandb_project=wandb_project,
-        artifact_type="motions",
+      print(f"[INFO] Loading motions from W&B: {wandb_entity}/{wandb_project}")
+      motions_dir = get_wandb_motion_cache_dir(
+        wandb_entity=wandb_entity, wandb_project=wandb_project
       )
       motion_cmd.motion_dir = str(motions_dir)
-      motion_cmd.traj_name_patterns = [".*"]
+      motion_cmd.motion_name_pattern = cfg.motion_name_pattern
+      print(f"[INFO] Using motions from: {motions_dir}")
     elif cfg.registry_name:
       # Check if the registry name includes alias, if not, append ":latest".
       registry_name = cast(str, cfg.registry_name)
@@ -122,7 +112,7 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
       elif isinstance(motion_cmd, MultiMotionCommandCfg):
         motion_dir = str(Path(artifact.download()) / "motions")
         motion_cmd.motion_dir = motion_dir
-        motion_cmd.traj_name_patterns = [".*"]
+        motion_cmd.motion_name_pattern = cfg.motion_name_pattern
     elif cfg.motion_file is not None:
       # motion_file provided via CLI: --motion-file /path/to/motion.npz
       print(f"[INFO] Using local motion file: {cfg.motion_file}")
@@ -133,7 +123,7 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
         if motion_dir is None:
           raise ValueError("Must provide --motion-dir for multi-motion tracking tasks.")
         motion_cmd.motion_dir = motion_dir
-        motion_cmd.traj_name_patterns = [".*"]
+        motion_cmd.motion_name_pattern = cfg.motion_name_pattern
     elif cfg.motion_dir is not None:
       # motion_dir provided via CLI: --motion-dir /path/to/motion/dir
       print(f"[INFO] Using local motion directory: {cfg.motion_dir}")
@@ -143,7 +133,7 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
         )
       elif isinstance(motion_cmd, MultiMotionCommandCfg):
         motion_cmd.motion_dir = cfg.motion_dir
-        motion_cmd.traj_name_patterns = [".*"]
+        motion_cmd.motion_name_pattern = cfg.motion_name_pattern
     else:
       if isinstance(motion_cmd, MultiMotionCommandCfg):
         raise ValueError(
@@ -162,6 +152,17 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
 
   if rank == 0:
     print(f"[INFO] Logging experiment in directory: {log_dir}")
+    # # Initialize wandb with motion name before runner initializes it
+    # # This ensures the wandb run name is the motion name, not the log directory name
+    # if motion_name and cfg.agent.logger == "wandb":
+    #   import wandb
+    #   if wandb.run is None:
+    #     wandb.init(
+    #       project=cfg.agent.wandb_project,
+    #       name=motion_name,
+    #       config={},
+    #       dir=str(log_dir.parent),  # Set dir to motion_name directory, not timestamp subdirectory
+    #     )
 
   env = ManagerBasedRlEnv(
     cfg=cfg.env, device=device, render_mode="rgb_array" if cfg.video else None
@@ -236,6 +237,65 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
 def launch_training(task_id: str, args: TrainConfig | None = None):
   args = args or TrainConfig.from_task(task_id)
 
+  # Extract motion name for tracking tasks to use as run_name
+  # This ensures the log directory name (and thus wandb run name) includes the motion name
+  from mjlab.tasks.tracking.mdp import MotionCommandCfg, MultiMotionCommandCfg
+
+  is_tracking_task = (
+    args.env.commands is not None
+    and "motion" in args.env.commands
+    and isinstance(
+      args.env.commands["motion"], (MotionCommandCfg, MultiMotionCommandCfg)
+    )
+  )
+
+  motion_name: str | None = None
+  if is_tracking_task and not args.agent.run_name:
+    assert args.env.commands is not None
+    motion_cmd = args.env.commands["motion"]
+    assert isinstance(motion_cmd, (MotionCommandCfg, MultiMotionCommandCfg))
+
+    # Extract motion name from different sources
+    if isinstance(motion_cmd, MotionCommandCfg):
+      if args.registry_name:
+        # Extract from registry name (e.g., "entity/project/motion_name:latest" -> "motion_name")
+        registry_name = cast(str, args.registry_name)
+        if ":" not in registry_name:
+          registry_name = registry_name + ":latest"
+        motion_name = registry_name.split("/")[-1].split(":")[0]
+        args.agent.run_name = motion_name
+      elif args.motion_file:
+        # Extract from file path (e.g., "/path/to/motion_name/motion.npz" -> "motion_name")
+        motion_file_path = Path(args.motion_file)
+        motion_name = (
+          motion_file_path.parent.name
+          if motion_file_path.parent.name
+          else motion_file_path.stem
+        )
+        args.agent.run_name = motion_name
+    elif isinstance(motion_cmd, MultiMotionCommandCfg):
+      # For MultiMotionCommandCfg, extract motion name from pattern or motion_dir
+      if (
+        args.motion_name_pattern
+        and len(args.motion_name_pattern) == 1
+        and args.motion_name_pattern[0] != ".*"
+      ):
+        # Use the single pattern as motion name
+        motion_name = args.motion_name_pattern[0]
+        args.agent.run_name = motion_name
+      elif args.motion_dir:
+        # Extract from motion_dir path (e.g., "/path/to/motion_name" -> "motion_name")
+        motion_dir_path = Path(args.motion_dir)
+        motion_name = motion_dir_path.name
+        args.agent.run_name = motion_name
+      elif args.registry_name:
+        # Extract from registry name (e.g., "entity/project/motion_name:latest" -> "motion_name")
+        registry_name = cast(str, args.registry_name)
+        if ":" not in registry_name:
+          registry_name = registry_name + ":latest"
+        motion_name = registry_name.split("/")[-1].split(":")[0]
+        args.agent.run_name = motion_name
+
   # Create log directory once before launching workers.
   log_root_path = Path("logs") / "rsl_rl" / args.agent.experiment_name
   log_root_path.resolve()
@@ -256,7 +316,7 @@ def launch_training(task_id: str, args: TrainConfig | None = None):
 
   if num_gpus <= 1:
     # CPU or single GPU: run directly without torchrunx.
-    run_train(task_id, args, log_dir)
+    run_train(task_id, args, log_dir, motion_name)
   else:
     # Multi-GPU: use torchrunx.
     import torchrunx
@@ -280,7 +340,7 @@ def launch_training(task_id: str, args: TrainConfig | None = None):
       workers_per_host=num_gpus,
       backend=None,  # Let rsl_rl handle process group initialization.
       copy_env_vars=torchrunx.DEFAULT_ENV_VARS_FOR_COPY + ("MUJOCO*",),
-    ).run(run_train, task_id, args, log_dir)
+    ).run(run_train, task_id, args, log_dir, motion_name)
 
 
 def main():

@@ -80,3 +80,10 @@ def unitree_g1_tracking_ppo_runner_cfg_largebox_pdtargets() -> RslRlOnPolicyRunn
   cfg = unitree_g1_tracking_ppo_runner_cfg_largebox()
   cfg.experiment_name = "g1_largebox_tracking_pdtargets"
   return cfg
+
+
+def unitree_g1_tracking_ppo_runner_cfg_largebox_default() -> RslRlOnPolicyRunnerCfg:
+  """Create RL runner configuration for Unitree G1 tracking task with a large box and default action."""
+  cfg = unitree_g1_tracking_ppo_runner_cfg_largebox()
+  cfg.experiment_name = "g1_largebox_tracking_default"
+  return cfg

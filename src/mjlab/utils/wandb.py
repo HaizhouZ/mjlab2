@@ -208,3 +208,18 @@ def get_wandb_motion_cache_dir(
   project_cache_dir = cache_dir / wandb_project
   motions_dir = project_cache_dir / "motions"
   return motions_dir
+
+
+def get_wandb_entity_and_project(
+  wandb_entity_project: str,
+) -> tuple[str | None, str | None]:
+  """Get wandb entity and project from combined format."""
+  if wandb_entity_project:
+    parts = wandb_entity_project.split("/", 1)
+    if len(parts) == 2:
+      return parts[0], parts[1]
+    else:
+      raise ValueError(
+        f"wandb_entity_project must be in format 'entity/project', got: {wandb_entity_project}"
+      )
+  return None, None

@@ -5,8 +5,8 @@ locally for use with MultiMotionLoader.
 
 Example usage:
     # Download all motions from a wandb project:
-    python scripts/download_motions_from_wandb.py \\
-        --entity ATARITUM \\
+    python scripts/download_motions_from_wandb.py \
+        --entity ATARITUM \
         --project sbto_v1
 """
 

@@ -124,7 +124,9 @@ def unitree_g1_flat_tracking_env_cfg_box(
   play: bool = False,
 ) -> ManagerBasedRlEnvCfg:
   """Create Unitree G1 flat terrain tracking configuration with a box."""
-  cfg = unitree_g1_flat_tracking_env_cfg(has_state_estimation=has_state_estimation)
+  cfg = unitree_g1_flat_tracking_env_cfg(
+    has_state_estimation=has_state_estimation, play=play
+  )
 
   cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_box_cfg()}
 
@@ -490,14 +492,96 @@ def unitree_g1_flat_tracking_env_cfg_box(
     cfg.episode_length_s = int(1e9)
 
     cfg.observations["policy"].enable_corruption = False
+
     cfg.events.pop("push_robot", None)
     cfg.events.pop("push_object", None)
+    cfg.events.pop("base_com", None)
+    cfg.events.pop("add_joint_default_pos", None)
+    cfg.events.pop("foot_friction", None)
 
-    # # Disable RSI randomization.
-    # motion_cmd.pose_range = {}
-    # motion_cmd.velocity_range = {}
+    cfg.commands["motion"].joint_position_range = (-0.0, 0.0)
+
+    # Disable RSI randomization.
+    cfg.commands["motion"].pose_range = {}
+    cfg.commands["motion"].velocity_range = {}
+    # cfg.terminations["base_ang_vel_exceed"] = None
+    # cfg.terminations["ee_body_pos"] = None
+    # cfg.terminations["anchor_pos"] = None
+    # cfg.terminations["anchor_ori"] = None
+
+    # Disable RSI randomization.
+    motion_cmd.pose_range = {}
+    motion_cmd.velocity_range = {}
 
     motion_cmd.sampling_mode = "start"
+
+  return cfg
+
+
+def unitree_g1_flat_tracking_env_cfg_largebox(
+  has_state_estimation: bool = True,
+  play: bool = False,
+) -> ManagerBasedRlEnvCfg:
+  """Create Unitree G1 flat terrain tracking configuration with a box and no state estimation."""
+  cfg = unitree_g1_flat_tracking_env_cfg_box(
+    has_state_estimation=has_state_estimation, play=play
+  )
+  cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_largebox_cfg()}
+
+  # cfg.commands["motion"].object_pose_range = {
+  #   "x": (0.0, 0.0),
+  #   "y": (0.0, 0.0),
+  #   "z": (0.2, 0.2),
+  #   "roll": (0.0, 0.0),
+  #   "pitch": (0.0, 0.0),
+  #   "yaw": (0.0, 0.0),
+  # }
+
+  return cfg
+
+
+def unitree_g1_flat_tracking_env_cfg_largebox_pdtargets(
+  has_state_estimation: bool = True,
+  play: bool = False,
+) -> ManagerBasedRlEnvCfg:
+  """Create Unitree G1 flat terrain tracking configuration with a box and PD targets."""
+  cfg = unitree_g1_flat_tracking_env_cfg_largebox(
+    has_state_estimation=has_state_estimation, play=play
+  )
+
+  ###
+  # Motion Tracking PD Targets Action
+  ###
+  cfg.actions["joint_pos"] = MotionTrackingPDTargetsActionCfg(
+    asset_name="robot",
+    actuator_names=(".*",),
+    scale=G1_ACTION_SCALE,
+    command_name="motion",
+  )
+
+  cfg.rewards.pop("pd_tracking")
+
+  return cfg
+
+
+def unitree_g1_flat_tracking_env_cfg_largebox_default(
+  has_state_estimation: bool = True,
+  play: bool = False,
+) -> ManagerBasedRlEnvCfg:
+  """Create Unitree G1 flat terrain tracking configuration with a box and default action."""
+  cfg = unitree_g1_flat_tracking_env_cfg_largebox(
+    has_state_estimation=has_state_estimation, play=play
+  )
+
+  ###
+  # Default Joint Position Action
+  ###
+  cfg.actions["joint_pos"] = JointPositionActionCfg(
+    asset_name="robot",
+    actuator_names=(".*",),
+    scale=0.5,
+    use_default_offset=True,
+  )
 
   return cfg
 
@@ -507,7 +591,9 @@ def unitree_g1_flat_multitracking_env_cfg_box(
   play: bool = False,
 ) -> ManagerBasedRlEnvCfg:
   """Create Unitree G1 flat terrain tracking configuration with a box."""
-  cfg = unitree_g1_flat_tracking_env_cfg_box(has_state_estimation=has_state_estimation)
+  cfg = unitree_g1_flat_tracking_env_cfg_box(
+    has_state_estimation=has_state_estimation, play=play
+  )
   cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_largebox_cfg()}
 
   ###
@@ -570,7 +656,7 @@ def unitree_g1_flat_multitracking_env_cfg_box(
     encoder_dir="logs/trajectory_autoencoder/unet_simple/2025-12-17/14-04-49/best_model.jit",
     wandb_entity="ATARITUM",
     wandb_project="sbto_v1",
-    traj_name_patterns=[".*"],
+    motion_name_pattern=[".*"],
     debug_vis=True,
     resampling_time_range=(1e9, 1e9),
     horizon=32,
@@ -578,96 +664,7 @@ def unitree_g1_flat_multitracking_env_cfg_box(
 
   # Apply play mode overrides.
   if play:
-    # Effectively infinite episode length.
-    cfg.episode_length_s = int(1e9)
-
-    cfg.observations["policy"].enable_corruption = False
-    cfg.events.pop("push_robot", None)
-    cfg.events.pop("push_object", None)
-
-    # # Disable RSI randomization.
-    # motion_cmd.pose_range = {}
-    # motion_cmd.velocity_range = {}
-    # cfg.terminations["base_ang_vel_exceed"] = None
-    # cfg.terminations["ee_body_pos"] = None
-    # cfg.terminations["anchor_pos"] = None
-    # cfg.terminations["anchor_ori"] = None
-
-    cfg.commands["motion"].sampling_mode = "start"
     cfg.commands["motion"].motion_assignment_mode = "linear"
-
-  return cfg
-
-
-def unitree_g1_flat_tracking_env_cfg_largebox(
-  has_state_estimation: bool = True,
-  play: bool = False,
-) -> ManagerBasedRlEnvCfg:
-  """Create Unitree G1 flat terrain tracking configuration with a box and no state estimation."""
-  cfg = unitree_g1_flat_tracking_env_cfg_box(
-    has_state_estimation=has_state_estimation, play=play
-  )
-  cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_largebox_cfg()}
-
-  # Apply play mode overrides.
-  if play:
-    # Effectively infinite episode length.
-    cfg.episode_length_s = int(1e9)
-
-    cfg.observations["policy"].enable_corruption = False
-    cfg.events.pop("push_robot", None)
-    cfg.events.pop("push_object", None)
-
-    # # Disable RSI randomization.
-    # motion_cmd.pose_range = {}
-    # motion_cmd.velocity_range = {}
-    # cfg.terminations["base_ang_vel_exceed"] = None
-    # cfg.terminations["ee_body_pos"] = None
-    # cfg.terminations["anchor_pos"] = None
-    # cfg.terminations["anchor_ori"] = None
-    cfg.commands["motion"].sampling_mode = "start"
-
-  return cfg
-
-
-def unitree_g1_flat_tracking_env_cfg_largebox_pdtargets(
-  has_state_estimation: bool = True,
-  play: bool = False,
-) -> ManagerBasedRlEnvCfg:
-  """Create Unitree G1 flat terrain tracking configuration with a box and PD targets."""
-  cfg = unitree_g1_flat_tracking_env_cfg_largebox(
-    has_state_estimation=has_state_estimation, play=play
-  )
-
-  ###
-  # Motion Tracking PD Targets Action
-  ###
-  cfg.actions["joint_pos"] = MotionTrackingPDTargetsActionCfg(
-    asset_name="robot",
-    actuator_names=(".*",),
-    scale=G1_ACTION_SCALE,
-    command_name="motion",
-  )
-
-  # Remove PD tracking reward
-  cfg.rewards.pop("pd_tracking")
-
-  # Apply play mode overrides.
-  if play:
-    # Effectively infinite episode length.
-    cfg.episode_length_s = int(1e9)
-
-    cfg.observations["policy"].enable_corruption = False
-    cfg.events.pop("push_robot", None)
-    cfg.events.pop("push_object", None)
-
-    # # Disable RSI randomization.
-    # motion_cmd.pose_range = {}
-    # motion_cmd.velocity_range = {}
-    # cfg.terminations["base_ang_vel_exceed"] = None
-    # cfg.terminations["ee_body_pos"] = None
-    # cfg.terminations["anchor_pos"] = None
-    # cfg.terminations["anchor_ori"] = None
     cfg.commands["motion"].sampling_mode = "start"
 
   return cfg
@@ -679,26 +676,8 @@ def unitree_g1_flat_multitracking_env_cfg_largebox(
 ) -> ManagerBasedRlEnvCfg:
   """Create Unitree G1 flat terrain multi-tracking configuration with a large box."""
   cfg = unitree_g1_flat_multitracking_env_cfg_box(
-    has_state_estimation=has_state_estimation
+    has_state_estimation=has_state_estimation, play=play
   )
   cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_largebox_cfg()}
-
-  # Apply play mode overrides.
-  if play:
-    # Effectively infinite episode length.
-    cfg.episode_length_s = int(1e9)
-
-    cfg.observations["policy"].enable_corruption = False
-    cfg.events.pop("push_robot", None)
-    cfg.events.pop("push_object", None)
-
-    # # Disable RSI randomization.
-    # motion_cmd.pose_range = {}
-    # motion_cmd.velocity_range = {}
-    cfg.terminations["base_ang_vel_exceed"] = None
-    cfg.terminations["ee_body_pos"] = None
-    cfg.terminations["anchor_pos"] = None
-    cfg.terminations["anchor_ori"] = None
-    cfg.commands["motion"].sampling_mode = "start"
 
   return cfg
