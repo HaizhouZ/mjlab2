@@ -561,6 +561,9 @@ def launch_training_multi_motion(cfg: TrainMultiMotionConfig) -> None:
       log_dir_name = f"{log_dir_name}_{cfg.run_name_suffix}"
     log_dir = log_root_path / log_dir_name
 
+    if motion_agent_cfg.run_name:
+      log_dir_name += f"_{motion_name}"
+
     motion_cfg = TrainMultiMotionConfig(
       registry_names=[registry_name] if registry_name else [],
       motion_dir=None,
