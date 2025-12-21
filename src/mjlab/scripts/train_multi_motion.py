@@ -183,9 +183,10 @@ def run_train_single_motion_from_registry(
     # Initialize wandb with motion name before runner initializes it
     # This ensures the wandb run name is the motion name, not the log directory name
     if agent_cfg.logger == "wandb" and wandb.run is None:
+      wandb_run_name = agent_cfg.run_name if agent_cfg.run_name else motion_name
       wandb.init(
         project=agent_cfg.wandb_project,
-        name=motion_name,
+        name=wandb_run_name,
         config={},
         dir=str(
           log_dir.parent
@@ -334,9 +335,10 @@ def run_train_single_motion_from_file(
     # Initialize wandb with motion name before runner initializes it
     # This ensures the wandb run name is the motion name, not the log directory name
     if agent_cfg.logger == "wandb" and wandb.run is None:
+      wandb_run_name = agent_cfg.run_name if agent_cfg.run_name else motion_name
       wandb.init(
         project=agent_cfg.wandb_project,
-        name=motion_name,
+        name=wandb_run_name,
         config={},
         dir=str(
           log_dir.parent
@@ -561,8 +563,11 @@ def launch_training_multi_motion(cfg: TrainMultiMotionConfig) -> None:
       log_dir_name = f"{log_dir_name}_{cfg.run_name_suffix}"
     log_dir = log_root_path / log_dir_name
 
-    if motion_agent_cfg.run_name:
-      log_dir_name += f"_{motion_name}"
+    # Add "pd" suffix if PDTargets is in task name
+    if "PDTargets" in cfg.task_id:
+      motion_agent_cfg.run_name += "_pd"
+    elif "Default" in cfg.task_id:
+      motion_agent_cfg.run_name += "_default"
 
     motion_cfg = TrainMultiMotionConfig(
       registry_names=[registry_name] if registry_name else [],
