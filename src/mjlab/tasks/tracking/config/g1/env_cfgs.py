@@ -583,6 +583,8 @@ def unitree_g1_flat_tracking_env_cfg_largebox_default(
     use_default_offset=True,
   )
 
+  cfg.rewards.pop("pd_tracking")
+
   return cfg
 
 
