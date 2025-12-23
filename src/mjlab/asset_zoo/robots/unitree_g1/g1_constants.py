@@ -50,7 +50,7 @@ def get_spec_box() -> mujoco.MjSpec:
     size=(0.1, 0.1, 0.115),
     mass=0.6,
   )
-  # Slightly translucent color similar to user's cube
+
   geom.rgba = np.array([0.2, 0.6, 0.8, 1.0], dtype=np.float32)
   return spec
 
@@ -70,7 +70,27 @@ def get_spec_largebox() -> mujoco.MjSpec:
     # quat=(0.00991298, 0.849052, -0.523456, 0.0707591),
     mass=0.6,
   )
-  # Slightly translucent color similar to user's cube
+
+  geom.rgba = np.array([0.2, 0.6, 0.8, 1.0], dtype=np.float32)
+  return spec
+
+
+def get_spec_cylinder() -> mujoco.MjSpec:
+  spec = mujoco.MjSpec()
+  world = spec.worldbody
+  body = world.add_body(name="largebox_link")
+  body.pos = np.array([0.4, 0, 0.1], dtype=np.float64)
+  body.add_freejoint(name="largebox_freejoint")
+  geom = body.add_geom(
+    name="largebox_geom",
+    type=mujoco.mjtGeom.mjGEOM_CYLINDER,
+    friction=(0.6, 0.005, 0.0001),
+    size=(0.12, 0.165, 0.0),
+    # pos=(0.01, 0, 0.03),
+    # quat=(0.00991298, 0.849052, -0.523456, 0.0707591),
+    mass=0.6,
+  )
+
   geom.rgba = np.array([0.2, 0.6, 0.8, 1.0], dtype=np.float32)
   return spec
 
@@ -271,10 +291,13 @@ KNEES_BENT_KEYFRAME = EntityCfg.InitialStateCfg(
 # are given condim=3.
 FULL_COLLISION = CollisionCfg(
   geom_names_expr=(".*_collision",),
-  condim={r"^(left|right)_(foot|wrist|hand)[1-7]?_collision$": 3, ".*_collision": 1},
-  priority={r"^(left|right)_(foot|wrist|hand)[1-7]?_collision$": 1},
+  condim={
+    r"^(left|right)_(foot|wrist|hand|elbow_yaw)[1-7]?_collision$": 3,
+    ".*_collision": 1,
+  },
+  priority={r"^(left|right)_(foot|wrist|hand|elbow_yaw)[1-7]?_collision$": 1},
   friction={
-    r"^(left|right)_(foot|wrist|hand)[1-7]?_collision$": (0.6,),
+    r"^(left|right)_(foot|wrist|hand|elbow_yaw)[1-7]?_collision$": (0.6,),
     # r"^(left|right)_wrist[1-7]?_collision$": (0.6,),
   },
   # condim={r"^(left|right)_foot[1-7]_collision$": 3, ".*_collision": 1},
@@ -352,6 +375,17 @@ def get_largebox_cfg() -> EntityCfg:
       rot=(1.0, 0.0, 0.0, 0.0),
     ),
     spec_fn=get_spec_largebox,
+  )
+
+
+def get_cylinder_cfg() -> EntityCfg:
+  """Get a fresh cylinder configuration instance."""
+  return EntityCfg(
+    init_state=EntityCfg.InitialStateCfg(
+      pos=(0.35, 0.0, 0.115),
+      rot=(1.0, 0.0, 0.0, 0.0),
+    ),
+    spec_fn=get_spec_cylinder,
   )
 
 

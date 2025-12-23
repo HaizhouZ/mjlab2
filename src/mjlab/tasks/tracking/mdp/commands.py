@@ -44,51 +44,132 @@ class MotionLoader:
     self, motion_file: str, body_indexes: torch.Tensor, device: str = "cpu"
   ) -> None:
     data = np.load(motion_file)
-    self.joint_pos = torch.tensor(data["joint_pos"], dtype=torch.float32, device=device)
-    self.joint_vel = torch.tensor(data["joint_vel"], dtype=torch.float32, device=device)
-    self._body_pos_w = torch.tensor(
-      data["body_pos_w"], dtype=torch.float32, device=device
-    )
-    self._body_quat_w = torch.tensor(
-      data["body_quat_w"], dtype=torch.float32, device=device
-    )
+    self._load_from_data(data, body_indexes, device)
+
+  @classmethod
+  def from_data(
+    cls, data: dict[str, np.ndarray], body_indexes: torch.Tensor, device: str = "cpu"
+  ) -> "MotionLoader":
+    """Create a MotionLoader from pre-loaded numpy data.
+
+    Args:
+      data: Dictionary of numpy arrays (e.g., from np.load)
+      body_indexes: Body indices to extract from motion data
+      device: Device to load tensors on
+
+    Returns:
+      MotionLoader instance
+    """
+    instance = cls.__new__(cls)
+    instance._load_from_data(data, body_indexes, device)
+    return instance
+
+  def _load_from_data(
+    self, data: dict[str, np.ndarray], body_indexes: torch.Tensor, device: str = "cpu"
+  ) -> None:
+    """Load motion data from numpy arrays. Handles both 2D (num_frames, ...) and multi-motion formats.
+
+    For multi-motion arrays (ndim >= 3), only the first motion is loaded. Use MultiMotionLoader to handle multiple motions.
+    """
+    # Check if data is multi-motion format (ndim >= 3) by checking the first array
+    joint_pos = data["joint_pos"]
+    is_multi_motion = joint_pos.ndim >= 3
+
+    if is_multi_motion:
+      # For multi-motion data, take the first motion (will be handled by MultiMotionLoader)
+      joint_pos = joint_pos[0]
+      joint_vel = data["joint_vel"][0]
+      body_pos_w = data["body_pos_w"][0]
+      body_quat_w = data["body_quat_w"][0]
+      body_lin_vel_w = data["body_lin_vel_w"][0]
+      body_ang_vel_w = data["body_ang_vel_w"][0]
+    else:
+      # For 2D data, use as-is
+      joint_pos = data["joint_pos"]
+      joint_vel = data["joint_vel"]
+      body_pos_w = data["body_pos_w"]
+      body_quat_w = data["body_quat_w"]
+      body_lin_vel_w = data["body_lin_vel_w"]
+      body_ang_vel_w = data["body_ang_vel_w"]
+
+    self.joint_pos = torch.tensor(joint_pos, dtype=torch.float32, device=device)
+    self.joint_vel = torch.tensor(joint_vel, dtype=torch.float32, device=device)
+    self._body_pos_w = torch.tensor(body_pos_w, dtype=torch.float32, device=device)
+    self._body_quat_w = torch.tensor(body_quat_w, dtype=torch.float32, device=device)
     self._body_lin_vel_w = torch.tensor(
-      data["body_lin_vel_w"], dtype=torch.float32, device=device
+      body_lin_vel_w, dtype=torch.float32, device=device
     )
     self._body_ang_vel_w = torch.tensor(
-      data["body_ang_vel_w"], dtype=torch.float32, device=device
+      body_ang_vel_w, dtype=torch.float32, device=device
     )
     self._body_indexes = body_indexes
     self.time_step_total = self.joint_pos.shape[0]
 
-    self._joint_pd_targets = torch.tensor(
-      data["joint_pd_targets"], dtype=torch.float32, device=device
-    )
+    if "joint_pd_targets" in data:
+      pd_targets = data["joint_pd_targets"]
+      if is_multi_motion:
+        pd_targets = pd_targets[0]
+      self._joint_pd_targets = torch.tensor(
+        pd_targets, dtype=torch.float32, device=device
+      )
+    else:
+      self._joint_pd_targets = None
+
     if "object_pos_w" in data and "object_quat_w" in data:
+      object_pos_w = data["object_pos_w"]
+      object_quat_w = data["object_quat_w"]
+      if is_multi_motion:
+        object_pos_w = object_pos_w[0]
+        object_quat_w = object_quat_w[0]
       self._object_pos_w = torch.tensor(
-        data["object_pos_w"], dtype=torch.float32, device=device
+        object_pos_w, dtype=torch.float32, device=device
       )
       self._object_quat_w = torch.tensor(
-        data["object_quat_w"], dtype=torch.float32, device=device
-      )
-      self._object_lin_vel_w = torch.tensor(
-        data["object_lin_vel_w"], dtype=torch.float32, device=device
-      )
-      self._object_ang_vel_w = torch.tensor(
-        data["object_ang_vel_w"], dtype=torch.float32, device=device
+        object_quat_w, dtype=torch.float32, device=device
       )
 
+      if "object_lin_vel_w" in data:
+        object_lin_vel_w = data["object_lin_vel_w"]
+        if is_multi_motion:
+          object_lin_vel_w = object_lin_vel_w[0]
+        self._object_lin_vel_w = torch.tensor(
+          object_lin_vel_w, dtype=torch.float32, device=device
+        )
+      else:
+        self._object_lin_vel_w = None
+
+      if "object_ang_vel_w" in data:
+        object_ang_vel_w = data["object_ang_vel_w"]
+        if is_multi_motion:
+          object_ang_vel_w = object_ang_vel_w[0]
+        self._object_ang_vel_w = torch.tensor(
+          object_ang_vel_w, dtype=torch.float32, device=device
+        )
+      else:
+        self._object_ang_vel_w = None
+    else:
+      self._object_pos_w = None
+      self._object_quat_w = None
+      self._object_lin_vel_w = None
+      self._object_ang_vel_w = None
+
     if "contact_indicators" in data:
+      contact_indicators = data["contact_indicators"]
+      if is_multi_motion:
+        contact_indicators = contact_indicators[0]
       self._object_contact = torch.tensor(
-        data["contact_indicators"], dtype=torch.bool, device=device
+        contact_indicators, dtype=torch.bool, device=device
       )
     else:
       self._object_contact = None
 
     # Load contact_positions if available
     if "contact_positions" in data:
+      contact_positions = data["contact_positions"]
+      if is_multi_motion:
+        contact_positions = contact_positions[0]
       self._contact_positions = torch.tensor(
-        data["contact_positions"], dtype=torch.float32, device=device
+        contact_positions, dtype=torch.float32, device=device
       )
     else:
       self._contact_positions = None
@@ -165,7 +246,7 @@ class MultiMotionLoader:
   def __init__(
     self,
     motion_dir: str,
-    traj_name_patterns: list[str],
+    motion_name_pattern: list[str],
     body_indexes: torch.Tensor,
     device: str = "cpu",
   ) -> None:
@@ -173,7 +254,7 @@ class MultiMotionLoader:
 
     Args:
       motion_dir: Base directory containing trajectory subdirectories
-      traj_name_patterns: List of regex patterns to match trajectory names (e.g., ".*" matches all).
+      motion_name_pattern: List of regex patterns to match trajectory names (e.g., ".*" matches all).
       body_indexes: Body indices to extract from motion data
       device: Device to load tensors on
     """
@@ -183,7 +264,7 @@ class MultiMotionLoader:
 
     # Find all trajectory directories
     traj_dirs = []
-    for pattern in traj_name_patterns:
+    for pattern in motion_name_pattern:
       regex = re.compile(pattern)
       for d in motion_dir_path.iterdir():
         if not d.is_dir() or not regex.match(d.name):
@@ -201,7 +282,7 @@ class MultiMotionLoader:
 
     if not traj_dirs:
       raise ValueError(
-        f"No matching trajectories found in {motion_dir} with patterns {traj_name_patterns}"
+        f"No matching trajectories found in {motion_dir} with patterns {motion_name_pattern}"
       )
 
     # Remove duplicates and sort for reproducibility
@@ -212,16 +293,23 @@ class MultiMotionLoader:
     self.traj_names: list[str] = []
     for traj_dir, motion_file in traj_dirs:
       try:
-        motion = MotionLoader(str(motion_file), body_indexes, device=device)
-        self.motions.append(motion)
-        self.traj_names.append(traj_dir.name)
+        # Load motions from file (handles both single and multi-motion files)
+        motions_from_file = self._load_motions_from_file(
+          str(motion_file), body_indexes, device=device
+        )
+        for i, motion in enumerate(motions_from_file):
+          self.motions.append(motion)
+          # For multi-motion files, append index to trajectory name
+          if len(motions_from_file) > 1:
+            self.traj_names.append(f"{traj_dir.name}_{i}")
+          else:
+            self.traj_names.append(traj_dir.name)
       except Exception as e:
         print(f"Warning: Failed to load motion from {motion_file}: {e}")
         continue
 
     if not self.motions:
       raise ValueError(f"No valid motions loaded from {motion_dir}")
-
     self.num_motions = len(self.motions)
     self.device = device
     self._body_indexes = body_indexes
@@ -398,6 +486,54 @@ class MultiMotionLoader:
         and motion.contact_positions is not None
       ):
         self._batched_contact_positions[i, :t] = motion.contact_positions
+
+  def _load_motions_from_file(
+    self, motion_file: str, body_indexes: torch.Tensor, device: str = "cpu"
+  ) -> list[MotionLoader]:
+    """Load one or more motions from a file.
+
+    Handles both formats:
+    - Single motion: (num_frames, ...) -> returns list with one MotionLoader
+    - Multiple motions: (num_motions, num_frames, ...) -> returns list with multiple MotionLoaders
+
+    Args:
+      motion_file: Path to the motion file
+      body_indexes: Body indices to extract from motion data
+      device: Device to load tensors on
+
+    Returns:
+      List of MotionLoader instances (one per motion in the file)
+    """
+    data = np.load(motion_file)
+
+    # Check if data is multi-motion format by checking the first array
+    # Multi-motion format: first dimension is num_motions (ndim >= 3)
+    joint_pos = data["joint_pos"]
+    is_multi_motion = joint_pos.ndim >= 3
+
+    if not is_multi_motion:
+      # Single motion file: return list with one MotionLoader
+      return [MotionLoader.from_data(data, body_indexes, device=device)]
+
+    # Multiple motions file: create one MotionLoader per motion
+    num_motions = joint_pos.shape[0]
+    motions = []
+
+    for motion_idx in range(num_motions):
+      # Extract data for this motion
+      motion_data = {}
+      for key, value in data.items():
+        if value.ndim >= 3 and value.shape[0] == num_motions:
+          # Multi-dimensional array with motion dimension: take the motion_idx slice
+          motion_data[key] = value[motion_idx]
+        else:
+          # 2D, 1D, or scalar array: use as-is (shared across motions or metadata)
+          motion_data[key] = value
+
+      motion = MotionLoader.from_data(motion_data, body_indexes, device=device)
+      motions.append(motion)
+
+    return motions
 
   def get_motion_data(
     self,
@@ -1078,10 +1214,25 @@ class MotionCommand(CommandTerm):
     except Exception:
       box = None
 
+    range_list = [
+      self.cfg.object_pose_range.get(key, (0.0, 0.0))
+      for key in ["x", "y", "z", "roll", "pitch", "yaw"]
+    ]
+    ranges = torch.tensor(range_list, device=self.device)
+    rand_samples = sample_uniform(
+      ranges[:, 0], ranges[:, 1], (len(env_ids), 6), device=self.device
+    )
+
     if box is not None and not box.data.is_fixed_base:
       # Pose from motion object state (already includes per-env origin offset via object_pos_w)
       box_pos = self.object_pos_w[env_ids]
       box_quat = self.object_quat_w[env_ids]
+      box_pos += rand_samples[:, 0:3]
+      box_quat = quat_mul(
+        quat_from_euler_xyz(rand_samples[:, 3], rand_samples[:, 4], rand_samples[:, 5]),
+        box_quat,
+      )
+
       box_lin_vel = (
         self.object_lin_vel_w[env_ids]
         if self.object_lin_vel_w is not None
@@ -1305,6 +1456,7 @@ class MotionCommandCfg(CommandTermCfg):
   asset_name: str
   class_type: type[CommandTerm] = MotionCommand
   pose_range: dict[str, tuple[float, float]] = field(default_factory=dict)
+  object_pose_range: dict[str, tuple[float, float]] = field(default_factory=dict)
   velocity_range: dict[str, tuple[float, float]] = field(default_factory=dict)
   joint_position_range: tuple[float, float] = (-0.52, 0.52)
   adaptive_kernel_size: int = 1
@@ -1392,14 +1544,14 @@ class MultiMotionCommand(CommandTerm):
       # motion_dir is None and no wandb info provided - will be handled by MultiMotionLoader
       pass
 
-    # Set traj_name_patterns to match all if not explicitly set
-    if self.cfg.traj_name_patterns == [".*"]:
-      self.cfg.traj_name_patterns = [".*"]
+    # Set motion_name_pattern to match all if not explicitly set
+    if self.cfg.motion_name_pattern == [".*"]:
+      self.cfg.motion_name_pattern = [".*"]
 
     # Load multiple motions
     self.motion_loader = MultiMotionLoader(
       motion_dir=motion_dir,
-      traj_name_patterns=self.cfg.traj_name_patterns,
+      motion_name_pattern=self.cfg.motion_name_pattern,
       body_indexes=self.body_indexes,
       device=self.device,
     )
@@ -1417,6 +1569,11 @@ class MultiMotionCommand(CommandTerm):
       # Linear assignment: env 0 -> motion 0, env 1 -> motion 1, etc. (wraps around)
       self.motion_indices = (
         torch.arange(self.num_envs, device=self.device) % self.motion_loader.num_motions
+      )
+    elif self.cfg.motion_assignment_mode == "best":
+      # motion index 0 has the least cost from SBTO
+      self.motion_indices = torch.zeros(
+        self.num_envs, dtype=torch.long, device=self.device
       )
     else:  # "random" (default)
       # Randomly assign motions to each environment
@@ -1512,8 +1669,14 @@ class MultiMotionCommand(CommandTerm):
   @property
   def command(self) -> torch.Tensor:
     """Get command (joint_pos + joint_vel) for current timestep only."""
-    horizon = 1
+    # When horizon=0 or horizon=1, behave exactly like MotionCommand
     # horizon = self.cfg.horizon
+    # self.cfg.horizon = 1
+    # horizon =  self.cfg.horizon
+    horizon = 1
+    if horizon <= 1:
+      return torch.cat([self.joint_pos, self.joint_vel], dim=1)
+    # For horizon > 1, use horizon methods
     return torch.cat(
       [
         self.get_joint_pos_horizon(horizon),
@@ -1877,6 +2040,14 @@ class MultiMotionCommand(CommandTerm):
         )
 
   def _adaptive_sampling(self, env_ids: torch.Tensor):
+    """
+    Adaptive sampling implementation.
+
+    When horizon=1 and num_motions=1, this behaves equivalently to MotionCommand._adaptive_sampling,
+    but uses a 2D tensor structure (num_motions, bin_count) to support multiple motions.
+    When there's only 1 motion, the 2D structure (1, bin_count) is functionally equivalent
+    to MotionCommand's 1D structure (bin_count,).
+    """
     episode_failed = self._env.termination_manager.terminated[env_ids]
     if torch.any(episode_failed):
       # Get motion indices and time steps for failed episodes
@@ -1890,6 +2061,7 @@ class MultiMotionCommand(CommandTerm):
       )
 
       # Compute bin indices for failed episodes
+      # Note: When num_motions=1, this is equivalent to MotionCommand's bin calculation
       current_bin_index = torch.clamp(
         (failed_time_steps * self.bin_count)
         // torch.clamp(failed_env_time_step_totals, min=1),
@@ -2284,7 +2456,7 @@ class MultiMotionCommand(CommandTerm):
 @dataclass(kw_only=True)
 class MultiMotionCommandCfg(CommandTermCfg):
   motion_dir: str = "motions/output"
-  traj_name_patterns: list[str] = field(default_factory=lambda: [".*"])
+  motion_name_pattern: list[str] = field(default_factory=lambda: [".*"])
   anchor_body_name: str
   body_names: tuple[str, ...]
   eef_body_names: tuple[str, ...]
@@ -2301,7 +2473,7 @@ class MultiMotionCommandCfg(CommandTermCfg):
   adaptive_uniform_ratio: float = 0.1
   adaptive_alpha: float = 0.001
   sampling_mode: Literal["adaptive", "uniform", "start"] = "adaptive"
-  motion_assignment_mode: Literal["random", "linear"] = "random"
+  motion_assignment_mode: Literal["random", "linear", "best"] = "random"
   horizon: int = 0
   """Horizon for future motion data. If > 0, properties will return sequences
   of shape (num_envs, horizon, ...) instead of (num_envs, ...). 

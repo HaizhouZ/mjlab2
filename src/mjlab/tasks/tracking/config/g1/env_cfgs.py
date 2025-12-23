@@ -7,13 +7,11 @@ from mjlab.asset_zoo.robots import (
   G1_ACTION_SCALE,
   get_box_cfg,
   get_g1_robot_cfg,
-  get_largebox_cfg,
 )
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import (
   JointPositionActionCfg,
   MotionTrackingJointPositionActionCfg,
-  MotionTrackingPDTargetsActionCfg,
 )
 from mjlab.managers.manager_term_config import (
   EventTermCfg,
@@ -24,7 +22,7 @@ from mjlab.managers.manager_term_config import (
 )
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
-from mjlab.tasks.tracking.mdp import MotionCommandCfg, MultiMotionCommandCfg
+from mjlab.tasks.tracking.mdp import MotionCommandCfg
 from mjlab.tasks.tracking.tracking_env_cfg import make_tracking_env_cfg
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 
@@ -144,7 +142,9 @@ def unitree_g1_flat_tracking_env_cfg_box(
 
   left_eef_contact_sensor = ContactSensorCfg(
     name="left_eef_contact",
-    primary=ContactMatch(mode="geom", pattern="left_wrist_collision", entity="robot"),
+    primary=ContactMatch(
+      mode="geom", pattern="left_(elbow_yaw|wrist)_collision", entity="robot"
+    ),
     secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="box"),
     fields=("found", "force", "pos"),
     reduce="maxforce",
@@ -153,7 +153,9 @@ def unitree_g1_flat_tracking_env_cfg_box(
 
   right_eef_contact_sensor = ContactSensorCfg(
     name="right_eef_contact",
-    primary=ContactMatch(mode="geom", pattern="right_wrist_collision", entity="robot"),
+    primary=ContactMatch(
+      mode="geom", pattern="right_(elbow_yaw|wrist)_collision", entity="robot"
+    ),
     secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="box"),
     fields=("found", "force", "pos"),
     reduce="maxforce",
@@ -514,172 +516,5 @@ def unitree_g1_flat_tracking_env_cfg_box(
     motion_cmd.velocity_range = {}
 
     motion_cmd.sampling_mode = "start"
-
-  return cfg
-
-
-def unitree_g1_flat_tracking_env_cfg_largebox(
-  has_state_estimation: bool = True,
-  play: bool = False,
-) -> ManagerBasedRlEnvCfg:
-  """Create Unitree G1 flat terrain tracking configuration with a box and no state estimation."""
-  cfg = unitree_g1_flat_tracking_env_cfg_box(
-    has_state_estimation=has_state_estimation, play=play
-  )
-  cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_largebox_cfg()}
-
-  # cfg.commands["motion"].object_pose_range = {
-  #   "x": (0.0, 0.0),
-  #   "y": (0.0, 0.0),
-  #   "z": (0.2, 0.2),
-  #   "roll": (0.0, 0.0),
-  #   "pitch": (0.0, 0.0),
-  #   "yaw": (0.0, 0.0),
-  # }
-
-  return cfg
-
-
-def unitree_g1_flat_tracking_env_cfg_largebox_pdtargets(
-  has_state_estimation: bool = True,
-  play: bool = False,
-) -> ManagerBasedRlEnvCfg:
-  """Create Unitree G1 flat terrain tracking configuration with a box and PD targets."""
-  cfg = unitree_g1_flat_tracking_env_cfg_largebox(
-    has_state_estimation=has_state_estimation, play=play
-  )
-
-  ###
-  # Motion Tracking PD Targets Action
-  ###
-  cfg.actions["joint_pos"] = MotionTrackingPDTargetsActionCfg(
-    asset_name="robot",
-    actuator_names=(".*",),
-    scale=G1_ACTION_SCALE,
-    command_name="motion",
-  )
-
-  cfg.rewards.pop("pd_tracking")
-
-  return cfg
-
-
-def unitree_g1_flat_tracking_env_cfg_largebox_default(
-  has_state_estimation: bool = True,
-  play: bool = False,
-) -> ManagerBasedRlEnvCfg:
-  """Create Unitree G1 flat terrain tracking configuration with a box and default action."""
-  cfg = unitree_g1_flat_tracking_env_cfg_largebox(
-    has_state_estimation=has_state_estimation, play=play
-  )
-
-  ###
-  # Default Joint Position Action
-  ###
-  cfg.actions["joint_pos"] = JointPositionActionCfg(
-    asset_name="robot",
-    actuator_names=(".*",),
-    scale=0.5,
-    use_default_offset=True,
-  )
-
-  cfg.rewards.pop("pd_tracking")
-
-  return cfg
-
-
-def unitree_g1_flat_multitracking_env_cfg_box(
-  has_state_estimation: bool = True,
-  play: bool = False,
-) -> ManagerBasedRlEnvCfg:
-  """Create Unitree G1 flat terrain tracking configuration with a box."""
-  cfg = unitree_g1_flat_tracking_env_cfg_box(
-    has_state_estimation=has_state_estimation, play=play
-  )
-  cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_largebox_cfg()}
-
-  ###
-  # Trajectory Encoding Observation Terms
-  ###
-  cfg.observations["policy"].terms["trajectory_encoding"] = ObservationTermCfg(
-    func=mdp.trajectory_encoding,
-    params={"command_name": "motion"},
-  )
-
-  cfg.observations["critic"].terms["trajectory_encoding"] = ObservationTermCfg(
-    func=mdp.trajectory_encoding,
-    params={"command_name": "motion"},
-  )
-
-  assert cfg.commands is not None
-  cfg.commands["motion"] = MultiMotionCommandCfg(
-    asset_name="robot",
-    anchor_body_name="torso_link",
-    body_names=(
-      "pelvis",
-      "left_hip_roll_link",
-      "left_knee_link",
-      "left_ankle_roll_link",
-      "right_hip_roll_link",
-      "right_knee_link",
-      "right_ankle_roll_link",
-      "torso_link",
-      "left_shoulder_roll_link",
-      "left_elbow_link",
-      "left_wrist_yaw_link",
-      "right_shoulder_roll_link",
-      "right_elbow_link",
-      "right_wrist_yaw_link",
-    ),
-    pose_range={
-      "x": (-0.05, 0.05),
-      "y": (-0.05, 0.05),
-      "z": (-0.01, 0.01),
-      "roll": (-0.1, 0.1),
-      "pitch": (-0.1, 0.1),
-      "yaw": (-0.2, 0.2),
-    },
-    velocity_range={
-      "x": (-0.5, 0.5),
-      "y": (-0.5, 0.5),
-      "z": (-0.2, 0.2),
-      "roll": (-0.52, 0.52),
-      "pitch": (-0.52, 0.52),
-      "yaw": (-0.78, 0.78),
-    },
-    joint_position_range=(-0.1, 0.1),
-    eef_body_names=(
-      "left_wrist_yaw_link",
-      "right_wrist_yaw_link",
-      "left_ankle_roll_link",
-      "right_ankle_roll_link",
-    ),
-    # motion_dir=str(motions_dir),
-    encoder_dir="logs/trajectory_autoencoder/unet_simple/2025-12-17/14-04-49/best_model.jit",
-    wandb_entity="ATARITUM",
-    wandb_project="sbto_v1",
-    motion_name_pattern=[".*"],
-    debug_vis=True,
-    resampling_time_range=(1e9, 1e9),
-    horizon=32,
-  )
-
-  # Apply play mode overrides.
-  if play:
-    cfg.commands["motion"].motion_assignment_mode = "linear"
-    cfg.commands["motion"].sampling_mode = "start"
-
-  return cfg
-
-
-def unitree_g1_flat_multitracking_env_cfg_largebox(
-  has_state_estimation: bool = True,
-  play: bool = False,
-) -> ManagerBasedRlEnvCfg:
-  """Create Unitree G1 flat terrain multi-tracking configuration with a large box."""
-  cfg = unitree_g1_flat_multitracking_env_cfg_box(
-    has_state_estimation=has_state_estimation, play=play
-  )
-  cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_largebox_cfg()}
 
   return cfg

@@ -149,6 +149,7 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
         "pitch": (-0.1, 0.1),
         "yaw": (-0.2, 0.2),
       },
+      object_pose_range={},
       velocity_range=VELOCITY_RANGE,
       joint_position_range=(-0.1, 0.1),
       # Override in robot cfg.
@@ -306,7 +307,7 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
       azimuth=90.0,
     ),
     sim=SimulationCfg(
-      nconmax=35,
+      nconmax=45,
       njmax=400,
       mujoco=MujocoCfg(
         timestep=0.005,
