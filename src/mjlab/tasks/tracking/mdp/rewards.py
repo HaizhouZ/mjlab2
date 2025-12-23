@@ -131,7 +131,7 @@ def object_global_position_error_exp(
   """Tracks object world position.
 
   Args:
-    object_asset_cfg: SceneEntityCfg identifying the object entity (e.g., "box").
+    object_asset_cfg: SceneEntityCfg identifying the object entity (e.g., "object").
   """
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
   box: Entity = env.scene[object_asset_cfg.name]
@@ -172,7 +172,7 @@ def object_relative_position_error_exp(
   Args:
     env: The RL environment.
     command_name: Name of the motion command.
-    object_asset_cfg: SceneEntityCfg identifying the object entity (e.g., "box").
+    object_asset_cfg: SceneEntityCfg identifying the object entity (e.g., "object").
     std: Standard deviation for the exponential reward.
   """
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
@@ -208,7 +208,7 @@ def object_relative_orientation_error_exp(
   Args:
     env: The RL environment.
     command_name: Name of the motion command.
-    object_asset_cfg: SceneEntityCfg identifying the object entity (e.g., "box").
+    object_asset_cfg: SceneEntityCfg identifying the object entity (e.g., "object").
     std: Standard deviation for the exponential reward.
   """
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
@@ -296,7 +296,7 @@ def combined_object_motion_global_pos_tracking(
 
   Args:
     command_name: Name of the motion command.
-    object_asset_cfg: SceneEntityCfg identifying the object entity (e.g., "box").
+    object_asset_cfg: SceneEntityCfg identifying the object entity (e.g., "object").
     object_pos_std: Standard deviation for object position error.
     object_ori_std: Standard deviation for object orientation error.
     motion_pos_std: Standard deviation for motion root position error.
@@ -331,7 +331,7 @@ def combined_object_motion_global_ori_tracking(
 
   Args:
     command_name: Name of the motion command.
-    object_asset_cfg: SceneEntityCfg identifying the object entity (e.g., "box").
+    object_asset_cfg: SceneEntityCfg identifying the object entity (e.g., "object").
     object_pos_std: Standard deviation for object position error.
     object_ori_std: Standard deviation for object orientation error.
     motion_pos_std: Standard deviation for motion root position error.

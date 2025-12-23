@@ -92,7 +92,7 @@ def unitree_g1_flat_multitracking_env_cfg_largebox(
   cfg = unitree_g1_flat_multitracking_env_cfg_box(
     has_state_estimation=has_state_estimation, play=play
   )
-  cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_largebox_cfg()}
+  cfg.scene.entities = {"robot": get_g1_robot_cfg(), "object": get_largebox_cfg()}
 
   return cfg
 
@@ -130,6 +130,6 @@ def unitree_g1_flat_multitracking_encoding_env_cfg_largebox(
   cfg = unitree_g1_flat_multitracking_encoding_env_cfg_box(
     has_state_estimation=has_state_estimation, play=play
   )
-  cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_largebox_cfg()}
+  cfg.scene.entities = {"robot": get_g1_robot_cfg(), "object": get_largebox_cfg()}
 
   return cfg

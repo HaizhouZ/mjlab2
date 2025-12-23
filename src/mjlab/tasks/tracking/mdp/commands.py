@@ -1059,7 +1059,7 @@ class MotionCommand(CommandTerm):
     if self._has_object:
       # Get actual object pose from simulation
       try:
-        box = self._env.scene.entities.get("box")  # type: ignore[attr-defined]
+        box = self._env.scene.entities.get("object")  # type: ignore[attr-defined]
         if box is not None:
           # Desired object pose from motion data
           desired_pos = self.object_pos_w  # (N, 3)
@@ -1210,7 +1210,7 @@ class MotionCommand(CommandTerm):
     )
 
     try:
-      box = self._env.scene.entities.get("box")  # type: ignore[attr-defined]
+      box = self._env.scene.entities.get("object")  # type: ignore[attr-defined]
     except Exception:
       box = None
 
@@ -1391,7 +1391,7 @@ class MotionCommand(CommandTerm):
       )
       qpos[joint_q_adr] = self.joint_pos[visualizer.env_idx].cpu().numpy()
 
-      box = self._env.scene.entities.get("box")
+      box = self._env.scene.entities.get("object")
       if box is not None:
         box_free_joint_q_adr = box.indexing.free_joint_q_adr.cpu().numpy()
         target_pos = self.object_pos_w[visualizer.env_idx].cpu().numpy()
@@ -2012,7 +2012,7 @@ class MultiMotionCommand(CommandTerm):
 
     if self._has_object:
       try:
-        box = self._env.scene.entities.get("box")  # type: ignore[attr-defined]
+        box = self._env.scene.entities.get("object")  # type: ignore[attr-defined]
         if box is not None:
           desired_pos = self.object_pos_w
           desired_quat = self.object_quat_w
@@ -2233,7 +2233,7 @@ class MultiMotionCommand(CommandTerm):
     )
 
     try:
-      box = self._env.scene.entities.get("box")  # type: ignore[attr-defined]
+      box = self._env.scene.entities.get("object")  # type: ignore[attr-defined]
     except Exception:
       box = None
 
@@ -2397,7 +2397,7 @@ class MultiMotionCommand(CommandTerm):
       )
       qpos[joint_q_adr] = self.joint_pos[visualizer.env_idx].cpu().numpy()
 
-      box = self._env.scene.entities.get("box")
+      box = self._env.scene.entities.get("object")
       if box is not None:
         box_free_joint_q_adr = box.indexing.free_joint_q_adr.cpu().numpy()
         target_pos = self.object_pos_w[visualizer.env_idx].cpu().numpy()

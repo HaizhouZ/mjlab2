@@ -126,7 +126,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     has_state_estimation=has_state_estimation, play=play
   )
 
-  cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_box_cfg()}
+  cfg.scene.entities = {"robot": get_g1_robot_cfg(), "object": get_box_cfg()}
 
   ###
   # Contact Sensors
@@ -145,7 +145,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     primary=ContactMatch(
       mode="geom", pattern="left_(elbow_yaw|wrist)_collision", entity="robot"
     ),
-    secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="box"),
+    secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="object"),
     fields=("found", "force", "pos"),
     reduce="maxforce",
     num_slots=3,
@@ -156,7 +156,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     primary=ContactMatch(
       mode="geom", pattern="right_(elbow_yaw|wrist)_collision", entity="robot"
     ),
-    secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="box"),
+    secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="object"),
     fields=("found", "force", "pos"),
     reduce="maxforce",
     num_slots=3,
@@ -167,7 +167,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     primary=ContactMatch(
       mode="geom", pattern="left_foot[1-7]_collision", entity="robot"
     ),
-    secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="box"),
+    secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="object"),
     fields=("found", "force", "pos"),
     reduce="maxforce",
     num_slots=3,
@@ -178,7 +178,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     primary=ContactMatch(
       mode="geom", pattern="right_foot[1-7]_collision", entity="robot"
     ),
-    secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="box"),
+    secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="object"),
     fields=("found", "force", "pos"),
     reduce="maxforce",
     num_slots=3,
@@ -237,7 +237,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   #   weight=1.0,
   #   params={
   #     "command_name": "motion",
-  #     "object_asset_cfg": SceneEntityCfg("box"),
+  #     "object_asset_cfg": SceneEntityCfg("object"),
   #     "std": 0.2,
   #   },
   # )
@@ -246,7 +246,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   #   weight=1.2,
   #   params={
   #     "command_name": "motion",
-  #     "object_asset_cfg": SceneEntityCfg("box"),
+  #     "object_asset_cfg": SceneEntityCfg("object"),
   #     "std": 0.3,
   #   },
   # )
@@ -255,7 +255,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     weight=1.0,
     params={
       "command_name": "motion",
-      "object_asset_cfg": SceneEntityCfg("box"),
+      "object_asset_cfg": SceneEntityCfg("object"),
       "std": 0.25,
     },
   )
@@ -264,7 +264,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     weight=0.8,
     params={
       "command_name": "motion",
-      "object_asset_cfg": SceneEntityCfg("box"),
+      "object_asset_cfg": SceneEntityCfg("object"),
       "std": 0.3,
     },
   )
@@ -273,7 +273,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     weight=1.0,
     params={
       "command_name": "motion",
-      "object_asset_cfg": SceneEntityCfg("box"),
+      "object_asset_cfg": SceneEntityCfg("object"),
       "std": 0.5,
     },
   )
@@ -282,7 +282,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     weight=1.0,
     params={
       "command_name": "motion",
-      "object_asset_cfg": SceneEntityCfg("box"),
+      "object_asset_cfg": SceneEntityCfg("object"),
       "std": 1.57,
     },
   )
@@ -310,7 +310,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   #   func=mdp.object_pos_z,
   #   params={
   #     "command_name": "motion",
-  #     "asset_cfg": SceneEntityCfg("box"),
+  #     "asset_cfg": SceneEntityCfg("object"),
   #     "threshold": 0.5,
   #   },
   # )
@@ -319,7 +319,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   #   func=mdp.object_too_far,
   #   params={
   #     "command_name": "motion",
-  #     "asset_cfg": SceneEntityCfg("box"),
+  #     "asset_cfg": SceneEntityCfg("object"),
   #     "threshold": 0.5,
   #   },
   # )
@@ -342,7 +342,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
     mode="interval",
     interval_range_s=(1.0, 3.0),
     params={
-      "asset_cfg": SceneEntityCfg("box"),
+      "asset_cfg": SceneEntityCfg("object"),
       "velocity_range": {
         "x": (-0.5, 0.5),
         "y": (-0.5, 0.5),
@@ -358,7 +358,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   #   func=mdp.randomize_field,
   #   mode="startup",
   #   params={
-  #     "asset_cfg": SceneEntityCfg("box"),
+  #     "asset_cfg": SceneEntityCfg("object"),
   #     "operation": "scale",
   #     "field": "body_mass",
   #     "ranges": (0.6, 1.5),
@@ -384,7 +384,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   #   domain_randomization=True,
   #   mode="startup",
   #   params={
-  #     "asset_cfg": SceneEntityCfg("box", geom_names=("largebox_geom",)),
+  #     "asset_cfg": SceneEntityCfg("object", geom_names=("largebox_geom",)),
   #     "operation": "abs",
   #     "field": "geom_friction",
   #     "ranges": (0.2, 0.8),
@@ -396,7 +396,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   #   mode="startup",
   #   domain_randomization=True,
   #   params={
-  #     "asset_cfg": SceneEntityCfg("box"),
+  #     "asset_cfg": SceneEntityCfg("object"),
   #     "operation": "scale",
   #     "field": "geom_size",
   #     "ranges": {
@@ -423,22 +423,22 @@ def unitree_g1_flat_tracking_env_cfg_box(
   # cfg.observations["policy"].terms["object_lin_vel_w"] = ObservationTermCfg(
   #   func=mdp.object_lin_vel_w,
   #   noise=Unoise(n_min=-0.25, n_max=0.25),
-  #   params={"asset_cfg": SceneEntityCfg("box")},
+  #   params={"asset_cfg": SceneEntityCfg("object")},
   # )
   # cfg.observations["policy"].terms["object_ang_vel_w"] = ObservationTermCfg(
   #   func=mdp.object_ang_vel_w,
   #   noise=Unoise(n_min=-0.25, n_max=0.25),
-  #   params={"asset_cfg": SceneEntityCfg("box")},
+  #   params={"asset_cfg": SceneEntityCfg("object")},
   # )
   cfg.observations["policy"].terms["object_pos_error"] = ObservationTermCfg(
     func=mdp.object_position_error,
     noise=Unoise(n_min=-0.05, n_max=0.05),
-    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
+    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("object")},
   )
   cfg.observations["policy"].terms["object_ori_error"] = ObservationTermCfg(
     func=mdp.object_orientation_error,
     noise=Unoise(n_min=-0.05, n_max=0.05),
-    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
+    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("object")},
   )
 
   ###
@@ -453,22 +453,22 @@ def unitree_g1_flat_tracking_env_cfg_box(
   cfg.observations["critic"].terms["object_lin_vel_w"] = ObservationTermCfg(
     func=mdp.object_lin_vel_w,
     history_length=10,
-    params={"asset_cfg": SceneEntityCfg("box")},
+    params={"asset_cfg": SceneEntityCfg("object")},
   )
   cfg.observations["critic"].terms["object_ang_vel_w"] = ObservationTermCfg(
     func=mdp.object_ang_vel_w,
     history_length=10,
-    params={"asset_cfg": SceneEntityCfg("box")},
+    params={"asset_cfg": SceneEntityCfg("object")},
   )
   cfg.observations["critic"].terms["object_pos_error"] = ObservationTermCfg(
     func=mdp.object_position_error,
     history_length=10,
-    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
+    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("object")},
   )
   cfg.observations["critic"].terms["object_ori_error"] = ObservationTermCfg(
     func=mdp.object_orientation_error,
     history_length=10,
-    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("box")},
+    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("object")},
   )
   # cfg.observations["critic"].terms["object_contact"] = ObservationTermCfg(
   #   func=mdp.contact_indicator,

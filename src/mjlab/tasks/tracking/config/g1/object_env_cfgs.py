@@ -18,7 +18,7 @@ def unitree_g1_flat_tracking_env_cfg_largebox(
   cfg = unitree_g1_flat_tracking_env_cfg_box(
     has_state_estimation=has_state_estimation, play=play
   )
-  cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_largebox_cfg()}
+  cfg.scene.entities = {"robot": get_g1_robot_cfg(), "object": get_largebox_cfg()}
 
   # cfg.commands["motion"].object_pose_range = {
   #   "x": (0.0, 0.0),
@@ -40,7 +40,7 @@ def unitree_g1_flat_tracking_env_cfg_cylinder(
   cfg = unitree_g1_flat_tracking_env_cfg_box(
     has_state_estimation=has_state_estimation, play=play
   )
-  cfg.scene.entities = {"robot": get_g1_robot_cfg(), "box": get_cylinder_cfg()}
+  cfg.scene.entities = {"robot": get_g1_robot_cfg(), "object": get_cylinder_cfg()}
 
   cfg.rewards.pop("pd_tracking")
   cfg.commands["motion"].object_pose_range = {
