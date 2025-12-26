@@ -9,7 +9,7 @@ wandb_registry:
   artifact_type: "motions"  # Type of artifact to download (default: "motions" to match registry)
 traj_patterns:
   - ".*"
-horizon: 32
+horizon: 100
 stride: 1
 val_split: 0.1
 
