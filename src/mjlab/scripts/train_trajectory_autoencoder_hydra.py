@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 try:
   import wandb  # type: ignore
@@ -39,7 +39,7 @@ from mjlab.models import (
 )
 from mjlab.models.normalization import TrajectoryNormalizer
 from mjlab.models.trajectory_dataset import TrajectoryDataset
-from mjlab.utils.wandb import download_motions_from_wandb
+from mjlab.utils.wandb import download_motions_from_wandb, get_wandb_motion_cache_dir
 
 
 class JittedEncoder(nn.Module):
@@ -509,14 +509,23 @@ def main(cfg: DictConfig) -> None:
       )
     # Type assertions for type checker
     assert isinstance(wandb_entity, str) and isinstance(wandb_project, str)
-    print(f"[INFO] Downloading motions from wandb: {wandb_entity}/{wandb_project}")
+    print(f"[INFO] Getting motion directory from wandb: {wandb_entity}/{wandb_project}")
     motion_dir = str(
-      download_motions_from_wandb(
-        wandb_entity=wandb_entity,
-        wandb_project=wandb_project,
-        artifact_type="motions",
-      )
+      get_wandb_motion_cache_dir(wandb_entity=wandb_entity, wandb_project=wandb_project)
     )
+    # check if motion_dir exists, if not, download motions from wandb
+    if not Path(motion_dir).exists():
+      print(
+        f"[INFO] Motion directory {motion_dir} does not exist, downloading motions from wandb"
+      )
+      motion_dir = str(
+        download_motions_from_wandb(
+          wandb_entity=wandb_entity,
+          wandb_project=wandb_project,
+          artifact_type="motions",
+        )
+      )
+
     print(f"[INFO] Using downloaded motions from: {motion_dir}")
   elif motion_dir is not None:
     # Use local motion directory
@@ -531,7 +540,7 @@ def main(cfg: DictConfig) -> None:
   print(f"Loading dataset from {motion_dir} on {device}...")
   dataset = TrajectoryDataset(
     motion_dir=str(motion_dir),
-    traj_name_patterns=get_cfg("traj_patterns", [".*"]),
+    motion_name_pattern=get_cfg("traj_patterns", [".*"]),
     body_indexes=body_indexes,
     anchor_body_index=anchor_body_index,
     horizon=get_cfg("horizon", 32),
@@ -556,18 +565,16 @@ def main(cfg: DictConfig) -> None:
     normalizer = TrajectoryNormalizer().to(device)
 
     # Collect all training data to compute statistics
-    max_samples_for_stats = min(10000, len(train_dataset))
-    indices = torch.randperm(len(train_dataset))[:max_samples_for_stats]
+    max_samples_for_stats = min(100000, len(train_dataset))
+    indices = torch.randperm(len(train_dataset))[:max_samples_for_stats].tolist()
 
-    samples = []
-    for idx in indices:
-      sample = train_dataset[idx]
-      samples.append(sample)
-
-    all_data = torch.stack(samples)
+    # Use Subset and DataLoader to get all samples in one batch
+    subset = Subset(train_dataset, indices)
+    loader = DataLoader(subset, batch_size=len(indices), shuffle=False)
+    all_data = next(iter(loader))
     normalizer.fit(all_data)
 
-    print(f"Normalization statistics computed from {len(samples)} samples")
+    print(f"Normalization statistics computed from {len(indices)} samples")
     mean_tensor = getattr(normalizer, "mean", None)
     std_tensor = getattr(normalizer, "std", None)
     if mean_tensor is not None and std_tensor is not None:
@@ -795,6 +802,9 @@ def main(cfg: DictConfig) -> None:
       {
         "model/trainable_parameters": trainable_params,
         "model/total_parameters": total_params,
+        "dataset/train_size": len(train_dataset),
+        "dataset/val_size": len(val_dataset),
+        "dataset/total_size": len(dataset),
       }
     )
 

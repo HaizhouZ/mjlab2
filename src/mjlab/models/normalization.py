@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 import torch
 import torch.nn as nn
 
@@ -117,55 +120,59 @@ class TrajectoryNormalizer(nn.Module):
 
     return x * std + mean
 
-  def state_dict(self, *args, **kwargs) -> dict[str, torch.Tensor]:
-    """Get state dict for saving.
+  def state_dict(
+    self,
+    destination: dict[str, Any] | None = None,
+    prefix: str = "",
+    keep_vars: bool = False,
+  ) -> dict[str, Any]:
+    """Get state dict for saving."""
+    # Call parent to get buffers (mean, std) with proper handling of kwargs
+    state_dict = super().state_dict(
+      destination=destination, prefix=prefix, keep_vars=keep_vars
+    )  # type: ignore[arg-type]
 
-    Compatible with PyTorch's standard state_dict() signature.
-    """
-    # Call parent to get standard buffers (mean, std)
-    state = super().state_dict(*args, **kwargs)
+    # Add epsilon to state dict (it's not a buffer, so we add it manually)
+    epsilon_key = prefix + "epsilon"
+    epsilon_value = torch.tensor(self.epsilon)
+    if not keep_vars:
+      epsilon_value = epsilon_value.detach()
 
-    # Add epsilon to the state dict
-    # Handle prefix from kwargs
-    prefix = kwargs.get("prefix", "")
-    if prefix:
-      state[f"{prefix}epsilon"] = torch.tensor(self.epsilon)
+    if destination is not None:
+      destination[epsilon_key] = epsilon_value
+      return destination
     else:
-      state["epsilon"] = torch.tensor(self.epsilon)
-
-    return state
+      state_dict[epsilon_key] = epsilon_value
+      return state_dict
 
   def load_state_dict(
     self,
-    state_dict,
+    state_dict: Mapping[str, Any],
     strict: bool = True,
     assign: bool = False,
-  ):
-    """Load state dict.
-
-    Compatible with PyTorch's standard load_state_dict() signature.
-    Returns _IncompatibleKeys object with missing_keys and unexpected_keys.
-    """
-    # Make a copy to avoid modifying the original
-    state_dict = dict(state_dict)
-
-    # Extract epsilon if present (handle with or without prefix)
+  ) -> Any:
+    """Load state dict."""
+    # Extract epsilon if present (it's not a buffer, so parent won't handle it)
     epsilon_value = None
-    for key in list(state_dict.keys()):
-      if key.endswith(".epsilon") or key == "epsilon":
-        epsilon_value = state_dict.pop(key)
-        break
+    if "epsilon" in state_dict:
+      epsilon_value = state_dict["epsilon"]
+      # Create a new dict without epsilon for parent to process
+      state_dict_without_epsilon = {
+        k: v for k, v in state_dict.items() if k != "epsilon"
+      }
+    else:
+      state_dict_without_epsilon = dict(state_dict)
 
-    # Load standard buffers (mean, std) via parent
-    incompatible_keys = super().load_state_dict(
-      state_dict, strict=strict, assign=assign
+    # Call parent to load buffers (mean, std)
+    result = super().load_state_dict(
+      state_dict_without_epsilon, strict=strict, assign=assign
     )
 
-    # Restore epsilon if it was in the state dict
+    # Load epsilon if present
     if epsilon_value is not None:
       if isinstance(epsilon_value, torch.Tensor):
         self.epsilon = epsilon_value.item()
       else:
         self.epsilon = float(epsilon_value)
 
-    return incompatible_keys
+    return result

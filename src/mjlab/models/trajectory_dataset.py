@@ -23,7 +23,7 @@ class TrajectoryDataset(Dataset):
   def __init__(
     self,
     motion_dir: str,
-    traj_name_patterns: list[str],
+    motion_name_pattern: list[str],
     body_indexes: torch.Tensor,
     anchor_body_index: int,
     horizon: int,
@@ -34,7 +34,7 @@ class TrajectoryDataset(Dataset):
 
     Args:
         motion_dir: Base directory containing trajectory subdirectories
-        traj_name_patterns: List of regex patterns to match trajectory names
+        motion_name_pattern: List of regex patterns to match trajectory names
         body_indexes: Body indices to extract from motion data
         anchor_body_name: Name of the anchor body (e.g., "torso_link")
         body_names: List of body names used in the motion data
@@ -49,10 +49,11 @@ class TrajectoryDataset(Dataset):
     # Load motion data
     self.motion_loader = MultiMotionLoader(
       motion_dir=motion_dir,
-      traj_name_patterns=traj_name_patterns,
+      motion_name_pattern=motion_name_pattern,
       body_indexes=body_indexes,
       device=device,
     )
+    # breakpoint()
     self.anchor_body_index = anchor_body_index
     # Extract all valid trajectory windows
     self.windows: list[tuple[int, int]] = []  # List of (motion_idx, start_timestep)
