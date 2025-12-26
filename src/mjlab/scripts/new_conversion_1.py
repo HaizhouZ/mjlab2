@@ -1,5 +1,7 @@
-"""Convert NPZ motion files (SBTO format) to CSV format."""
+"""Convert NPZ motion files (SBTO or OmniRetarget format) to CSV format."""
 
+import pickle
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -68,28 +70,30 @@ def ease_in_cubic(t):
   return t**3
 
 
-def main(
-  npz_file: str,
-  csv_file: str,
-  duration: float | None = None,
-  pad_duration: float = 0.0,
-  transition_duration: float = 1.0,
-  add_start_transition: bool = False,
-  add_end_transition: bool = False,
-):
-  """Convert NPZ motion file (Victor format) to CSV format.
-
-  Output format: [root_pos(3), quat_xyzw(4), joint_dof(N), joint_pd_targets(N), obj_pos(3), obj_quat_xyzw(4)]
+def process_single_motion(
+  frames: np.ndarray,
+  num_joints: int,
+  fps: float,
+  duration: float | None,
+  pad_duration: float,
+  transition_duration: float,
+  add_start_transition: bool,
+  add_end_transition: bool,
+) -> np.ndarray:
+  """Process a single motion (2D array: num_frames x features).
 
   Args:
-    npz_file: Path to input .npz file (Victor format with base_xyz_quat and actuator_pos).
-    csv_file: Path to output .csv file.
-    duration: Desired duration in seconds. If None, use original duration. Motion will
-      be cycled to reach this duration.
+    frames: Motion frames array of shape (num_frames, features).
+    num_joints: Number of joints.
+    fps: Frames per second.
+    duration: Desired duration in seconds. If None, use original duration.
     pad_duration: Duration in seconds to hold the final pose at the end.
     transition_duration: Duration in seconds to blend to/from safe standing pose.
     add_start_transition: Whether to add transition from safe standing pose to motion start.
     add_end_transition: Whether to add transition from motion end to safe standing pose.
+
+  Returns:
+    Processed frames array of shape (num_frames, features).
   """
   # Hardcoded safe standing pose joints.
   # fmt: off
@@ -106,139 +110,7 @@ def main(
 
   SAFE_Z_HEIGHT = 0.76  # Safe standing height.
 
-  OBJECT_POS_OFFSET = np.array(
-    [0.0, 0.0, 0.0105]
-  )  # from omniretarget largebox mesh (xyz)
-  OBJECT_ROT_OFFSET = np.array(
-    [0.00991298, 0.849052, -0.523456, 0.0707591]
-  )  # from omniretarget largebox mesh (wxyz)
-
-  print(f"Loading {npz_file}...")
-  data = np.load(npz_file, allow_pickle=True)
-  print("[Loader] Detected NPZ format.")
-
-  # SBTO format
-  is_sbto_format = "base_xyz_quat" in data and "actuator_pos" in data
-
-  if not is_sbto_format:
-    raise ValueError(
-      f"Expected SBTO format NPZ file with 'base_xyz_quat' and 'actuator_pos' keys. "
-      f"Found keys: {list(data.keys())}"
-    )
-
-  print("[Loader] Using SBTO format loader.")
-
-  base_xyz_quat = data["base_xyz_quat"].astype(np.float32)
-  actuator_pos = data["actuator_pos"].astype(np.float32)
-  T = base_xyz_quat.shape[0]
-
-  # Object data is required
-  assert "obj_0_xyz_quat" in data, (
-    f"Object data 'obj_0_xyz_quat' is required but not found in NPZ file. "
-    f"Found keys: {list[Any](data.keys())}"
-  )
-  print("[Loader] Object data detected.")
-
-  # Extract time array and infer FPS
-  if "time" in data:
-    times_np = data["time"].astype(np.float32)
-    times_np = np.asarray(times_np, dtype=np.float32).flatten()
-    if T > 1:
-      dt = float(np.mean(np.diff(times_np)))
-      fps = 1.0 / dt if dt > 0 else 100.0
-    else:
-      fps = 100.0
-  else:
-    print("[Loader] Warning: 'time' key not found, assuming 100 FPS (dt=0.01s)")
-    fps = 100.0
-
-  # Extract root position
-  root_pos = base_xyz_quat[:, 0:3]  # (N, 3)
-
-  # Convert quaternion to axis-angle
-  print("[Loader] Converting quaternions to axis-angle...")
-  quats = base_xyz_quat[:, 3:7]  # (N, 4) - [qw, qx, qy, qz]
-  quats = quats[:, [1, 2, 3, 0]]
-  root_rot_axis_angle = []
-  for quat in quats:
-    # Normalize quaternion
-    quat_norm = quat / (np.linalg.norm(quat) + 1e-8)
-    rotation = Rotation.from_quat(quat_norm)
-    rot_vec = rotation.as_rotvec()
-    root_rot_axis_angle.append(rot_vec)
-  root_rot_axis_angle = np.array(root_rot_axis_angle)  # (N, 3)
-
-  # Extract joints
-  joint_dof = actuator_pos  # (N, num_joints)
-  num_joints = joint_dof.shape[1]
-
-  # Extract PD targets from data["u"]
-  assert "u" in data, (
-    f"PD targets 'u' is required but not found in NPZ file. "
-    f"Found keys: {list[Any](data.keys())}"
-  )
-  joint_pd_targets = data["u"].astype(np.float32)  # (N, num_joints)
-  assert joint_pd_targets.shape[1] == num_joints, (
-    f"PD targets shape {joint_pd_targets.shape[1]} does not match number of joints {num_joints}"
-  )
-  # repeat the last frame of PD targets to match shape of joint_dof
-  joint_pd_targets = np.concatenate(
-    [joint_pd_targets, joint_pd_targets[None, -1]], axis=0
-  )
-  print("[Loader] PD targets detected.")
-
-  # Extract object data
-  obj = data["obj_0_xyz_quat"].astype(np.float32)
-  object_pos = obj[:, 0:3]  # (N, 3)
-  object_pos = object_pos - OBJECT_POS_OFFSET
-
-  # Extract object quaternions (in wxyz format from NPZ: [qw, qx, qy, qz])
-  obj_quats_wxyz = obj[:, 3:7]  # (N, 4) - [qw, qx, qy, qz] = wxyz format
-
-  # Apply quaternion offset (OBJECT_ROT_OFFSET is in wxyz format)
-  obj_rot_offset_wxyz = normalize_quat_wxyz(OBJECT_ROT_OFFSET)
-  # Multiply each quaternion with the offset: result = q * offset (same as victor_npz_to_npz.py)
-  obj_quats_wxyz_offset = np.array(
-    [
-      normalize_quat_wxyz(quat_mul_wxyz(obj_quats_wxyz[i], obj_rot_offset_wxyz))
-      for i in range(obj_quats_wxyz.shape[0])
-    ]
-  )
-  print("[Loader] Applying object pos & quaternion offset...")
-
-  # Convert object quaternion to axis-angle
-  print("[Loader] Converting object quaternions to axis-angle...")
-  # Convert from wxyz to xyzw for scipy Rotation
-  obj_quats_xyzw = obj_quats_wxyz_offset[:, [1, 2, 3, 0]]  # Convert wxyz -> xyzw
-
-  object_rot_axis_angle = []
-  for quat in obj_quats_xyzw:
-    # Normalize quaternion
-    quat_norm = quat / (np.linalg.norm(quat) + 1e-8)
-    rotation = Rotation.from_quat(quat_norm)
-    rot_vec = rotation.as_rotvec()
-    object_rot_axis_angle.append(rot_vec)
-  object_rot_axis_angle = np.array(object_rot_axis_angle)  # (N, 3)
-  # Combine into frames format: [root_pos(3), axis_angle(3), joints(num_joints), joint_pd_targets(num_joints), obj_pos(3), obj_axis_angle(3)]
-  frames = np.concatenate(
-    [
-      root_pos,
-      root_rot_axis_angle,
-      joint_dof,
-      joint_pd_targets,
-      object_pos,
-      object_rot_axis_angle,
-    ],
-    axis=1,
-  )
-
   original_duration = frames.shape[0] / fps
-
-  print(f"Loaded motion with shape: {frames.shape}")
-  print(f"FPS: {fps}")
-  print(
-    f"Original duration: {original_duration:.2f} seconds ({frames.shape[0]} frames)"
-  )
 
   # Repeat motion if duration is specified.
   if duration is not None:
@@ -296,11 +168,6 @@ def main(
       # Truncate to exact duration.
       num_frames = int(duration * fps)
       frames = frames[:num_frames]
-
-    print(f"New motion shape: {frames.shape}")
-    print(
-      f"New duration: {frames.shape[0] / fps:.2f} seconds ({frames.shape[0]} frames)"
-    )
 
   # Add transition FROM safe standing pose TO motion start.
   if add_start_transition:
@@ -396,8 +263,6 @@ def main(
 
     start_transition = np.array(start_transition)
     frames = np.vstack([start_transition, frames])
-    print(f"After start transition, motion shape: {frames.shape}")
-    print(f"Total duration so far: {frames.shape[0] / fps:.2f} seconds")
 
   # Add transition TO safe standing pose at the end.
   if add_end_transition:
@@ -493,8 +358,6 @@ def main(
 
     end_transition = np.array(end_transition)
     frames = np.vstack([frames, end_transition])
-    print(f"After end transition, motion shape: {frames.shape}")
-    print(f"Total duration: {frames.shape[0] / fps:.2f} seconds")
 
   # Add padding at the end (hold final pose).
   if pad_duration > 0:
@@ -508,86 +371,814 @@ def main(
     padding = np.tile(final_frame, (pad_frames, 1))
 
     frames = np.vstack([frames, padding])
-    print(f"Padded motion shape: {frames.shape}")
-    print(
-      f"Total duration: {frames.shape[0] / fps:.2f} seconds ({frames.shape[0]} frames)"
-    )
 
-  # Parse the data.
-  root_pos = frames[:, 0:3]  # (N, 3)
-  root_rot_3d = frames[:, 3:6]  # (N, 3) - axis-angle
-  joint_dof = frames[:, 6 : 6 + num_joints]  # (N, num_joints)
-  pd_targets_csv = frames[:, 6 + num_joints : 6 + 2 * num_joints]  # (N, num_joints)
-  # Extract object data
+  return frames
+
+
+def reverse_motion_frames(frames: np.ndarray) -> np.ndarray:
+  """Reverse motion frames along the time dimension.
+
+  Args:
+    frames: Motion frames array of shape (num_frames, features).
+
+  Returns:
+    Reversed frames array of shape (num_frames, features).
+  """
+  # Reverse along the time dimension (axis=0)
+  reversed_frames = np.flip(frames, axis=0)
+  return reversed_frames
+
+
+def transform_to_first_frame_origin(frames: np.ndarray, num_joints: int) -> np.ndarray:
+  """Transform frames so that the robot's first frame starts at (x, y) = 0 and yaw = 0.
+
+  This applies a coordinate frame transformation (not normalization) where:
+  - All positions are translated so the first frame's (x, y) is at origin
+  - All positions and orientations are rotated so the first frame's yaw is 0
+
+  Args:
+    frames: Motion frames array of shape (num_frames, features).
+      Format: [root_pos(3), axis_angle(3), joints(num_joints), joint_pd_targets(num_joints),
+               obj_pos(3), obj_axis_angle(3)]
+    num_joints: Number of joints.
+
+  Returns:
+    Transformed frames array with same shape as input.
+  """
+  if frames.shape[0] == 0:
+    return frames
+
+  # Extract first frame's position and rotation
+  first_frame = frames[0]
+  first_pos = first_frame[0:3]  # (x, y, z)
+  first_rot_axis_angle = first_frame[3:6]  # axis-angle
+
+  # Convert first frame's rotation to euler angles to extract yaw
+  first_rot_obj = Rotation.from_rotvec(first_rot_axis_angle)
+  euler_zyx = first_rot_obj.as_euler("ZYX", degrees=False)
+  first_yaw = euler_zyx[0]  # Extract yaw (rotation around z-axis)
+
+  # Create inverse transformation:
+  # 1. Translation: subtract first frame's (x, y) position
+  # 2. Rotation: rotate by -first_yaw around z-axis
+
+  # Create rotation matrix for -first_yaw around z-axis
+  inverse_yaw_rot = Rotation.from_euler("Z", -first_yaw, degrees=False)
+
+  # Extract components from all frames
+  root_pos = frames[:, 0:3].copy()  # (N, 3)
+  root_rot_axis_angle = frames[:, 3:6].copy()  # (N, 3)
+  joint_dof = frames[:, 6 : 6 + num_joints].copy()  # (N, num_joints)
+  joint_pd_targets = frames[
+    :, 6 + num_joints : 6 + 2 * num_joints
+  ].copy()  # (N, num_joints)
   obj_pos_start_idx = 6 + 2 * num_joints
   obj_pos_end_idx = obj_pos_start_idx + 3
   obj_rot_start_idx = obj_pos_end_idx
   obj_rot_end_idx = obj_rot_start_idx + 3
-  obj_pos_csv = frames[:, obj_pos_start_idx:obj_pos_end_idx]  # (N, 3)
-  obj_rot_3d = frames[:, obj_rot_start_idx:obj_rot_end_idx]  # (N, 3) - axis-angle
+  obj_pos = frames[:, obj_pos_start_idx:obj_pos_end_idx].copy()  # (N, 3)
+  obj_rot_axis_angle = frames[:, obj_rot_start_idx:obj_rot_end_idx].copy()  # (N, 3)
 
-  print(f"\nRoot position: {root_pos.shape}")
-  print(f"Root rotation (axis-angle): {root_rot_3d.shape}")
-  print(f"Joint DOF: {joint_dof.shape}")
-  print(f"PD targets: {pd_targets_csv.shape}")
-  print(f"Object position: {obj_pos_csv.shape}")
-  print(f"Object rotation (axis-angle): {obj_rot_3d.shape}")
+  # Transform root position:
+  # Order: First translate, then rotate around origin
+  # 1. Translate to make first frame position the origin for rotation
+  root_pos[:, 0:2] -= first_pos[0:2]
+  # 2. Rotate by -first_yaw around z-axis (around the translated origin)
+  root_pos = inverse_yaw_rot.apply(root_pos)
 
-  # Convert axis-angle rotation to quaternion (XYZW format).
-  print("\nConverting rotations from axis-angle to quaternions (XYZW)...")
-  quats = []
-  for rot_vec in root_rot_3d:
-    angle = np.linalg.norm(rot_vec)
-    if angle > 1e-6:
-      rotation = Rotation.from_rotvec(rot_vec)
+  # Transform root rotation:
+  # Vectorized: convert all rotations at once, compose, convert back
+  root_rotations = Rotation.from_rotvec(root_rot_axis_angle)  # (N,) Rotation object
+  root_rotations_transformed = (
+    inverse_yaw_rot * root_rotations
+  )  # Vectorized composition
+  root_rot_axis_angle = root_rotations_transformed.as_rotvec()  # (N, 3)
+
+  # Transform object position:
+  # Same transformation as root position (both in world coordinates)
+  # 1. Translate to make first frame position the origin for rotation
+  obj_pos[:, 0:2] -= first_pos[0:2]
+  # 2. Rotate by -first_yaw around z-axis (around the translated origin)
+  obj_pos = inverse_yaw_rot.apply(obj_pos)
+
+  # Transform object rotation:
+  # Vectorized: convert all rotations at once, compose, convert back
+  obj_rotations = Rotation.from_rotvec(obj_rot_axis_angle)  # (N,) Rotation object
+  obj_rotations_transformed = inverse_yaw_rot * obj_rotations  # Vectorized composition
+  obj_rot_axis_angle = obj_rotations_transformed.as_rotvec()  # (N, 3)
+
+  # Reconstruct frames
+  transformed_frames = np.concatenate(
+    [
+      root_pos,
+      root_rot_axis_angle,
+      joint_dof,
+      joint_pd_targets,
+      obj_pos,
+      obj_rot_axis_angle,
+    ],
+    axis=1,
+  )
+
+  return transformed_frames
+
+
+def main(
+  input_file: str,
+  csv_file: str,
+  duration: float | None = None,
+  pad_duration: float = 0.0,
+  transition_duration: float = 1.0,
+  add_start_transition: bool = False,
+  add_end_transition: bool = False,
+  add_reverse: bool = False,
+):
+  """Convert NPZ/PKL motion file (SBTO, OmniRetarget, Ilyass pickle, or Ilyass npz format) to CSV format.
+
+  Output format: [root_pos(3), quat_xyzw(4), joint_dof(N), joint_pd_targets(N), obj_pos(3), obj_quat_xyzw(4)]
+
+  Supports four input formats:
+  - SBTO format: requires 'base_xyz_quat', 'actuator_pos', 'obj_0_xyz_quat', and 'u' keys
+  - OmniRetarget format: requires 'qpos' key with shape (T, 43) or (M, T, 43)
+    - qpos[:, 0:4] = base quat (wxyz)
+    - qpos[:, 4:7] = base pos (xyz)
+    - qpos[:, 7:36] = joint positions (29D)
+    - qpos[:, 36:40] = object quat (wxyz)
+    - qpos[:, 40:43] = object pos (xyz)
+  - Ilyass pickle format: requires 'fps', 'root_pos', 'root_rot', 'dof_pos', 'object_pos', 'object_rot' keys
+    - root_pos: (T, 3) base position
+    - root_rot: (T, 4) base rotation in xyzw format
+    - dof_pos: (T, 29) joint positions
+    - object_pos: (T, 3) object position
+    - object_rot: (T, 4) object rotation in xyzw format
+  - Ilyass npz format: same as Ilyass pickle format but stored in .npz file instead of .pkl
+
+  Supports both single motion (num_frames, ...) and batch of motions (num_motions, num_frames, ...).
+  If input is 3D, output will be saved as NPZ to preserve shape.
+
+  Args:
+    input_file: Path to input .npz or .pkl file (SBTO, OmniRetarget, Ilyass pickle, or Ilyass npz format).
+    csv_file: Path to output .csv file (or .npz if input is 3D).
+    duration: Desired duration in seconds. If None, use original duration. Motion will
+      be cycled to reach this duration.
+    pad_duration: Duration in seconds to hold the final pose at the end.
+    transition_duration: Duration in seconds to blend to/from safe standing pose.
+    add_start_transition: Whether to add transition from safe standing pose to motion start.
+    add_end_transition: Whether to add transition from motion end to safe standing pose.
+    add_reverse: Whether to append the reversed motion trajectory at the end.
+  """
+
+  OBJECT_POS_OFFSET = np.array(
+    [0.0, 0.0, 0.0105]
+  )  # from omniretarget largebox mesh (xyz)
+  OBJECT_ROT_OFFSET = np.array(
+    [0.00991298, 0.849052, -0.523456, 0.0707591]
+  )  # from omniretarget largebox mesh (wxyz)
+
+  print(f"Loading {input_file}...")
+
+  # Detect file format and load accordingly
+  is_pickle_format = Path(input_file).suffix.lower() == ".pkl"
+
+  if is_pickle_format:
+    print("[Loader] Detected pickle format.")
+    with open(input_file, "rb") as f:
+      data = pickle.load(f)
+    # Convert pickle dict to dict-like object compatible with existing code
+    # The pickle format has keys: fps, root_pos, root_rot, dof_pos, object_pos, object_rot
+    if not isinstance(data, dict):
+      raise ValueError(
+        f"Expected pickle file to contain a dictionary, got {type(data)}"
+      )
+  else:
+    data = np.load(input_file, allow_pickle=True)
+    print("[Loader] Detected NPZ format.")
+
+  # Detect format: SBTO, OmniRetarget, Ilyass pickle, or Ilyass npz
+  is_sbto_format = "base_xyz_quat" in data and "actuator_pos" in data
+  is_omniretarget_format = "qpos" in data
+  is_ilyass_pickle_format = (
+    is_pickle_format
+    and "fps" in data
+    and "root_pos" in data
+    and "root_rot" in data
+    and "dof_pos" in data
+    and "object_pos" in data
+    and "object_rot" in data
+  )
+  is_ilyass_npz_format = (
+    not is_pickle_format
+    and "fps" in data
+    and "root_pos" in data
+    and "root_rot" in data
+    and "dof_pos" in data
+    and "object_pos" in data
+    and "object_rot" in data
+  )
+
+  if (
+    not is_sbto_format
+    and not is_omniretarget_format
+    and not is_ilyass_pickle_format
+    and not is_ilyass_npz_format
+  ):
+    raise ValueError(
+      f"Expected SBTO format (with 'base_xyz_quat' and 'actuator_pos' keys), "
+      f"OmniRetarget format (with 'qpos' key), "
+      f"Ilyass pickle format (with 'fps', 'root_pos', 'root_rot', 'dof_pos', 'object_pos', 'object_rot' keys), or "
+      f"Ilyass npz format (with 'fps', 'root_pos', 'root_rot', 'dof_pos', 'object_pos', 'object_rot' keys). "
+      f"Found keys: {list(data.keys())}"
+    )
+
+  # Detect if data is 3D (batch of motions) or 2D (single motion)
+  num_motions = 0  # Initialize for type checking
+  if is_sbto_format:
+    base_xyz_quat = data["base_xyz_quat"].astype(np.float32)
+    is_batch = base_xyz_quat.ndim == 3
+    if is_batch:
+      num_motions, num_frames_per_motion = base_xyz_quat.shape[:2]
+      print(
+        f"[Loader] Detected batch format: {num_motions} motions, {num_frames_per_motion} frames each"
+      )
     else:
-      rotation = Rotation.from_quat([0, 0, 0, 1])
-
-    # Get quaternion in XYZW format.
-    quat_xyzw = rotation.as_quat()  # Returns [x, y, z, w]
-    quats.append(quat_xyzw)
-
-  quats = np.array(quats)  # (N, 4) in XYZW format.
-  print(f"Root quaternions (XYZW): {quats.shape}")
-
-  # Convert object rotations to quaternions
-  print("[Loader] Converting object rotations from axis-angle to quaternions (XYZW)...")
-  obj_quats = []
-  for rot_vec in obj_rot_3d:
-    angle = np.linalg.norm(rot_vec)
-    if angle > 1e-6:
-      rotation = Rotation.from_rotvec(rot_vec)
+      print(f"[Loader] Detected single motion format: {base_xyz_quat.shape[0]} frames")
+  elif is_ilyass_pickle_format or is_ilyass_npz_format:
+    # Ilyass pickle/npz format is always single motion (no batch support)
+    root_pos = np.asarray(data["root_pos"], dtype=np.float32)
+    is_batch = False
+    print(f"[Loader] Detected single motion format: {root_pos.shape[0]} frames")
+  else:  # OmniRetarget
+    qpos_np = data["qpos"].astype(np.float32)
+    is_batch = qpos_np.ndim == 3
+    if is_batch:
+      num_motions, num_frames_per_motion = qpos_np.shape[:2]
+      print(
+        f"[Loader] Detected batch format: {num_motions} motions, {num_frames_per_motion} frames each"
+      )
     else:
-      rotation = Rotation.from_quat([0, 0, 0, 1])
+      print(f"[Loader] Detected single motion format: {qpos_np.shape[0]} frames")
 
-    # Get quaternion in XYZW format.
-    quat_xyzw = rotation.as_quat()  # Returns [x, y, z, w]
-    obj_quats.append(quat_xyzw)
+  def load_single_motion(
+    data: dict[str, Any], motion_idx: int | None = None
+  ) -> tuple[np.ndarray, int, float]:
+    """Load a single motion from data dictionary.
 
-  obj_quats_csv = np.array(obj_quats)  # (N, 4) in XYZW format.
-  print(f"Object quaternions (XYZW): {obj_quats_csv.shape}")
+    Args:
+      data: NPZ data dictionary or pickle data dictionary.
+      motion_idx: Index of motion to load (for batch data). If None, loads single motion.
 
-  # Combine: [root_pos(3), quat_xyzw(4), joint_dof(N), joint_pd_targets(N), obj_pos(3), obj_quat_xyzw(4)].
-  csv_data = np.concatenate(
-    [root_pos, quats, joint_dof, pd_targets_csv, obj_pos_csv, obj_quats_csv], axis=1
-  )
-  print(
-    f"Final CSV shape: {csv_data.shape} (columns: 3 pos + 4 quat_xyzw + {num_joints} joints + {num_joints} joint_pd_targets + 3 obj_pos + 4 obj_quat_xyzw)"
-  )
+    Returns:
+      Tuple of (frames, num_joints, fps) where frames is (num_frames, features).
+    """
+    if is_sbto_format:
+      print("[Loader] Using SBTO format loader.")
+      base_xyz_quat = data["base_xyz_quat"].astype(np.float32)
+      actuator_pos = data["actuator_pos"].astype(np.float32)
 
-  # Save to CSV.
-  print(f"\nSaving to {csv_file}...")
-  np.savetxt(csv_file, csv_data, delimiter=",", fmt="%.8f")
-  print("Done!")
+      if motion_idx is not None:
+        base_xyz_quat = base_xyz_quat[motion_idx]
+        actuator_pos = actuator_pos[motion_idx]
 
-  # Print some stats.
-  print("\nMotion stats:")
-  print(f"  Duration: {csv_data.shape[0] / fps:.2f} seconds")
-  print(f"  Frames: {csv_data.shape[0]}")
-  print(f"  FPS: {fps}")
-  print(
-    "\nOutput format: [x, y, z, qx, qy, qz, qw, joint1, joint2, ..., pd_target1, pd_target2, ..., obj_x, obj_y, obj_z, obj_qx, obj_qy, obj_qz, obj_qw]"
-  )
+      T = base_xyz_quat.shape[0]
+
+      # Object data is required
+      assert "obj_0_xyz_quat" in data, (
+        f"Object data 'obj_0_xyz_quat' is required but not found in NPZ file. "
+        f"Found keys: {list[Any](data.keys())}"
+      )
+      print("[Loader] Object data detected.")
+
+      # Extract time array and infer FPS
+      if "time" in data:
+        times_np = data["time"].astype(np.float32)
+        if motion_idx is not None and times_np.ndim > 1:
+          times_np = times_np[motion_idx]
+        times_np = np.asarray(times_np, dtype=np.float32).flatten()
+        if T > 1:
+          dt = float(np.mean(np.diff(times_np)))
+          fps = 1.0 / dt if dt > 0 else 100.0
+        else:
+          fps = 100.0
+      else:
+        print("[Loader] Warning: 'time' key not found, assuming 100 FPS (dt=0.01s)")
+        fps = 100.0
+
+      # Extract root position
+      root_pos = base_xyz_quat[:, 0:3]  # (N, 3)
+
+      # Convert quaternion to axis-angle
+      print("[Loader] Converting quaternions to axis-angle...")
+      quats = base_xyz_quat[:, 3:7]  # (N, 4) - [qw, qx, qy, qz]
+      quats = quats[:, [1, 2, 3, 0]]
+      root_rot_axis_angle = []
+      for quat in quats:
+        # Normalize quaternion
+        quat_norm = quat / (np.linalg.norm(quat) + 1e-8)
+        rotation = Rotation.from_quat(quat_norm)
+        rot_vec = rotation.as_rotvec()
+        root_rot_axis_angle.append(rot_vec)
+      root_rot_axis_angle = np.array(root_rot_axis_angle)  # (N, 3)
+
+      # Extract joints
+      joint_dof = actuator_pos  # (N, num_joints)
+      num_joints = joint_dof.shape[1]
+
+      # Extract PD targets from data["u"]
+      assert "u" in data, (
+        f"PD targets 'u' is required but not found in NPZ file. "
+        f"Found keys: {list[Any](data.keys())}"
+      )
+      joint_pd_targets = data["u"].astype(
+        np.float32
+      )  # (N, num_joints) or (M, N, num_joints)
+      if motion_idx is not None:
+        joint_pd_targets = joint_pd_targets[motion_idx]
+      assert joint_pd_targets.shape[1] == num_joints, (
+        f"PD targets shape {joint_pd_targets.shape[1]} does not match number of joints {num_joints}"
+      )
+      # repeat the last frame of PD targets to match shape of joint_dof
+      joint_pd_targets = np.concatenate(
+        [joint_pd_targets, joint_pd_targets[None, -1]], axis=0
+      )
+      print("[Loader] PD targets detected.")
+
+      # Extract object data
+      obj = data["obj_0_xyz_quat"].astype(np.float32)
+      if motion_idx is not None:
+        obj = obj[motion_idx]
+      object_pos = obj[:, 0:3]  # (N, 3)
+      object_pos = object_pos - OBJECT_POS_OFFSET
+
+      # Extract object quaternions (in wxyz format from NPZ: [qw, qx, qy, qz])
+      obj_quats_wxyz = obj[:, 3:7]  # (N, 4) - [qw, qx, qy, qz] = wxyz format
+
+      # Apply quaternion offset (OBJECT_ROT_OFFSET is in wxyz format)
+      obj_rot_offset_wxyz = normalize_quat_wxyz(OBJECT_ROT_OFFSET)
+      # Multiply each quaternion with the offset: result = q * offset (same as victor_npz_to_npz.py)
+      obj_quats_wxyz_offset = np.array(
+        [
+          normalize_quat_wxyz(quat_mul_wxyz(obj_quats_wxyz[i], obj_rot_offset_wxyz))
+          for i in range(obj_quats_wxyz.shape[0])
+        ]
+      )
+      print("[Loader] Applying object pos & quaternion offset...")
+
+      # Convert object quaternion to axis-angle
+      print("[Loader] Converting object quaternions to axis-angle...")
+      # Convert from wxyz to xyzw for scipy Rotation
+      obj_quats_xyzw = obj_quats_wxyz_offset[:, [1, 2, 3, 0]]  # Convert wxyz -> xyzw
+
+      object_rot_axis_angle = []
+      for quat in obj_quats_xyzw:
+        # Normalize quaternion
+        quat_norm = quat / (np.linalg.norm(quat) + 1e-8)
+        rotation = Rotation.from_quat(quat_norm)
+        rot_vec = rotation.as_rotvec()
+        object_rot_axis_angle.append(rot_vec)
+      object_rot_axis_angle = np.array(object_rot_axis_angle)  # (N, 3)
+
+    elif is_omniretarget_format:
+      print("[Loader] Using OmniRetarget format loader.")
+      qpos_np = data["qpos"].astype(np.float32)  # (T, 43) or (M, T, 43)
+
+      if motion_idx is not None:
+        qpos_np = qpos_np[motion_idx]
+
+      T = qpos_np.shape[0]
+
+      # Get fps if available, otherwise default to 30 fps
+      if "fps" in data:
+        fps = (
+          int(data["fps"][0])
+          if isinstance(data["fps"], np.ndarray)
+          else int(data["fps"])
+        )
+      else:
+        fps = 30
+        print(f"[Loader] Warning: 'fps' not found, defaulting to {fps} fps")
+
+      # Extract base pose: qpos[:, 0:7] = [qw, qx, qy, qz, x, y, z]
+      base_quats_wxyz = qpos_np[:, 0:4]  # (T, 4) - wxyz format
+      root_pos = qpos_np[:, 4:7]  # (T, 3)
+
+      # Normalize base quaternions
+      base_quats_wxyz = np.array([normalize_quat_wxyz(q) for q in base_quats_wxyz])
+
+      # Convert base quaternion to axis-angle
+      print("[Loader] Converting base quaternions to axis-angle...")
+      # Convert from wxyz to xyzw for scipy Rotation
+      base_quats_xyzw = base_quats_wxyz[:, [1, 2, 3, 0]]  # Convert wxyz -> xyzw
+      root_rot_axis_angle = []
+      for quat in base_quats_xyzw:
+        # Normalize quaternion
+        quat_norm = quat / (np.linalg.norm(quat) + 1e-8)
+        rotation = Rotation.from_quat(quat_norm)
+        rot_vec = rotation.as_rotvec()
+        root_rot_axis_angle.append(rot_vec)
+      root_rot_axis_angle = np.array(root_rot_axis_angle)  # (T, 3)
+
+      # Extract joint positions: qpos[:, 7:36] (29D)
+      joint_dof = qpos_np[:, 7:36]  # (T, 29)
+      num_joints = joint_dof.shape[1]
+
+      # OmniRetarget format doesn't have PD targets, set to zero
+      joint_pd_targets = np.zeros_like(joint_dof)
+      print("[Loader] PD targets not found in OmniRetarget format, setting to zero.")
+
+      # Extract object pose: qpos[:, 36:43] = [qw, qx, qy, qz, x, y, z]
+      obj_quats_wxyz = qpos_np[:, 36:40]  # (T, 4) - wxyz format
+      object_pos = qpos_np[:, 40:43]  # (T, 3)
+
+      # Normalize object quaternions
+      obj_quats_wxyz = np.array([normalize_quat_wxyz(q) for q in obj_quats_wxyz])
+
+      # Apply object position offset
+      object_pos = object_pos - OBJECT_POS_OFFSET
+
+      # Apply quaternion offset (OBJECT_ROT_OFFSET is in wxyz format)
+      obj_rot_offset_wxyz = normalize_quat_wxyz(OBJECT_ROT_OFFSET)
+      # Multiply each quaternion with the offset: result = q * offset
+      obj_quats_wxyz_offset = np.array(
+        [
+          normalize_quat_wxyz(quat_mul_wxyz(obj_quats_wxyz[i], obj_rot_offset_wxyz))
+          for i in range(obj_quats_wxyz.shape[0])
+        ]
+      )
+      print("[Loader] Applying object pos & quaternion offset...")
+
+      # Convert object quaternion to axis-angle
+      print("[Loader] Converting object quaternions to axis-angle...")
+      # Convert from wxyz to xyzw for scipy Rotation
+      obj_quats_xyzw = obj_quats_wxyz_offset[:, [1, 2, 3, 0]]  # Convert wxyz -> xyzw
+
+      object_rot_axis_angle = []
+      for quat in obj_quats_xyzw:
+        # Normalize quaternion
+        quat_norm = quat / (np.linalg.norm(quat) + 1e-8)
+        rotation = Rotation.from_quat(quat_norm)
+        rot_vec = rotation.as_rotvec()
+        object_rot_axis_angle.append(rot_vec)
+      object_rot_axis_angle = np.array(object_rot_axis_angle)  # (T, 3)
+
+    elif is_ilyass_pickle_format or is_ilyass_npz_format:
+      format_name = "Ilyass pickle" if is_ilyass_pickle_format else "Ilyass npz"
+      print(f"[Loader] Using {format_name} format loader.")
+      # Use zero offsets for Ilyass pickle/npz format
+      # ilyass_obj_pos_offset = np.array([0.0, 0.0, 0.0])
+      # ilyass_obj_rot_offset = np.array([1.0, 0.0, 0.0, 0.0])
+
+      # Extract data from pickle/npz format
+      root_pos = np.asarray(data["root_pos"], dtype=np.float32)  # (T, 3)
+      root_rot_wxyz = np.asarray(
+        data["root_rot"], dtype=np.float32
+      )  # (T, 4) in xyzw format
+      root_rot_xyzw = root_rot_wxyz[:, [1, 2, 3, 0]]
+      dof_pos = np.asarray(data["dof_pos"], dtype=np.float32)  # (T, 29)
+      obj_pos = np.asarray(data["object_pos"], dtype=np.float32)  # (T, 3)
+      obj_rot_wxyz = np.asarray(
+        data["object_rot"], dtype=np.float32
+      )  # (T, 4) in xyzw format
+      obj_rot_xyzw = obj_rot_wxyz[:, [1, 2, 3, 0]]
+      fps = (
+        int(data["fps"][0]) if isinstance(data["fps"], np.ndarray) else int(data["fps"])
+      )
+
+      T = root_pos.shape[0]
+
+      # Convert root rotation from xyzw to wxyz format
+      root_rot_wxyz = root_rot_xyzw[:, [3, 0, 1, 2]]  # Convert xyzw -> wxyz
+      # Normalize quaternions
+      root_rot_wxyz = np.array([normalize_quat_wxyz(q) for q in root_rot_wxyz])
+
+      # Convert root quaternion to axis-angle
+      print("[Loader] Converting root quaternions to axis-angle...")
+      root_quats_xyzw = root_rot_wxyz[:, [1, 2, 3, 0]]  # Convert wxyz -> xyzw for scipy
+      root_rot_axis_angle = []
+      for quat in root_quats_xyzw:
+        quat_norm = quat / (np.linalg.norm(quat) + 1e-8)
+        rotation = Rotation.from_quat(quat_norm)
+        rot_vec = rotation.as_rotvec()
+        root_rot_axis_angle.append(rot_vec)
+      root_rot_axis_angle = np.array(root_rot_axis_angle)  # (T, 3)
+
+      # Extract joints
+      joint_dof = dof_pos  # (T, num_joints)
+      num_joints = joint_dof.shape[1]
+
+      # Ilyass pickle/npz format doesn't have PD targets, set to zero
+      joint_pd_targets = np.zeros_like(joint_dof)
+      print(f"[Loader] PD targets not found in {format_name} format, setting to zero.")
+
+      # Convert object rotation from xyzw to wxyz format
+      obj_rot_wxyz = obj_rot_xyzw[:, [3, 0, 1, 2]]  # Convert xyzw -> wxyz
+      # Normalize quaternions
+      obj_rot_wxyz = np.array([normalize_quat_wxyz(q) for q in obj_rot_wxyz])
+
+      # Apply object position offset
+      object_pos = obj_pos - OBJECT_POS_OFFSET
+
+      # Apply quaternion offset (ilyass_obj_rot_offset is in wxyz format)
+      obj_rot_offset_wxyz = normalize_quat_wxyz(OBJECT_ROT_OFFSET)
+      # Multiply each quaternion with the offset: result = q * offset
+      obj_rot_wxyz_offset = np.array(
+        [
+          normalize_quat_wxyz(quat_mul_wxyz(obj_rot_wxyz[i], obj_rot_offset_wxyz))
+          for i in range(obj_rot_wxyz.shape[0])
+        ]
+      )
+      print("[Loader] Applying object pos & quaternion offset...")
+
+      # Convert object quaternion to axis-angle
+      print("[Loader] Converting object quaternions to axis-angle...")
+      obj_quats_xyzw = obj_rot_wxyz_offset[
+        :, [1, 2, 3, 0]
+      ]  # Convert wxyz -> xyzw for scipy
+      object_rot_axis_angle = []
+      for quat in obj_quats_xyzw:
+        quat_norm = quat / (np.linalg.norm(quat) + 1e-8)
+        rotation = Rotation.from_quat(quat_norm)
+        rot_vec = rotation.as_rotvec()
+        object_rot_axis_angle.append(rot_vec)
+      object_rot_axis_angle = np.array(object_rot_axis_angle)  # (T, 3)
+
+    else:
+      raise ValueError(
+        "Unsupported format. Expected SBTO, OmniRetarget, Ilyass pickle, or Ilyass npz format."
+      )
+
+    # Combine into frames format: [root_pos(3), axis_angle(3), joints(num_joints), joint_pd_targets(num_joints), obj_pos(3), obj_axis_angle(3)]
+    frames = np.concatenate(
+      [
+        root_pos,
+        root_rot_axis_angle,
+        joint_dof,
+        joint_pd_targets,
+        object_pos,
+        object_rot_axis_angle,
+      ],
+      axis=1,
+    )
+
+    return frames, num_joints, fps
+
+  # Load and process motions
+  if is_batch:
+    print(f"\nProcessing {num_motions} motions...")
+    all_processed_frames = []
+    num_joints: int = 0  # Initialize for type checking
+    fps: float = 0.0  # Initialize for type checking
+
+    for motion_idx in range(num_motions):
+      print(f"\n--- Processing motion {motion_idx + 1}/{num_motions} ---")
+      frames, num_joints, fps = load_single_motion(data, motion_idx)
+
+      original_duration = frames.shape[0] / fps
+      print(f"Loaded motion with shape: {frames.shape}")
+      print(f"FPS: {fps}")
+      print(
+        f"Original duration: {original_duration:.2f} seconds ({frames.shape[0]} frames)"
+      )
+
+      # Apply frame transformation: first frame at (x, y) = 0, yaw = 0
+      print(
+        "\nApplying frame transformation to set first frame at origin (x, y) = 0, yaw = 0..."
+      )
+      frames = transform_to_first_frame_origin(frames, num_joints)
+
+      # Process the motion (duration, transitions, padding)
+      processed_frames = process_single_motion(
+        frames,
+        num_joints,
+        fps,
+        duration,
+        pad_duration,
+        transition_duration,
+        add_start_transition,
+        add_end_transition,
+      )
+
+      # Append reversed trajectory if requested
+      if add_reverse:
+        print(
+          f"\nAppending reversed trajectory for motion {motion_idx + 1}/{num_motions}..."
+        )
+        reversed_frames = reverse_motion_frames(processed_frames)
+        processed_frames = np.vstack([processed_frames, reversed_frames])
+        print(
+          f"  Original: {processed_frames.shape[0] - reversed_frames.shape[0]} frames"
+        )
+        print(f"  Reversed: {reversed_frames.shape[0]} frames")
+        print(f"  Total: {processed_frames.shape[0]} frames")
+
+      all_processed_frames.append(processed_frames)
+
+    # Stack all motions back into 3D array
+    frames = np.stack(
+      all_processed_frames, axis=0
+    )  # (num_motions, num_frames, features)
+    print(f"\nFinal batch shape: {frames.shape}")
+  else:
+    # Single motion case
+    frames, num_joints, fps = load_single_motion(data, None)
+
+    original_duration = frames.shape[0] / fps
+    print(f"Loaded motion with shape: {frames.shape}")
+    print(f"FPS: {fps}")
+    print(
+      f"Original duration: {original_duration:.2f} seconds ({frames.shape[0]} frames)"
+    )
+
+    # Apply frame transformation: first frame at (x, y) = 0, yaw = 0
+    print(
+      "\nApplying frame transformation to set first frame at origin (x, y) = 0, yaw = 0..."
+    )
+    frames = transform_to_first_frame_origin(frames, num_joints)
+    print("Frame transformation applied.")
+
+    # Process the motion (duration, transitions, padding)
+    frames = process_single_motion(
+      frames,
+      num_joints,
+      fps,
+      duration,
+      pad_duration,
+      transition_duration,
+      add_start_transition,
+      add_end_transition,
+    )
+
+    # Append reversed trajectory if requested
+    if add_reverse:
+      print("\nAppending reversed trajectory...")
+      original_frames = frames.shape[0]
+      reversed_frames = reverse_motion_frames(frames)
+      frames = np.vstack([frames, reversed_frames])
+      print(f"  Original: {original_frames} frames")
+      print(f"  Reversed: {reversed_frames.shape[0]} frames")
+      print(f"  Total: {frames.shape[0]} frames")
+
+    print(f"Final motion shape: {frames.shape}")
+
+  # Convert axis-angle to quaternions and save
+  if is_batch:
+    # Process each motion in the batch
+    print("\nConverting rotations from axis-angle to quaternions (XYZW)...")
+    all_csv_data = []
+
+    # Ensure num_joints is set (it should be from the processing loop above)
+    assert num_joints > 0, "num_joints must be set before processing batch"
+
+    for motion_idx in range(frames.shape[0]):
+      motion_frames = frames[motion_idx]  # (num_frames, features)
+
+      # Parse the data.
+      root_pos = motion_frames[:, 0:3]  # (N, 3)
+      root_rot_3d = motion_frames[:, 3:6]  # (N, 3) - axis-angle
+      joint_dof = motion_frames[:, 6 : 6 + num_joints]  # (N, num_joints)
+      pd_targets_csv = motion_frames[
+        :, 6 + num_joints : 6 + 2 * num_joints
+      ]  # (N, num_joints)
+      # Extract object data
+      obj_pos_start_idx = 6 + 2 * num_joints
+      obj_pos_end_idx = obj_pos_start_idx + 3
+      obj_rot_start_idx = obj_pos_end_idx
+      obj_rot_end_idx = obj_rot_start_idx + 3
+      obj_pos_csv = motion_frames[:, obj_pos_start_idx:obj_pos_end_idx]  # (N, 3)
+      obj_rot_3d = motion_frames[
+        :, obj_rot_start_idx:obj_rot_end_idx
+      ]  # (N, 3) - axis-angle
+
+      # Convert axis-angle rotation to quaternion (XYZW format).
+      quats = []
+      for rot_vec in root_rot_3d:
+        angle = np.linalg.norm(rot_vec)
+        if angle > 1e-6:
+          rotation = Rotation.from_rotvec(rot_vec)
+        else:
+          rotation = Rotation.from_quat([0, 0, 0, 1])
+        quat_xyzw = rotation.as_quat()  # Returns [x, y, z, w]
+        quats.append(quat_xyzw)
+      quats = np.array(quats)  # (N, 4) in XYZW format.
+
+      # Convert object rotations to quaternions
+      obj_quats = []
+      for rot_vec in obj_rot_3d:
+        angle = np.linalg.norm(rot_vec)
+        if angle > 1e-6:
+          rotation = Rotation.from_rotvec(rot_vec)
+        else:
+          rotation = Rotation.from_quat([0, 0, 0, 1])
+        quat_xyzw = rotation.as_quat()  # Returns [x, y, z, w]
+        obj_quats.append(quat_xyzw)
+      obj_quats_csv = np.array(obj_quats)  # (N, 4) in XYZW format.
+
+      # Combine: [root_pos(3), quat_xyzw(4), joint_dof(N), joint_pd_targets(N), obj_pos(3), obj_quat_xyzw(4)].
+      csv_data = np.concatenate(
+        [root_pos, quats, joint_dof, pd_targets_csv, obj_pos_csv, obj_quats_csv], axis=1
+      )
+      all_csv_data.append(csv_data)
+
+    # Stack back to 3D: (num_motions, num_frames, features)
+    csv_data = np.stack(all_csv_data, axis=0)
+    print(f"Final batch CSV shape: {csv_data.shape}")
+
+    # Save as NPZ to preserve 3D shape
+    output_file = (
+      csv_file if csv_file.endswith(".npz") else csv_file.replace(".csv", ".npz")
+    )
+    print(f"\nSaving to {output_file} (NPZ format to preserve 3D shape)...")
+    np.savez(output_file, motion_data=csv_data)
+    print("Done!")
+
+    # Print some stats.
+    print("\nMotion stats:")
+    print(f"  Number of motions: {csv_data.shape[0]}")
+    print(f"  Frames per motion: {csv_data.shape[1]}")
+    print(f"  Features per frame: {csv_data.shape[2]}")
+    print(f"  Duration per motion: {csv_data.shape[1] / fps:.2f} seconds")
+    print(f"  FPS: {fps}")
+    print(
+      "\nOutput format: [x, y, z, qx, qy, qz, qw, joint1, joint2, ..., pd_target1, pd_target2, ..., obj_x, obj_y, obj_z, obj_qx, obj_qy, obj_qz, obj_qw]"
+    )
+  else:
+    # Single motion case
+    # Parse the data.
+    root_pos = frames[:, 0:3]  # (N, 3)
+    root_rot_3d = frames[:, 3:6]  # (N, 3) - axis-angle
+    joint_dof = frames[:, 6 : 6 + num_joints]  # (N, num_joints)
+    pd_targets_csv = frames[:, 6 + num_joints : 6 + 2 * num_joints]  # (N, num_joints)
+    # Extract object data
+    obj_pos_start_idx = 6 + 2 * num_joints
+    obj_pos_end_idx = obj_pos_start_idx + 3
+    obj_rot_start_idx = obj_pos_end_idx
+    obj_rot_end_idx = obj_rot_start_idx + 3
+    obj_pos_csv = frames[:, obj_pos_start_idx:obj_pos_end_idx]  # (N, 3)
+    obj_rot_3d = frames[:, obj_rot_start_idx:obj_rot_end_idx]  # (N, 3) - axis-angle
+
+    print(f"\nRoot position: {root_pos.shape}")
+    print(f"Root rotation (axis-angle): {root_rot_3d.shape}")
+    print(f"Joint DOF: {joint_dof.shape}")
+    print(f"PD targets: {pd_targets_csv.shape}")
+    print(f"Object position: {obj_pos_csv.shape}")
+    print(f"Object rotation (axis-angle): {obj_rot_3d.shape}")
+
+    # Convert axis-angle rotation to quaternion (XYZW format).
+    print("\nConverting rotations from axis-angle to quaternions (XYZW)...")
+    quats = []
+    for rot_vec in root_rot_3d:
+      angle = np.linalg.norm(rot_vec)
+      if angle > 1e-6:
+        rotation = Rotation.from_rotvec(rot_vec)
+      else:
+        rotation = Rotation.from_quat([0, 0, 0, 1])
+
+      # Get quaternion in XYZW format.
+      quat_xyzw = rotation.as_quat()  # Returns [x, y, z, w]
+      quats.append(quat_xyzw)
+
+    quats = np.array(quats)  # (N, 4) in XYZW format.
+    print(f"Root quaternions (XYZW): {quats.shape}")
+
+    # Convert object rotations to quaternions
+    print(
+      "[Loader] Converting object rotations from axis-angle to quaternions (XYZW)..."
+    )
+    obj_quats = []
+    for rot_vec in obj_rot_3d:
+      angle = np.linalg.norm(rot_vec)
+      if angle > 1e-6:
+        rotation = Rotation.from_rotvec(rot_vec)
+      else:
+        rotation = Rotation.from_quat([0, 0, 0, 1])
+
+      # Get quaternion in XYZW format.
+      quat_xyzw = rotation.as_quat()  # Returns [x, y, z, w]
+      obj_quats.append(quat_xyzw)
+
+    obj_quats_csv = np.array(obj_quats)  # (N, 4) in XYZW format.
+    print(f"Object quaternions (XYZW): {obj_quats_csv.shape}")
+
+    # Combine: [root_pos(3), quat_xyzw(4), joint_dof(N), joint_pd_targets(N), obj_pos(3), obj_quat_xyzw(4)].
+    csv_data = np.concatenate(
+      [root_pos, quats, joint_dof, pd_targets_csv, obj_pos_csv, obj_quats_csv], axis=1
+    )
+    print(
+      f"Final CSV shape: {csv_data.shape} (columns: 3 pos + 4 quat_xyzw + {num_joints} joints + {num_joints} joint_pd_targets + 3 obj_pos + 4 obj_quat_xyzw)"
+    )
+
+    # Save to CSV.
+    print(f"\nSaving to {csv_file}...")
+    np.savetxt(csv_file, csv_data, delimiter=",", fmt="%.8f")
+    print("Done!")
+
+    # Print some stats.
+    print("\nMotion stats:")
+    print(f"  Duration: {csv_data.shape[0] / fps:.2f} seconds")
+    print(f"  Frames: {csv_data.shape[0]}")
+    print(f"  FPS: {fps}")
+    print(
+      "\nOutput format: [x, y, z, qx, qy, qz, qw, joint1, joint2, ..., pd_target1, pd_target2, ..., obj_x, obj_y, obj_z, obj_qx, obj_qy, obj_qz, obj_qw]"
+    )
 
 
 if __name__ == "__main__":
