@@ -2023,13 +2023,15 @@ class MultiMotionCommand(CommandTerm):
       self.joint_vel - self.robot_joint_vel, dim=-1
     )
 
-    # joint_pos_action_term = self._env.action_manager.get_term("joint_pos")
-    # if hasattr(joint_pos_action_term, "_processed_actions"):
-    #   applied_pd_actions = joint_pos_action_term._processed_actions  # type: ignore[attr-defined]
-    #   # Compute sum of squared errors
-    #   self.metrics["sbto_pd_deviation"] = torch.norm(
-    #     self.joint_pd_targets - applied_pd_actions, dim=-1
-    #   )
+    joint_pos_action_term = self._env.action_manager.get_term("joint_pos")
+    applied_pd_actions = joint_pos_action_term._processed_actions  # type: ignore[attr-defined]
+    # Compute sum of squared errors
+    if self.joint_pd_targets is not None:
+      self.metrics["sbto_pd_deviation"] = torch.norm(
+        self.joint_pd_targets - applied_pd_actions, dim=-1
+      )
+    else:
+      self.metrics["sbto_pd_deviation"] = torch.zeros(self.num_envs, device=self.device)
 
     if self._has_object:
       try:
