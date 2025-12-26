@@ -134,9 +134,9 @@ def object_global_position_error_exp(
     object_asset_cfg: SceneEntityCfg identifying the object entity (e.g., "object").
   """
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
-  box: Entity = env.scene[object_asset_cfg.name]
+  object: Entity = env.scene[object_asset_cfg.name]
   target_pos = command.object_pos_w  # (N, 3)
-  current_pos = box.data.body_link_pos_w[:, 0]  # (N, 3) root body
+  current_pos = object.data.body_link_pos_w[:, 0]  # (N, 3) root body
   error = torch.sum(torch.square(target_pos - current_pos), dim=-1)
   # breakpoint()
   return torch.exp(-error / (std**2))
@@ -150,9 +150,9 @@ def object_global_orientation_error_exp(
 ) -> torch.Tensor:
   """Tracks object world orientation using quaternion error magnitude."""
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
-  box: Entity = env.scene[object_asset_cfg.name]
+  object: Entity = env.scene[object_asset_cfg.name]
   target_quat = command.object_quat_w  # (N, 4)
-  current_quat = box.data.body_link_quat_w[:, 0]  # (N, 4)
+  current_quat = object.data.body_link_quat_w[:, 0]  # (N, 4)
   error = quat_error_magnitude(target_quat, current_quat) ** 2
   return torch.exp(-error / (std**2))
 
@@ -176,7 +176,7 @@ def object_relative_position_error_exp(
     std: Standard deviation for the exponential reward.
   """
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
-  box: Entity = env.scene[object_asset_cfg.name]
+  object: Entity = env.scene[object_asset_cfg.name]
 
   # Target relative position: vector from anchor to object in reference motion
   target_anchor_pos = command.anchor_pos_w  # (N, 3)
@@ -185,7 +185,7 @@ def object_relative_position_error_exp(
 
   # Current relative position: vector from robot anchor to current object
   current_anchor_pos = command.robot_anchor_pos_w  # (N, 3)
-  current_object_pos = box.data.body_link_pos_w[:, 0]  # (N, 3)
+  current_object_pos = object.data.body_link_pos_w[:, 0]  # (N, 3)
   current_relative_pos = current_object_pos - current_anchor_pos  # (N, 3)
 
   # Compute squared error
@@ -212,7 +212,7 @@ def object_relative_orientation_error_exp(
     std: Standard deviation for the exponential reward.
   """
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
-  box: Entity = env.scene[object_asset_cfg.name]
+  object: Entity = env.scene[object_asset_cfg.name]
 
   # Target relative orientation: from anchor to object in reference motion
   target_anchor_pos = command.anchor_pos_w  # (N, 3)
@@ -226,8 +226,8 @@ def object_relative_orientation_error_exp(
   # Current relative orientation: from robot anchor to current object
   current_anchor_pos = command.robot_anchor_pos_w  # (N, 3)
   current_anchor_quat = command.robot_anchor_quat_w  # (N, 4)
-  current_object_pos = box.data.body_link_pos_w[:, 0]  # (N, 3)
-  current_object_quat = box.data.body_link_quat_w[:, 0]  # (N, 4)
+  current_object_pos = object.data.body_link_pos_w[:, 0]  # (N, 3)
+  current_object_quat = object.data.body_link_quat_w[:, 0]  # (N, 4)
   _, current_relative_quat = subtract_frame_transforms(
     current_anchor_pos, current_anchor_quat, current_object_pos, current_object_quat
   )  # (N, 4)
@@ -244,14 +244,19 @@ def object_global_linear_velocity_error_exp(
   std: float,
 ) -> torch.Tensor:
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
-  box: Entity = env.scene[object_asset_cfg.name]
+  object: Entity = env.scene[object_asset_cfg.name]
   target_lin_vel = command.object_lin_vel_w  # (N, 3) | None
-  current_lin_vel = box.data.body_link_lin_vel_w[:, 0]  # (N, 3) root body
+  current_lin_vel = object.data.body_link_lin_vel_w[:, 0]  # (N, 3) root body
   if target_lin_vel is None:
     return torch.zeros(env.num_envs, device=env.device)
-  # Only apply reward if target velocity is nonzero
+
+  # Only apply reward if velocity is nonzero
   target_vel_magnitude = torch.norm(target_lin_vel, dim=-1)  # (N,)
-  is_nonzero = target_vel_magnitude > 0.05
+  current_vel_magnitude = torch.norm(current_lin_vel, dim=-1)  # (N,)
+
+  is_nonzero = torch.logical_and(
+    target_vel_magnitude > 0.05, current_vel_magnitude > 0.05
+  )
   error = torch.sum(torch.square(target_lin_vel - current_lin_vel), dim=-1)
   reward = torch.exp(-error / (std**2))
   # Return reward only when target velocity is nonzero, otherwise return 0.0
@@ -265,14 +270,18 @@ def object_global_angular_velocity_error_exp(
   std: float,
 ) -> torch.Tensor:
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
-  box: Entity = env.scene[object_asset_cfg.name]
+  object: Entity = env.scene[object_asset_cfg.name]
   target_ang_vel = command.object_ang_vel_w  # (N, 3) | None
-  current_ang_vel = box.data.body_link_ang_vel_w[:, 0]  # (N, 3) root body
+  current_ang_vel = object.data.body_link_ang_vel_w[:, 0]  # (N, 3) root body
   if target_ang_vel is None:
     return torch.zeros(env.num_envs, device=env.device)
   # Only apply reward if target velocity is nonzero
   target_vel_magnitude = torch.norm(target_ang_vel, dim=-1)  # (N,)
-  is_nonzero = target_vel_magnitude > 0.05
+  current_vel_magnitude = torch.norm(current_ang_vel, dim=-1)  # (N,)
+
+  is_nonzero = torch.logical_and(
+    target_vel_magnitude > 0.05, current_vel_magnitude > 0.05
+  )
   error = torch.sum(torch.square(target_ang_vel - current_ang_vel), dim=-1)
   reward = torch.exp(-error / (std**2))
   # Return reward only when target velocity is nonzero, otherwise return 0.0

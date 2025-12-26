@@ -106,11 +106,20 @@ def unitree_g1_flat_tracking_env_cfg(
     cfg.episode_length_s = int(1e9)
 
     cfg.observations["policy"].enable_corruption = False
-    cfg.events.pop("push_robot", None)
+    # cfg.events.pop("push_robot", None)
+    # cfg.events.pop("base_com", None)
+    # cfg.events.pop("add_joint_default_pos", None)
+    # cfg.events.pop("foot_friction", None)
+    # cfg.commands["motion"].joint_position_range = (-0.0, 0.0)
 
-    # Disable RSI randomization.
-    motion_cmd.pose_range = {}
-    motion_cmd.velocity_range = {}
+    # cfg.terminations["base_ang_vel_exceed"] = None
+    # cfg.terminations["ee_body_pos"] = None
+    # cfg.terminations["anchor_pos"] = None
+    # cfg.terminations["anchor_ori"] = None
+
+    # # Disable RSI randomization.
+    # motion_cmd.pose_range = {}
+    # motion_cmd.velocity_range = {}
 
     motion_cmd.sampling_mode = "start"
 
@@ -147,8 +156,8 @@ def unitree_g1_flat_tracking_env_cfg_box(
     ),
     secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="object"),
     fields=("found", "force", "pos"),
-    reduce="maxforce",
-    num_slots=3,
+    reduce="none",
+    num_slots=1,
   )
 
   right_eef_contact_sensor = ContactSensorCfg(
@@ -158,8 +167,8 @@ def unitree_g1_flat_tracking_env_cfg_box(
     ),
     secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="object"),
     fields=("found", "force", "pos"),
-    reduce="maxforce",
-    num_slots=3,
+    reduce="none",
+    num_slots=1,
   )
 
   left_foot_contact_sensor = ContactSensorCfg(
@@ -169,8 +178,8 @@ def unitree_g1_flat_tracking_env_cfg_box(
     ),
     secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="object"),
     fields=("found", "force", "pos"),
-    reduce="maxforce",
-    num_slots=3,
+    reduce="none",
+    num_slots=1,
   )
 
   right_foot_contact_sensor = ContactSensorCfg(
@@ -180,8 +189,8 @@ def unitree_g1_flat_tracking_env_cfg_box(
     ),
     secondary=ContactMatch(mode="geom", pattern="largebox_geom", entity="object"),
     fields=("found", "force", "pos"),
-    reduce="maxforce",
-    num_slots=3,
+    reduce="none",
+    num_slots=1,
   )
 
   cfg.scene.sensors = (
@@ -202,6 +211,23 @@ def unitree_g1_flat_tracking_env_cfg_box(
     "left_ankle_roll_link",
     "right_ankle_roll_link",
   )
+  # Object pose and velocity range for RSI
+  motion_cmd.object_pose_range = {
+    "x": (0.0, 0.2),
+    "y": (-0.1, 0.1),
+    "z": (0.0, 0.0),
+    "roll": (0.0, 0.0),
+    "pitch": (0.0, 0.0),
+    "yaw": (-0.3, 0.3),
+  }
+  motion_cmd.object_velocity_range = {
+    "x": (-0.5, 0.5),
+    "y": (-0.5, 0.5),
+    "z": (-0.5, 0.5),
+    "roll": (-0.5, 0.5),
+    "pitch": (-0.5, 0.5),
+    "yaw": (-0.5, 0.5),
+  }
 
   ###
   # Motion Tracking Joint Position Action
@@ -218,7 +244,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   ###
   cfg.rewards["contact_match"] = RewardTermCfg(
     func=mdp.eef_contact_indicator_match,
-    weight=2.0,
+    weight=1.25,
     params={
       "command_name": "motion",
       "eef_body_names": motion_cmd.eef_body_names,
@@ -228,7 +254,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
         "left_foot_contact",
         "right_foot_contact",
       ],
-      "force_threshold": 150.0,
+      "force_threshold": 40.0,
       "force_penalty_std": 10.0,
     },
   )
@@ -261,7 +287,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
   )
   cfg.rewards["object_global_ori"] = RewardTermCfg(
     func=mdp.object_global_orientation_error_exp,
-    weight=0.8,
+    weight=1.0,
     params={
       "command_name": "motion",
       "object_asset_cfg": SceneEntityCfg("object"),
@@ -305,7 +331,22 @@ def unitree_g1_flat_tracking_env_cfg_box(
     func=mdp.base_ang_vel_exceed,
     params={"threshold": _MAX_ANG_VEL},
   )
-
+  # # # Add termination for object pose deviation exceeding thresholds from reference
+  # cfg.terminations["bad_object_pose"] = TerminationTermCfg(
+  #   func=mdp.bad_object_pose,
+  #   params={
+  #     "command_name": "motion",
+  #     "asset_cfg": SceneEntityCfg("object"),
+  #     "threshold": {
+  #       "roll": math.pi / 2.5,  # 72 degrees
+  #       "pitch": math.pi / 2.5,  # 72 degrees
+  #       "yaw": None,
+  #       "pos_x": 1.0,
+  #       "pos_y": 1.0,
+  #       "pos_z": 0.3,
+  #     },
+  #   },
+  # )
   # cfg.terminations["object_pos_z"] = TerminationTermCfg(
   #   func=mdp.object_pos_z,
   #   params={
@@ -492,29 +533,14 @@ def unitree_g1_flat_tracking_env_cfg_box(
   if play:
     # Effectively infinite episode length.
     cfg.episode_length_s = int(1e9)
-
     cfg.observations["policy"].enable_corruption = False
+    # cfg.events.pop("push_robot", None)
+    # cfg.events.pop("push_object", None)
+    # motion_cmd.pose_range = {}
+    # motion_cmd.velocity_range = {}
+    # motion_cmd.object_pose_range = {}
+    # motion_cmd.object_velocity_range = {}
 
-    cfg.events.pop("push_robot", None)
-    cfg.events.pop("push_object", None)
-    cfg.events.pop("base_com", None)
-    cfg.events.pop("add_joint_default_pos", None)
-    cfg.events.pop("foot_friction", None)
-
-    cfg.commands["motion"].joint_position_range = (-0.0, 0.0)
-
-    # Disable RSI randomization.
-    cfg.commands["motion"].pose_range = {}
-    cfg.commands["motion"].velocity_range = {}
-    # cfg.terminations["base_ang_vel_exceed"] = None
-    # cfg.terminations["ee_body_pos"] = None
-    # cfg.terminations["anchor_pos"] = None
-    # cfg.terminations["anchor_ori"] = None
-
-    # Disable RSI randomization.
-    motion_cmd.pose_range = {}
-    motion_cmd.velocity_range = {}
-
-    motion_cmd.sampling_mode = "start"
+    # cfg.events.pop("push_object", None)
 
   return cfg

@@ -45,11 +45,11 @@ for motion_path in "$MOTION_DIR"/*; do
     CSV_FILE="$MOTION_OUTPUT_DIR/motion.csv"
     
     # Path to best_trajectory.npz
-    npz_file="$motion_path/best_trajectory.npz"
+    pkl_file="$motion_path/num_samples-1500_elites_percentage-0.05_sigma_start-0.3_sigma_min-0.05_explore_fraction-0.4_plan_horizon-0.8_num_knots-5_iterations-3/repeat_1/final_trajectory0.npz"
     
     # Check if best_trajectory.npz exists
-    if [ ! -f "$npz_file" ]; then
-        echo "Warning: '$npz_file' not found, skipping motion '$motion_name'"
+    if [ ! -f "$pkl_file" ]; then
+        echo "Warning: '$pkl_file' not found, skipping motion '$motion_name'"
         continue
     fi
     
@@ -60,7 +60,7 @@ for motion_path in "$MOTION_DIR"/*; do
     # Step 1: Run new_conversion_1.py
     echo "Step 1: Converting NPZ to CSV..."
     if ! uv run python -m mjlab.scripts.new_conversion_1 \
-        --npz-file "$npz_file" \
+        --input-file "$pkl_file" \
         --csv-file "$CSV_FILE" \
         --add-start-transition \
         --add-end-transition \
@@ -75,9 +75,10 @@ for motion_path in "$MOTION_DIR"/*; do
     echo "Step 2: Converting CSV to NPZ..."
     if ! uv run python -m mjlab.scripts.new_conversion_2 \
         --input-file "$CSV_FILE" \
-        --project-name sbto_v1 \
+        --task-name Mjlab-Tracking-Flat-Unitree-G1-LargeBox-No-State-Estimation \
+        --project-name sbmpc-v1-motions \
         --render \
-        --output-fps 50.0; then
+        --output-fps 50.0 --input-fps 100; then
         echo "Error: Conversion 2 failed for motion '$motion_name'"
         FAILED_MOTIONS+=("$motion_name")
         continue

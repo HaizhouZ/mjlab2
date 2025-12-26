@@ -150,6 +150,7 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
         "yaw": (-0.2, 0.2),
       },
       object_pose_range={},
+      object_velocity_range={},
       velocity_range=VELOCITY_RANGE,
       joint_position_range=(-0.1, 0.1),
       # Override in robot cfg.

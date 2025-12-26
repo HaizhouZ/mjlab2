@@ -291,28 +291,57 @@ class MultiMotionLoader:
     # Load all motions
     self.motions: list[MotionLoader] = []
     self.traj_names: list[str] = []
+    motion_file_summary: list[
+      tuple[str, int]
+    ] = []  # (motion_file_name, num_trajectories)
     for traj_dir, motion_file in traj_dirs:
       try:
         # Load motions from file (handles both single and multi-motion files)
         motions_from_file = self._load_motions_from_file(
           str(motion_file), body_indexes, device=device
         )
-        for i, motion in enumerate(motions_from_file):
+        for i, motion in enumerate[MotionLoader](motions_from_file):
           self.motions.append(motion)
           # For multi-motion files, append index to trajectory name
           if len(motions_from_file) > 1:
             self.traj_names.append(f"{traj_dir.name}_{i}")
           else:
             self.traj_names.append(traj_dir.name)
+        motion_file_summary.append((traj_dir.name, len(motions_from_file)))
       except Exception as e:
         print(f"Warning: Failed to load motion from {motion_file}: {e}")
         continue
+
+    # Print summary of loaded motions
+    print(
+      f"[INFO] Loaded {len(motion_file_summary)} motion file(s) with {len(self.motions)} total trajectory(ies)"
+    )
+    for motion_file_name, num_trajectories in motion_file_summary:
+      print(
+        f"[INFO]   Motion file '{motion_file_name}': {num_trajectories} trajectory(ies)"
+      )
 
     if not self.motions:
       raise ValueError(f"No valid motions loaded from {motion_dir}")
     self.num_motions = len(self.motions)
     self.device = device
     self._body_indexes = body_indexes
+
+    # Store number of trajectories per motion file and starting indices
+    # This is used to select the first (best) trajectory for each motion file
+    self.motion_file_trajectory_counts = [
+      num_trajectories for _, num_trajectories in motion_file_summary
+    ]
+    # Calculate starting indices: cumulative sum of trajectory counts
+    # e.g., if counts are [3, 2, 5], start_indices are [0, 3, 5]
+    start_idx = 0
+    self.motion_file_start_indices = []
+    for num_trajectories in self.motion_file_trajectory_counts:
+      self.motion_file_start_indices.append(start_idx)
+      start_idx += num_trajectories
+    self.motion_file_start_indices = torch.tensor(
+      self.motion_file_start_indices, dtype=torch.long, device=device
+    )
 
     # Store max time steps for each motion
     self.time_step_totals = torch.tensor(
@@ -809,6 +838,7 @@ class MotionCommand(CommandTerm):
     self._ghost_color = np.array(cfg.viz.ghost_color, dtype=np.float32)
 
     # Object tracking metrics - only if object exists in motion data
+    self.object: Entity | None = self._env.scene.entities.get("object")
     self._has_object = hasattr(self.motion, "_object_pos_w")
     if self._has_object:
       self.metrics["error_object_pos"] = torch.zeros(self.num_envs, device=self.device)
@@ -1056,42 +1086,18 @@ class MotionCommand(CommandTerm):
     self.metrics["sbto_pd_deviation"] = torch.norm(
       self.joint_pd_targets - applied_pd_actions, dim=-1
     )
-    if self._has_object:
-      # Get actual object pose from simulation
-      try:
-        box = self._env.scene.entities.get("object")  # type: ignore[attr-defined]
-        if box is not None:
-          # Desired object pose from motion data
-          desired_pos = self.object_pos_w  # (N, 3)
-          desired_quat = self.object_quat_w  # (N, 4)
+    if self.object is not None:
+      # Desired object pose from motion data
+      desired_pos = self.object_pos_w  # (N, 3)
+      desired_quat = self.object_quat_w  # (N, 4)
 
-          # Actual object pose from simulation
-          actual_pos = box.data.body_link_pos_w[:, 0]  # (N, 3) root body
-          actual_quat = box.data.body_link_quat_w[:, 0]  # (N, 4) root body
+      # Actual object pose from simulation
+      actual_pos = self.object.data.body_link_pos_w[:, 0]  # (N, 3) root body
+      actual_quat = self.object.data.body_link_quat_w[:, 0]  # (N, 4) root body
 
-          # Compute tracking errors
-          self.metrics["error_object_pos"] = torch.norm(
-            desired_pos - actual_pos, dim=-1
-          )
-          self.metrics["error_object_rot"] = quat_error_magnitude(
-            desired_quat, actual_quat
-          )
-        else:
-          # Box entity doesn't exist, set metrics to zero
-          self.metrics["error_object_pos"] = torch.zeros(
-            self.num_envs, device=self.device
-          )
-          self.metrics["error_object_rot"] = torch.zeros(
-            self.num_envs, device=self.device
-          )
-      except Exception:
-        # If anything goes wrong, set metrics to zero
-        self.metrics["error_object_pos"] = torch.zeros(
-          self.num_envs, device=self.device
-        )
-        self.metrics["error_object_rot"] = torch.zeros(
-          self.num_envs, device=self.device
-        )
+      # Compute tracking errors
+      self.metrics["error_object_pos"] = torch.norm(desired_pos - actual_pos, dim=-1)
+      self.metrics["error_object_rot"] = quat_error_magnitude(desired_quat, actual_quat)
 
   def _adaptive_sampling(self, env_ids: torch.Tensor):
     episode_failed = self._env.termination_manager.terminated[env_ids]
@@ -1208,62 +1214,71 @@ class MotionCommand(CommandTerm):
       ],
       dim=-1,
     )
+    self.robot.write_root_state_to_sim(root_state, env_ids=env_ids)
+    self.robot.clear_state(env_ids=env_ids)
 
-    try:
-      box = self._env.scene.entities.get("object")  # type: ignore[attr-defined]
-    except Exception:
-      box = None
+    # RSI for object
+    if self.object is not None and not self.object.data.is_fixed_base:
+      object_pos = self.object_pos_w[env_ids]
+      object_quat = self.object_quat_w[env_ids]
+      object_lin_vel = self.object_lin_vel_w[env_ids]
+      object_ang_vel = self.object_ang_vel_w[env_ids]
 
-    range_list = [
-      self.cfg.object_pose_range.get(key, (0.0, 0.0))
-      for key in ["x", "y", "z", "roll", "pitch", "yaw"]
-    ]
-    ranges = torch.tensor(range_list, device=self.device)
-    rand_samples = sample_uniform(
-      ranges[:, 0], ranges[:, 1], (len(env_ids), 6), device=self.device
-    )
+      transition_phase = self.time_steps[env_ids] < 50
 
-    if box is not None and not box.data.is_fixed_base:
-      # Pose from motion object state (already includes per-env origin offset via object_pos_w)
-      box_pos = self.object_pos_w[env_ids]
-      box_quat = self.object_quat_w[env_ids]
-      box_pos += rand_samples[:, 0:3]
-      box_quat = quat_mul(
-        quat_from_euler_xyz(rand_samples[:, 3], rand_samples[:, 4], rand_samples[:, 5]),
-        box_quat,
-      )
+      if transition_phase.any():
+        range_list = [
+          self.cfg.object_pose_range.get(key, (0.0, 0.0))
+          for key in ["x", "y", "z", "roll", "pitch", "yaw"]
+        ]
+        object_pose_ranges = torch.tensor(range_list, device=self.device)
+        rand_samples = sample_uniform(
+          object_pose_ranges[:, 0],
+          object_pose_ranges[:, 1],
+          (len(env_ids), 6),
+          device=self.device,
+        )
+        # Pose from motion object state (already includes per-env origin offset via object_pos_w)
 
-      box_lin_vel = (
-        self.object_lin_vel_w[env_ids]
-        if self.object_lin_vel_w is not None
-        else torch.zeros(len(env_ids), 3, device=self.device)
-      )
-      box_ang_vel = (
-        self.object_ang_vel_w[env_ids]
-        if self.object_ang_vel_w is not None
-        else torch.zeros(len(env_ids), 3, device=self.device)
-      )
+        object_pos[transition_phase] += rand_samples[transition_phase, 0:3]
+        object_quat[transition_phase] = quat_mul(
+          quat_from_euler_xyz(
+            rand_samples[transition_phase, 3],
+            rand_samples[transition_phase, 4],
+            rand_samples[transition_phase, 5],
+          ),
+          object_quat[transition_phase],
+        )
+      if (~transition_phase).any():
+        range_list = [
+          self.cfg.object_velocity_range.get(key, (0.0, 0.0))
+          for key in ["x", "y", "z", "roll", "pitch", "yaw"]
+        ]
+        object_velocity_ranges = torch.tensor(range_list, device=self.device)
+        rand_samples = sample_uniform(
+          object_velocity_ranges[:, 0],
+          object_velocity_ranges[:, 1],
+          (len(env_ids), 6),
+          device=self.device,
+        )
+        object_lin_vel[~transition_phase] += rand_samples[~transition_phase, :3]
+        object_ang_vel[~transition_phase] += rand_samples[~transition_phase, 3:]
 
-      box_state = torch.cat(
+      object_state = torch.cat(
         [
-          box_pos,
-          box_quat,
-          box_lin_vel,
-          box_ang_vel,
+          object_pos,
+          object_quat,
+          object_lin_vel,
+          object_ang_vel,
         ],
         dim=-1,
       )
 
-      box.write_root_state_to_sim(box_state, env_ids=env_ids)
+      self.object.write_root_state_to_sim(object_state, env_ids=env_ids)
+      self.object.clear_state(env_ids=env_ids)
 
-    self.robot.write_root_state_to_sim(root_state, env_ids=env_ids)
-
-    self.robot.clear_state(env_ids=env_ids)
-    if box is not None:
-      box.clear_state(env_ids=env_ids)
-
-    # Reset contact mismatch counter
-    self.contact_mismatch_count[env_ids] = 0
+      # Reset contact mismatch counter
+      self.contact_mismatch_count[env_ids] = 0
 
   def _update_command(self):
     self.time_steps += 1
@@ -1391,13 +1406,12 @@ class MotionCommand(CommandTerm):
       )
       qpos[joint_q_adr] = self.joint_pos[visualizer.env_idx].cpu().numpy()
 
-      box = self._env.scene.entities.get("object")
-      if box is not None:
-        box_free_joint_q_adr = box.indexing.free_joint_q_adr.cpu().numpy()
+      if self.object is not None:
+        object_free_joint_q_adr = self.object.indexing.free_joint_q_adr.cpu().numpy()
         target_pos = self.object_pos_w[visualizer.env_idx].cpu().numpy()
         target_quat = self.object_quat_w[visualizer.env_idx].cpu().numpy()
-        qpos[box_free_joint_q_adr[:3]] = target_pos
-        qpos[box_free_joint_q_adr[3:7]] = target_quat
+        qpos[object_free_joint_q_adr[:3]] = target_pos
+        qpos[object_free_joint_q_adr[3:7]] = target_quat
 
       visualizer.add_ghost_mesh(qpos, model=self._ghost_model)
 
@@ -1458,6 +1472,7 @@ class MotionCommandCfg(CommandTermCfg):
   pose_range: dict[str, tuple[float, float]] = field(default_factory=dict)
   object_pose_range: dict[str, tuple[float, float]] = field(default_factory=dict)
   velocity_range: dict[str, tuple[float, float]] = field(default_factory=dict)
+  object_velocity_range: dict[str, tuple[float, float]] = field(default_factory=dict)
   joint_position_range: tuple[float, float] = (-0.52, 0.52)
   adaptive_kernel_size: int = 1
   adaptive_lambda: float = 0.8
@@ -1485,6 +1500,7 @@ class MultiMotionCommand(CommandTerm):
     super().__init__(cfg, env)
 
     self.robot: Entity = env.scene[cfg.asset_name]
+    self.object: Entity | None = env.scene.entities.get("object")  # type: ignore[attr-defined]
     self.robot_anchor_body_index = self.robot.body_names.index(
       self.cfg.anchor_body_name
     )
@@ -1571,10 +1587,15 @@ class MultiMotionCommand(CommandTerm):
         torch.arange(self.num_envs, device=self.device) % self.motion_loader.num_motions
       )
     elif self.cfg.motion_assignment_mode == "best":
-      # motion index 0 has the least cost from SBTO
-      self.motion_indices = torch.zeros(
-        self.num_envs, dtype=torch.long, device=self.device
+      # Use the first trajectory (index 0) of each motion file
+      # Distribute across environments, wrapping around if needed
+      num_motion_files = len(self.motion_loader.motion_file_start_indices)
+      motion_file_indices = (
+        torch.arange(self.num_envs, device=self.device) % num_motion_files
       )
+      self.motion_indices = self.motion_loader.motion_file_start_indices[
+        motion_file_indices
+      ]
     else:  # "random" (default)
       # Randomly assign motions to each environment
       self.motion_indices = torch.randint(
@@ -2012,12 +2033,12 @@ class MultiMotionCommand(CommandTerm):
 
     if self._has_object:
       try:
-        box = self._env.scene.entities.get("object")  # type: ignore[attr-defined]
-        if box is not None:
+        object: Entity | None = self._env.scene.entities.get("object")  # type: ignore[attr-defined]
+        if object is not None:
           desired_pos = self.object_pos_w
           desired_quat = self.object_quat_w
-          actual_pos = box.data.body_link_pos_w[:, 0]
-          actual_quat = box.data.body_link_quat_w[:, 0]
+          actual_pos = object.data.body_link_pos_w[:, 0]
+          actual_quat = object.data.body_link_quat_w[:, 0]
           self.metrics["error_object_pos"] = torch.norm(
             desired_pos - actual_pos, dim=-1
           )
@@ -2233,41 +2254,41 @@ class MultiMotionCommand(CommandTerm):
     )
 
     try:
-      box = self._env.scene.entities.get("object")  # type: ignore[attr-defined]
+      object: Entity | None = self._env.scene.entities.get("object")  # type: ignore[attr-defined]
     except Exception:
-      box = None
+      object: Entity | None = None
 
-    if box is not None and not box.data.is_fixed_base:
-      box_pos = self.object_pos_w[env_ids]
-      box_quat = self.object_quat_w[env_ids]
-      box_lin_vel = (
+    if object is not None and not object.data.is_fixed_base:
+      object_pos = self.object_pos_w[env_ids]
+      object_quat = self.object_quat_w[env_ids]
+      object_lin_vel = (
         self.object_lin_vel_w[env_ids]
         if self.object_lin_vel_w is not None
         else torch.zeros(len(env_ids), 3, device=self.device)
       )
-      box_ang_vel = (
+      object_ang_vel = (
         self.object_ang_vel_w[env_ids]
         if self.object_ang_vel_w is not None
         else torch.zeros(len(env_ids), 3, device=self.device)
       )
 
-      box_state = torch.cat(
+      object_state = torch.cat(
         [
-          box_pos,
-          box_quat,
-          box_lin_vel,
-          box_ang_vel,
+          object_pos,
+          object_quat,
+          object_lin_vel,
+          object_ang_vel,
         ],
         dim=-1,
       )
 
-      box.write_root_state_to_sim(box_state, env_ids=env_ids)
+      object.write_root_state_to_sim(object_state, env_ids=env_ids)
 
     self.robot.write_root_state_to_sim(root_state, env_ids=env_ids)
 
     self.robot.clear_state(env_ids=env_ids)
-    if box is not None:
-      box.clear_state(env_ids=env_ids)
+    if object is not None:
+      object.clear_state(env_ids=env_ids)
 
     # Reset contact mismatch counter
     self.contact_mismatch_count[env_ids] = 0
@@ -2397,13 +2418,13 @@ class MultiMotionCommand(CommandTerm):
       )
       qpos[joint_q_adr] = self.joint_pos[visualizer.env_idx].cpu().numpy()
 
-      box = self._env.scene.entities.get("object")
-      if box is not None:
-        box_free_joint_q_adr = box.indexing.free_joint_q_adr.cpu().numpy()
+      object: Entity | None = self._env.scene.entities.get("object")
+      if object is not None:
+        object_free_joint_q_adr = object.indexing.free_joint_q_adr.cpu().numpy()
         target_pos = self.object_pos_w[visualizer.env_idx].cpu().numpy()
         target_quat = self.object_quat_w[visualizer.env_idx].cpu().numpy()
-        qpos[box_free_joint_q_adr[:3]] = target_pos
-        qpos[box_free_joint_q_adr[3:7]] = target_quat
+        qpos[object_free_joint_q_adr[:3]] = target_pos
+        qpos[object_free_joint_q_adr[3:7]] = target_quat
 
       visualizer.add_ghost_mesh(qpos, model=self._ghost_model)
 

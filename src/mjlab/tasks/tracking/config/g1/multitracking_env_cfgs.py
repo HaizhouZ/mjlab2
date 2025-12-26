@@ -18,7 +18,7 @@ def unitree_g1_flat_multitracking_env_cfg_box(
   has_state_estimation: bool = True,
   play: bool = False,
 ) -> ManagerBasedRlEnvCfg:
-  """Create Unitree G1 flat terrain tracking configuration with a box."""
+  """Create Unitree G1 flat terrain multi-tracking configuration with a box and multiple motion trajectories."""
   cfg = unitree_g1_flat_tracking_env_cfg_box(
     has_state_estimation=has_state_estimation, play=play
   )
@@ -67,9 +67,9 @@ def unitree_g1_flat_multitracking_env_cfg_box(
       "right_ankle_roll_link",
     ),
     # motion_dir=str(motions_dir),
-    encoder_dir="logs/trajectory_autoencoder/unet_simple/2025-12-17/14-04-49/best_model.jit",
+    encoder_dir="logs/trajectory_autoencoder/unet_simple/2025-12-25/17-35-56/best_model.jit",
     wandb_entity="ATARITUM",
-    wandb_project="sbto_v1",
+    wandb_project="sbto-v2-top",
     motion_name_pattern=[".*"],
     debug_vis=True,
     resampling_time_range=(1e9, 1e9),
@@ -88,7 +88,7 @@ def unitree_g1_flat_multitracking_env_cfg_largebox(
   has_state_estimation: bool = True,
   play: bool = False,
 ) -> ManagerBasedRlEnvCfg:
-  """Create Unitree G1 flat terrain multi-tracking configuration with a large box."""
+  """Create Unitree G1 flat terrain multi-tracking configuration with a large box and multiple motion trajectories."""
   cfg = unitree_g1_flat_multitracking_env_cfg_box(
     has_state_estimation=has_state_estimation, play=play
   )
@@ -101,7 +101,7 @@ def unitree_g1_flat_multitracking_encoding_env_cfg_box(
   has_state_estimation: bool = True,
   play: bool = False,
 ) -> ManagerBasedRlEnvCfg:
-  """Create Unitree G1 flat terrain multi-tracking configuration with a box and encoding."""
+  """Create Unitree G1 flat terrain multi-tracking configuration with a box and trajectory horizon encoding."""
   cfg = unitree_g1_flat_multitracking_env_cfg_box(
     has_state_estimation=has_state_estimation, play=play
   )

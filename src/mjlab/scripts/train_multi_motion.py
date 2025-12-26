@@ -52,7 +52,7 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import tyro
 import wandb
@@ -61,6 +61,7 @@ from rsl_rl.runners import OnPolicyRunner
 from mjlab.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
 from mjlab.rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
 from mjlab.tasks.registry import load_env_cfg, load_rl_cfg, load_runner_cls
+from mjlab.tasks.tracking.mdp import MotionCommandCfg, MultiMotionCommandCfg
 from mjlab.utils.gpu import select_gpus
 from mjlab.utils.os import dump_yaml, get_checkpoint_path, get_wandb_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
@@ -168,7 +169,20 @@ def run_train_single_motion_from_registry(
   # assert isinstance(motion_cmd, MotionCommandCfg), (
   #   f"Task {task_id} must use MotionCommandCfg, not MultiMotionCommandCfg"
   # )
-  motion_cmd.motion_file = motion_file_path
+  # breakpoint()
+  # Extract motion name from different sources
+  if registry_name:
+    # Extract from registry name (e.g., "entity/project/motion_name:latest" -> "motion_name")
+    registry_name = cast(str, registry_name)
+    if ":" not in registry_name:
+      registry_name = registry_name + ":latest"
+    motion_name = registry_name.split("/")[-1].split(":")[0]
+    agent_cfg.run_name = motion_name
+  if isinstance(motion_cmd, MotionCommandCfg):
+    motion_cmd.motion_file = motion_file_path
+  elif isinstance(motion_cmd, MultiMotionCommandCfg):
+    motion_cmd.motion_dir = str(Path(motion_file_path).parent.parent)
+    motion_cmd.motion_name_pattern = [motion_name]
 
   print(f"[INFO] Using motion file from wandb: {motion_file_path}")
   print(f"[INFO] Registry name: {registry_name_with_alias}")

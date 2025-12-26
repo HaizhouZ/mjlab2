@@ -250,12 +250,12 @@ def object_pos_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
 
 
 def object_lin_vel_w(env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
-  object = env.scene[asset_cfg.name]
+  object: Entity = env.scene[asset_cfg.name]
   return object.data.body_link_lin_vel_w[:, 0].view(env.num_envs, -1)
 
 
 def object_ang_vel_w(env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
-  object = env.scene[asset_cfg.name]
+  object: Entity = env.scene[asset_cfg.name]
   return object.data.body_link_ang_vel_w[:, 0].view(env.num_envs, -1)
 
 
@@ -264,7 +264,7 @@ def object_position_error(
 ) -> torch.Tensor:
   """Compute the error between actual and desired object position.
 
-  This is crucial for box pushing - the robot needs to know how far the box
+  This is crucial for object pushing - the robot needs to know how far the object
   is from where it should be to learn to push it correctly.
   """
 
@@ -273,7 +273,7 @@ def object_position_error(
     raise TypeError(
       f"Expected MotionCommand or MultiMotionCommand, got {type(command)}"
     )
-  box: Entity = env.scene[asset_cfg.name]
+  object: Entity = env.scene[asset_cfg.name]
 
   horizon = 1
 
@@ -284,7 +284,7 @@ def object_position_error(
     desired_pos = command.object_pos_w  # (num_envs, 3)
 
   # Actual object position from simulation
-  actual_pos = box.data.body_link_pos_w[:, 0]  # (num_envs, 3)
+  actual_pos = object.data.body_link_pos_w[:, 0]  # (num_envs, 3)
 
   # Expand actual_pos to match desired_pos shape dynamically
   if desired_pos.ndim == 3:
@@ -307,7 +307,7 @@ def object_orientation_error(
     raise TypeError(
       f"Expected MotionCommand or MultiMotionCommand, got {type(command)}"
     )
-  box: Entity = env.scene[asset_cfg.name]
+  object: Entity = env.scene[asset_cfg.name]
 
   horizon = 1
 
@@ -320,8 +320,8 @@ def object_orientation_error(
     object_quat = command.object_quat_w  # (num_envs, 4)
 
   # Actual object pose from simulation
-  actual_pos = box.data.body_link_pos_w[:, 0]  # (num_envs, 3)
-  actual_quat = box.data.body_link_quat_w[:, 0]  # (num_envs, 4)
+  actual_pos = object.data.body_link_pos_w[:, 0]  # (num_envs, 3)
+  actual_quat = object.data.body_link_quat_w[:, 0]  # (num_envs, 4)
 
   # Expand actual pose to match motion data shape dynamically
   if object_pos.ndim == 3:
