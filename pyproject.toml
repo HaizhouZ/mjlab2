@@ -51,6 +51,8 @@ dependencies = [
     "omegaconf>=2.3.0",
     "matplotlib>=3.10.8",
     "vector-quantize-pytorch>=1.27.15",
+    "scikit-learn>=1.7.2",
+    "pyqt5>=5.15.11",
 ]
 
 [project.urls]
