@@ -481,10 +481,11 @@ def main(cfg: DictConfig) -> None:
   )
   robot_cfg = get_g1_robot_cfg()
   robot = Entity(robot_cfg)
+  # body_indexes should be on CPU since dataset loads on CPU
   body_indexes = torch.tensor(
     robot.find_bodies(body_names, preserve_order=True)[0],
     dtype=torch.long,
-    device=device,
+    device="cpu",
   )
   # anchor_body_index should be the index within body_names (motion body names), not robot.body_names
   anchor_body_name = get_cfg("anchor_body_name", "torso_link")
