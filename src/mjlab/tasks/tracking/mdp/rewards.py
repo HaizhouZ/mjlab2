@@ -539,3 +539,40 @@ def pd_tracking_error_exp(
   error = (motion_pd_targets - applied_pd_actions).abs().clamp_min(0.0).mean(dim=1)
 
   return torch.exp(-error / (std**2))
+
+
+def feet_slip(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  asset_cfg: SceneEntityCfg,
+  velocity_threshold: float = 0.01,
+) -> torch.Tensor:
+  """Penalize foot sliding (horizontal velocity while in contact with ground).
+
+  This function penalizes horizontal (xy) foot velocity when feet are in contact
+  with the ground. The penalty is proportional to the squared horizontal velocity
+  magnitude, encouraging the robot to minimize foot sliding during contact.
+
+  Args:
+    env: The RL environment.
+    sensor_name: Name of the contact sensor (e.g., "feet_ground_contact").
+    asset_cfg: SceneEntityCfg identifying the robot entity and foot body names.
+    velocity_threshold: Minimum horizontal velocity to consider as sliding (default: 0.01 m/s).
+
+  Returns:
+    Penalty tensor of shape (num_envs,) where higher values indicate more sliding.
+  """
+  robot: Entity = env.scene[asset_cfg.name]
+  contact_sensor: ContactSensor = env.scene[sensor_name]
+
+  in_contact = contact_sensor.data.found > 0  # (num_envs,)
+  foot_vel_xy = robot.data.site_lin_vel_w[
+    :, asset_cfg.site_ids, :2
+  ]  # (num_envs, num_feet, 3)
+
+  vel_xy_norm = torch.norm(foot_vel_xy, dim=-1)  # (num_envs, num_feet)
+  mean_vel_xy_norm = vel_xy_norm.mean(dim=-1)  # (num_envs,)
+  penalty = torch.square(mean_vel_xy_norm) * in_contact.float()
+  penalty = penalty * (mean_vel_xy_norm > velocity_threshold).float()
+
+  return penalty

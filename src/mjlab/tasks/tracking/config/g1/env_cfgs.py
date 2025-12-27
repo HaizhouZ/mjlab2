@@ -149,6 +149,20 @@ def unitree_g1_flat_tracking_env_cfg_box(
     num_slots=1,
   )
 
+  feet_ground_contact_sensor = ContactSensorCfg(
+    name="feet_ground_contact",
+    primary=ContactMatch(
+      mode="subtree",
+      pattern=r"^(left_ankle_roll_link|right_ankle_roll_link)$",
+      entity="robot",
+    ),
+    secondary=ContactMatch(mode="body", pattern="terrain"),
+    fields=("found", "force"),
+    reduce="netforce",
+    num_slots=1,
+    # track_air_time=True,
+  )
+
   left_eef_contact_sensor = ContactSensorCfg(
     name="left_eef_contact",
     primary=ContactMatch(
@@ -195,6 +209,7 @@ def unitree_g1_flat_tracking_env_cfg_box(
 
   cfg.scene.sensors = (
     self_collision_cfg,
+    feet_ground_contact_sensor,
     left_eef_contact_sensor,
     right_eef_contact_sensor,
     left_foot_contact_sensor,
@@ -323,6 +338,18 @@ def unitree_g1_flat_tracking_env_cfg_box(
   cfg.rewards["bad_termination"] = RewardTermCfg(
     func=mdp.is_terminated,
     weight=-100.0,
+  )
+  cfg.rewards["feet_slip"] = RewardTermCfg(
+    func=mdp.feet_slip,
+    weight=-0.02,
+    params={
+      "sensor_name": "feet_ground_contact",
+      "asset_cfg": SceneEntityCfg(
+        "robot",
+        site_names=("left_foot", "right_foot"),
+      ),
+      "velocity_threshold": 0.01,
+    },
   )
   ###
   # Object Tracking Termination Terms
