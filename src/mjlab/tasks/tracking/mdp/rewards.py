@@ -565,10 +565,18 @@ def feet_slip(
   robot: Entity = env.scene[asset_cfg.name]
   contact_sensor: ContactSensor = env.scene[sensor_name]
 
-  in_contact = contact_sensor.data.found > 0  # (num_envs,)
+  assert contact_sensor.data.found is not None
+  # Handle shape: found can be (num_envs,) or (num_envs, num_slots)
+  found = contact_sensor.data.found
+  if found.dim() > 1:
+    # If multiple slots, check if any foot is in contact
+    in_contact = (found > 0).any(dim=-1)  # (num_envs,)
+  else:
+    in_contact = found > 0  # (num_envs,)
+
   foot_vel_xy = robot.data.site_lin_vel_w[
     :, asset_cfg.site_ids, :2
-  ]  # (num_envs, num_feet, 3)
+  ]  # (num_envs, num_feet, 2)
 
   vel_xy_norm = torch.norm(foot_vel_xy, dim=-1)  # (num_envs, num_feet)
   mean_vel_xy_norm = vel_xy_norm.mean(dim=-1)  # (num_envs,)
