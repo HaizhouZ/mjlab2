@@ -286,6 +286,9 @@ def train_epoch(
   num_batches = 0
 
   for batch_idx, batch in enumerate(dataloader):
+    # Move batch to device
+    batch = batch.to(device)
+
     # Normalize batch once if normalizer is present (for loss computation)
     if hasattr(model, "normalizer") and model.normalizer is not None:
       batch_normalized = model.normalizer(batch)
@@ -371,6 +374,9 @@ def validate(
 
   with torch.no_grad():
     for batch in dataloader:
+      # Move batch to device
+      batch = batch.to(device)
+
       # Normalize batch once if normalizer is present (for loss computation)
       if hasattr(model, "normalizer") and model.normalizer is not None:
         batch_normalized = model.normalizer(batch)
@@ -536,15 +542,15 @@ def main(cfg: DictConfig) -> None:
       "'wandb_project' must be set in config"
     )
 
-  # Create dataset (load directly on GPU)
-  print(f"Loading dataset from {motion_dir} on {device}...")
+  # Create dataset (load on CPU, transfer batches to GPU on-demand)
+  print(f"Loading dataset from {motion_dir} on CPU...")
   dataset = TrajectoryDataset(
     motion_dir=str(motion_dir),
     motion_name_pattern=get_cfg("traj_patterns", [".*"]),
     body_indexes=body_indexes,
     anchor_body_index=anchor_body_index,
     horizon=get_cfg("horizon", 32),
-    device=device,
+    device="cpu",  # Load on CPU, transfer batches to GPU on-demand
     stride=get_cfg("stride", 1),
   )
   print(f"Loaded {len(dataset)} trajectory windows")
@@ -572,6 +578,8 @@ def main(cfg: DictConfig) -> None:
     subset = Subset(train_dataset, indices)
     loader = DataLoader(subset, batch_size=len(indices), shuffle=False)
     all_data = next(iter(loader))
+    # Move to device for normalization statistics computation
+    all_data = all_data.to(device)
     normalizer.fit(all_data)
 
     print(f"Normalization statistics computed from {len(indices)} samples")
@@ -595,19 +603,21 @@ def main(cfg: DictConfig) -> None:
 
   # Create data loaders
   batch_size = get_cfg("batch_size", 32)
+  # Use pin_memory=True for faster CPU->GPU transfers when using GPU
+  pin_memory = device != "cpu" and torch.cuda.is_available()
   train_loader = DataLoader(
     train_dataset,
     batch_size=batch_size,
     shuffle=True,
     num_workers=0,
-    pin_memory=False,
+    pin_memory=pin_memory,
   )
   val_loader = DataLoader(
     val_dataset,
     batch_size=batch_size,
     shuffle=False,
     num_workers=0,
-    pin_memory=False,
+    pin_memory=pin_memory,
   )
 
   # Create model based on architecture type
