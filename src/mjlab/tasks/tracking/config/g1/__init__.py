@@ -18,6 +18,7 @@ from .multitracking_env_cfgs import (
 from .object_env_cfgs import (
   unitree_g1_flat_tracking_env_cfg_cylinder,
   unitree_g1_flat_tracking_env_cfg_largebox,
+  unitree_g1_flat_tracking_env_cfg_largebox_platform,
 )
 from .rl_cfg import (
   unitree_g1_tracking_ppo_runner_cfg,
@@ -120,6 +121,17 @@ register_mjlab_task(
   runner_cls=MotionTrackingOnPolicyRunner,
 )
 
+register_mjlab_task(
+  task_id="Mjlab-Tracking-Flat-Unitree-G1-LargeBoxPlatform-No-State-Estimation",
+  env_cfg=unitree_g1_flat_tracking_env_cfg_largebox_platform(
+    has_state_estimation=False
+  ),
+  play_env_cfg=unitree_g1_flat_tracking_env_cfg_largebox_platform(
+    has_state_estimation=False, play=True
+  ),
+  rl_cfg=unitree_g1_tracking_ppo_runner_cfg_largebox(),
+  runner_cls=MotionTrackingOnPolicyRunner,
+)
 ################################################################################
 # Robot and Cylinder Tracking Tasks
 ################################################################################

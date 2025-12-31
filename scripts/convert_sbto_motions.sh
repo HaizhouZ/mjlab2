@@ -71,12 +71,12 @@ for motion_path in "$MOTION_DIR"/*; do
     
     # CSV file path: motions/output/<motion-name>/motion.csv
     # The parent directory name (<motion-name>) will be used as collection name
-    CSV_FILE="$MOTION_OUTPUT_DIR/motion.npz"
-    # CSV_FILE="$MOTION_OUTPUT_DIR/motion.csv"
+    # CSV_FILE="$MOTION_OUTPUT_DIR/motion.npz"
+    CSV_FILE="$MOTION_OUTPUT_DIR/motion.csv"
     
     # Path to best_trajectory.npz
-    npz_file="$motion_path/top_trajectories.npz"
-    # npz_file="$motion_path/best_trajectory.npz"
+    # npz_file="$motion_path/top_trajectories.npz"
+    npz_file="$motion_path/best_trajectory.npz"
     
     # Check if best_trajectory.npz exists
     if [ ! -f "$npz_file" ]; then
@@ -106,8 +106,8 @@ for motion_path in "$MOTION_DIR"/*; do
     echo "Step 2: Converting CSV to NPZ..."
     if ! uv run python -m mjlab.scripts.new_conversion_2 \
         --input-file "$CSV_FILE" \
-        --task-name Mjlab-MultiTracking-Flat-Unitree-G1-LargeBox-No-State-Estimation \
-        --project-name sbto-v2-top-all \
+        --task-name Mjlab-Tracking-Flat-Unitree-G1-LargeBox-No-State-Estimation \
+        --project-name sbto-v2-motions \
         --render \
         --output-fps 50.0; then
         echo "Error: Conversion 2 failed for motion '$motion_name'"

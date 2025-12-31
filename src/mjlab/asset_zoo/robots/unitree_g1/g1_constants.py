@@ -95,6 +95,23 @@ def get_spec_cylinder() -> mujoco.MjSpec:
   return spec
 
 
+def get_spec_platform() -> mujoco.MjSpec:
+  spec = mujoco.MjSpec()
+  world = spec.worldbody
+  body = world.add_body(name="platform")
+  body.pos = np.array([0.0, 0.35, 0.8], dtype=np.float64)
+  body.mocap = True
+  geom = body.add_geom(
+    name="platform_geom",
+    type=mujoco.mjtGeom.mjGEOM_BOX,
+    friction=(0.6, 0.005, 0.0001),
+    size=(0.3, 0.2, 0.005),
+    mass=0.6,
+  )
+  geom.rgba = np.array([0.8, 0.0, 0.0, 1.0], dtype=np.float32)
+  return spec
+
+
 ##
 # Actuator config.
 ##
@@ -398,6 +415,17 @@ def get_largeboxmesh_cfg() -> EntityCfg:
       rot=(1.0, 0.0, 0.0, 0.0),
     ),
     spec_fn=lambda: mujoco.MjSpec.from_file(str(largebox_xml)),
+  )
+
+
+def get_platform_cfg() -> EntityCfg:
+  """Get a fresh platform configuration instance."""
+  return EntityCfg(
+    init_state=EntityCfg.InitialStateCfg(
+      pos=(0.0, 0.0, 0.0),
+      rot=(1.0, 0.0, 0.0, 0.0),
+    ),
+    spec_fn=get_spec_platform,
   )
 
 
