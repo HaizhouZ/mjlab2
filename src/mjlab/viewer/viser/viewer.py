@@ -6,6 +6,7 @@ Adapted from an MJX visualizer by Chung Min Kim: https://github.com/chungmin99/
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 import viser
 from typing_extensions import override
@@ -39,6 +40,9 @@ class ViserPlayViewer(BaseViewer):
     self._threadpool = ThreadPoolExecutor(max_workers=1)
     self._counter = 0
     self._needs_update = False
+    self._is_recording = False
+    self._recording_serializer: Any | None = None
+    self._recording_frame_count = 0
 
     # Create ViserMujocoScene for all 3D visualization (with debug visualization enabled).
     self._scene = ViserMujocoScene.create(
@@ -87,6 +91,42 @@ class ViserPlayViewer(BaseViewer):
           self.reset_environment()
           self._update_status_display()
           self._needs_update = True
+
+        # Save scene button (static).
+        save_button = self._server.gui.add_button("Save Scene")
+
+        @save_button.on_click
+        def _(event: viser.GuiEvent) -> None:
+          assert event.client is not None
+          event.client.send_file_download(
+            "recording.viser", self._server.get_scene_serializer().serialize()
+          )
+
+        # Record scene button (dynamic).
+        self._record_button = self._server.gui.add_button("Start Recording")
+
+        @self._record_button.on_click
+        def _(event: viser.GuiEvent) -> None:
+          if not self._is_recording:
+            # Start recording - get serializer that will track future changes
+            self._is_recording = True
+            self._recording_frame_count = 0
+            # Get serializer - it will track all future changes made through server.scene
+            self._recording_serializer = self._server.get_scene_serializer()
+            self._record_button.label = "Stop Recording"
+            self._update_status_display()
+            self._needs_update = True  # Force an update to start recording
+          else:
+            # Stop recording and download
+            assert event.client is not None
+            assert self._recording_serializer is not None
+            data = self._recording_serializer.serialize()
+            event.client.send_file_download("recording.viser", data)
+            self._is_recording = False
+            self._recording_serializer = None
+            self._recording_frame_count = 0
+            self._record_button.label = "Start Recording"
+            self._update_status_display()
 
         # Speed controls.
         speed_buttons = self._server.gui.add_button_group(
@@ -167,6 +207,16 @@ class ViserPlayViewer(BaseViewer):
         self._scene.update(sim.wp_data)
         self._server.flush()
 
+      # If recording, insert sleep AFTER scene update and flush to capture this frame's state
+      # The serializer tracks all changes made through server.scene
+      # insert_sleep must be called outside atomic() to properly capture state
+      if self._is_recording and self._recording_serializer is not None:
+        self._recording_frame_count += 1
+        # Calculate frame delay based on frame rate and time multiplier
+        frame_delay = 1.0 / (self.frame_rate * self._time_multiplier)
+        # insert_sleep captures the current scene state and adds a delay
+        self._recording_serializer.insert_sleep(frame_delay)
+
     self._threadpool.submit(update_scene)
     self._needs_update = False
     self._scene.needs_update = False
@@ -197,9 +247,12 @@ class ViserPlayViewer(BaseViewer):
 
   def _update_status_display(self) -> None:
     """Update the HTML status display."""
+    status_text = "Paused" if self._is_paused else "Running"
+    if self._is_recording:
+      status_text += " (Recording)"
     self._status_html.content = f"""
       <div style="font-size: 0.85em; line-height: 1.25; padding: 0 1em 0.5em 1em;">
-        <strong>Status:</strong> {"Paused" if self._is_paused else "Running"}<br/>
+        <strong>Status:</strong> {status_text}<br/>
         <strong>Steps:</strong> {self._step_count}<br/>
         <strong>Speed:</strong> {self._time_multiplier:.0%}
       </div>
