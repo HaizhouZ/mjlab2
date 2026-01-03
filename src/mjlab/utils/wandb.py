@@ -1,3 +1,5 @@
+import json
+import re
 import shutil
 from pathlib import Path
 
@@ -36,6 +38,16 @@ def download_motions_from_wandb(
   motions_dir = project_cache_dir / "motions"
   motions_dir.mkdir(parents=True, exist_ok=True)
 
+  # Load cached version metadata
+  metadata_file = project_cache_dir / "artifact_versions.json"
+  cached_versions = {}
+  if metadata_file.exists():
+    try:
+      with open(metadata_file, "r") as f:
+        cached_versions = json.load(f)
+    except Exception:
+      cached_versions = {}
+
   # Check what's already in cache
   cached_motions = {}
   if motions_dir.exists():
@@ -63,30 +75,27 @@ def download_motions_from_wandb(
 
   # Try to get artifacts from registry first
   try:
-    # Get all runs from the project and collect artifacts from them
+    # Get all runs from the project and collect artifact names from them
     print(f"Collecting artifacts from {wandb_entity}/{wandb_project}...")
     runs = api.runs(f"{wandb_entity}/{wandb_project}")
-    artifact_list = []
-    seen_artifact_names = set()
+    artifact_names = set()
 
     # Convert to list to get total count for progress bar
     runs_list = list(runs)
     for run in tqdm(runs_list, desc="Scanning runs", unit="run"):
       # Check both used_artifacts and logged_artifacts
       for artifact in list(run.used_artifacts()) + list(run.logged_artifacts()):
-        if artifact.type == artifact_type and artifact.name not in seen_artifact_names:
-          artifact_list.append(artifact)
-          seen_artifact_names.add(artifact.name)
+        if artifact.type == artifact_type:
+          artifact_names.add(artifact.name)
 
-    if not artifact_list:
+    if not artifact_names:
       print(f"No artifacts found in {wandb_entity}/{wandb_project}")
       return motions_dir
 
-    print(f"Found {len(artifact_list)} artifacts to download")
-    # Download artifacts from registry
-    pbar = tqdm(artifact_list, desc="Downloading artifacts", unit="artifact")
-    for artifact in pbar:
-      artifact_name = artifact.name
+    print(f"Found {len(artifact_names)} artifacts to check")
+    # Get latest version of each artifact and download if needed
+    pbar = tqdm(sorted(artifact_names), desc="Downloading artifacts", unit="artifact")
+    for artifact_name in pbar:
       pbar.set_postfix(
         {
           "current": artifact_name[:30],
@@ -95,13 +104,50 @@ def download_motions_from_wandb(
         }
       )
 
+      # Get the latest version of this artifact
+      try:
+        latest_artifact = api.artifact(
+          f"{wandb_entity}/{wandb_project}/{artifact_name}:latest"
+        )
+      except Exception as e:
+        # If latest alias doesn't exist, try to get any version
+        try:
+          latest_artifact = api.artifact(
+            f"{wandb_entity}/{wandb_project}/{artifact_name}"
+          )
+        except Exception:
+          print(f"Warning: Could not fetch artifact {artifact_name}: {e}")
+          continue
+
+      # Get version info for comparison
+      latest_version = latest_artifact.version
+      # Convert updated_at to string (handles both datetime and string types)
+      updated_at = latest_artifact.updated_at
+      try:
+        # Try to call isoformat if it's a datetime object
+        latest_updated = updated_at.isoformat()  # type: ignore
+      except (AttributeError, TypeError):
+        # Fall back to string conversion
+        latest_updated = str(updated_at)
+
       # Use artifact name as the trajectory name (since it's the collection name)
       # Create directory: {artifact_name}
       artifact_dir = motions_dir / artifact_name
       motion_file = artifact_dir / "motion.npz"
 
-      # Skip if already in cache
-      if artifact_name in cached_motions or motion_file.exists():
+      # Check if we need to re-download
+      cached_version = cached_versions.get(artifact_name, {})
+      cached_version_str = cached_version.get("version")
+      cached_updated = cached_version.get("updated_at")
+
+      # Re-download if version changed or if file doesn't exist
+      needs_download = (
+        cached_version_str != latest_version
+        or cached_updated != latest_updated
+        or not motion_file.exists()
+      )
+
+      if not needs_download:
         skipped_count += 1
         pbar.set_postfix(
           {
@@ -113,13 +159,17 @@ def download_motions_from_wandb(
         continue
 
       try:
+        # Remove old version if it exists
+        if artifact_dir.exists():
+          shutil.rmtree(artifact_dir)
+
         # Download artifact to temporary directory
         artifact_dir.mkdir(parents=True, exist_ok=True)
         temp_download_dir = artifact_dir / "temp"
         temp_download_dir.mkdir(exist_ok=True)
 
         # Download with progress indication
-        artifact_path = artifact.download(root=str(temp_download_dir))
+        artifact_path = latest_artifact.download(root=str(temp_download_dir))
 
         # Check if motion.npz is in the artifact root or a subdirectory
         artifact_path_obj = Path(artifact_path)
@@ -148,6 +198,12 @@ def download_motions_from_wandb(
         if temp_download_dir.exists():
           shutil.rmtree(temp_download_dir)
 
+        # Save version metadata
+        cached_versions[artifact_name] = {
+          "version": latest_version,
+          "updated_at": latest_updated,
+        }
+
         downloaded_count += 1
         pbar.set_postfix(
           {
@@ -157,17 +213,27 @@ def download_motions_from_wandb(
           }
         )
 
-      except Exception:
+      except Exception as e:
         # Clean up on error
         if artifact_dir.exists():
           shutil.rmtree(artifact_dir)
+        print(f"Warning: Error downloading {artifact_name}: {e}")
         continue
 
   except Exception as e:
     print(f"Warning: Could not access registry: {e}")
 
+  # Save version metadata
+  if cached_versions:
+    try:
+      with open(metadata_file, "w") as f:
+        json.dump(cached_versions, f, indent=2)
+    except Exception as e:
+      print(f"Warning: Could not save version metadata: {e}")
+
+  updated_count = downloaded_count
   print(
-    f"\nDownloaded {downloaded_count} new artifacts, {skipped_count} already cached"
+    f"\nDownloaded/updated {updated_count} artifacts with latest versions, {skipped_count} already up-to-date"
   )
 
   # Verify we have at least one motion file
@@ -179,7 +245,100 @@ def download_motions_from_wandb(
       f"Please check that artifacts are properly uploaded to wandb."
     )
 
+  # Clean up old versions after downloading
+  cleanup_old_versions(motions_dir)
+
   return motions_dir
+
+
+def cleanup_old_versions(motions_dir: Path | str) -> dict[str, int]:
+  """Remove old versions of artifacts, keeping only the latest version.
+
+  This function scans the motions directory and identifies folders with version tags
+  (e.g., `:v0`, `:v1`, `:v2`) in their names. For each base artifact name, it keeps
+  only the folder with the highest version number and deletes the others.
+
+  Args:
+      motions_dir: Directory containing motion artifacts organized as:
+                  motions_dir/{artifact_name}/motion.npz or
+                  motions_dir/{run_name}/{artifact_name}/motion.npz
+
+  Returns:
+      Dictionary mapping base artifact names to the number of old versions deleted
+  """
+  motions_dir = Path(motions_dir)
+  if not motions_dir.exists():
+    return {}
+
+  # Pattern to match version tags like :v0, :v1, :v2, etc.
+  version_pattern = re.compile(r":v(\d+)$")
+
+  # Group folders by base name (without version tag)
+  versioned_folders: dict[str, list[tuple[Path, int]]] = {}
+
+  # Scan all directories that contain motion.npz files
+  for motion_file in motions_dir.rglob("motion.npz"):
+    rel_path = motion_file.relative_to(motions_dir)
+    folder_path = motion_file.parent
+
+    if len(rel_path.parts) == 2:
+      # Format: artifact_name/motion.npz
+      folder_name = rel_path.parts[0]
+      match = version_pattern.search(folder_name)
+      if match:
+        version_num = int(match.group(1))
+        base_name = folder_name[: match.start()]
+        if base_name not in versioned_folders:
+          versioned_folders[base_name] = []
+        versioned_folders[base_name].append((folder_path, version_num))
+    elif len(rel_path.parts) == 3:
+      # Format: run_name/artifact_name/motion.npz
+      run_name, artifact_name = rel_path.parts[0], rel_path.parts[1]
+      match = version_pattern.search(artifact_name)
+      if match:
+        version_num = int(match.group(1))
+        base_name = artifact_name[: match.start()]
+        # Use run_name/base_name as the key to group by both
+        key = f"{run_name}/{base_name}"
+        if key not in versioned_folders:
+          versioned_folders[key] = []
+        versioned_folders[key].append((folder_path, version_num))
+
+  deleted_count = {}
+  total_deleted = 0
+
+  # For each base name, keep only the highest version
+  for base_name, folders in versioned_folders.items():
+    if len(folders) <= 1:
+      continue  # Only one version, nothing to clean up
+
+    # Sort by version number (descending)
+    folders.sort(key=lambda x: x[1], reverse=True)
+    latest_folder, latest_version = folders[0]
+
+    # Delete all older versions
+    deleted = 0
+    for folder_path, _version_num in folders[1:]:
+      try:
+        if folder_path.exists():
+          shutil.rmtree(folder_path)
+          deleted += 1
+          total_deleted += 1
+      except Exception as e:
+        print(f"Warning: Could not delete {folder_path}: {e}")
+
+    if deleted > 0:
+      deleted_count[base_name] = deleted
+      print(
+        f"Cleaned up {deleted} old version(s) of '{base_name}', kept v{latest_version}"
+      )
+
+  if deleted_count:
+    print(f"\nTotal: Removed {total_deleted} old version(s), kept latest versions")
+  else:
+    print("No old versions to clean up")
+
+  return deleted_count
 
 
 def get_wandb_motion_cache_dir(
