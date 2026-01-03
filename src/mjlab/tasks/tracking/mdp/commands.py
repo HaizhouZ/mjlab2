@@ -332,6 +332,9 @@ class MultiMotionLoader:
     self.motion_file_trajectory_counts = [
       num_trajectories for _, num_trajectories in motion_file_summary
     ]
+    self.num_motion_files = len(self.motion_file_trajectory_counts)
+    self.motion_file_names = [name for name, _ in motion_file_summary]
+
     # Calculate starting indices: cumulative sum of trajectory counts
     # e.g., if counts are [3, 2, 5], start_indices are [0, 3, 5]
     start_idx = 0
@@ -341,6 +344,18 @@ class MultiMotionLoader:
       start_idx += num_trajectories
     self.motion_file_start_indices = torch.tensor(
       self.motion_file_start_indices, dtype=torch.long, device=device
+    )
+    self.motion_file_trajectory_counts_tensor = torch.tensor(
+      self.motion_file_trajectory_counts, dtype=torch.long, device=device
+    )
+
+    # Create mapping from trajectory index to motion file index
+    # e.g., if counts are [3, 2, 5], mapping is [0,0,0, 1,1, 2,2,2,2,2]
+    trajectory_to_file = []
+    for file_idx, count in enumerate(self.motion_file_trajectory_counts):
+      trajectory_to_file.extend([file_idx] * count)
+    self.trajectory_to_motion_file = torch.tensor(
+      trajectory_to_file, dtype=torch.long, device=device
     )
 
     # Store max time steps for each motion
@@ -1286,6 +1301,24 @@ class MotionCommand(CommandTerm):
     if env_ids.numel() > 0:
       self._resample_command(env_ids)
 
+    # final_time_steps_env_ids = torch.where(
+    #   self.time_steps >= self.motion.time_step_total - 100
+    # )[0]
+    # if final_time_steps_env_ids.numel() > 0 and self.object is not None:
+    #   object_state = torch.cat(
+    #     [
+    #       self.object.data.body_link_pos_w[final_time_steps_env_ids, 0],
+    #       self.object.data.body_link_quat_w[final_time_steps_env_ids, 0],
+    #       torch.zeros(len(final_time_steps_env_ids), 3, device=self.device),
+    #       torch.zeros(len(final_time_steps_env_ids), 3, device=self.device),
+    #     ],
+    #     dim=-1,
+    #   )
+    #   self.object.write_root_state_to_sim(
+    #     object_state, env_ids=final_time_steps_env_ids
+    #   )
+    #   self.object.clear_state(env_ids=final_time_steps_env_ids)
+
     anchor_pos_w_repeat = self.anchor_pos_w[:, None, :].repeat(
       1, len(self.cfg.body_names), 1
     )
@@ -1613,18 +1646,23 @@ class MultiMotionCommand(CommandTerm):
 
     # Get max time steps for adaptive sampling (use max across all motions)
     max_time_steps = self.motion_loader.time_step_totals.max().item()
-    self.bin_count = int(max_time_steps // (1 / env.step_dt)) + 1
-    # Maintain separate failure distributions for each motion
-    # Shape: (num_motions, bin_count)
+    self.bin_count_max = int(max_time_steps // (1 / env.step_dt)) + 1
+
+    # Number of motion files (for adaptive sampling - group trajectories from same file)
+    self.num_motion_files = self.motion_loader.num_motion_files
+
+    # Maintain separate failure distributions for each MOTION FILE (not trajectory)
+    # This groups trajectories from the same file together for adaptive sampling
+    # Shape: (num_motion_files, bin_count)
     self.bin_failed_count = torch.zeros(
-      self.motion_loader.num_motions,
-      self.bin_count,
+      self.num_motion_files,
+      self.bin_count_max,
       dtype=torch.float,
       device=self.device,
     )
     self._current_bin_failed = torch.zeros(
-      self.motion_loader.num_motions,
-      self.bin_count,
+      self.num_motion_files,
+      self.bin_count_max,
       dtype=torch.float,
       device=self.device,
     )
@@ -1651,6 +1689,40 @@ class MultiMotionCommand(CommandTerm):
     self.metrics["sampling_top1_prob"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["sampling_top1_bin"] = torch.zeros(self.num_envs, device=self.device)
 
+    # Multi-motion specific metrics (all meaningful when averaged across envs)
+    self.metrics["motion_progress"] = torch.zeros(self.num_envs, device=self.device)
+    self.metrics["motion_failure_rate"] = torch.zeros(self.num_envs, device=self.device)
+    self.metrics["motion_completion_rate"] = torch.zeros(
+      self.num_envs, device=self.device
+    )
+    # Global stats (same value for all envs, so averaging = the value itself)
+    self.metrics["worst_motion_failure_rate"] = torch.zeros(
+      self.num_envs, device=self.device
+    )
+    self.metrics["best_motion_failure_rate"] = torch.zeros(
+      self.num_envs, device=self.device
+    )
+    self.metrics["motion_failure_rate_spread"] = torch.zeros(
+      self.num_envs, device=self.device
+    )
+
+    # Per-motion-file tracking (aggregated statistics)
+    # These track stats per motion FILE, grouping all trajectories from same file
+    self._motion_file_episode_counts = torch.zeros(
+      self.num_motion_files, dtype=torch.float, device=self.device
+    )
+    self._motion_file_failure_counts = torch.zeros(
+      self.num_motion_files, dtype=torch.float, device=self.device
+    )
+    self._motion_file_completion_counts = torch.zeros(
+      self.num_motion_files, dtype=torch.float, device=self.device
+    )
+    self._motion_file_error_sum = torch.zeros(
+      self.num_motion_files, dtype=torch.float, device=self.device
+    )
+    self._motion_file_error_count = torch.zeros(
+      self.num_motion_files, dtype=torch.float, device=self.device
+    )
     # Ghost model created lazily on first visualization
     self._ghost_model: mujoco.MjModel | None = None
     self._ghost_color = np.array(cfg.viz.ghost_color, dtype=np.float32)
@@ -2062,75 +2134,124 @@ class MultiMotionCommand(CommandTerm):
           self.num_envs, device=self.device
         )
 
+    # Multi-motion specific metrics (per motion FILE, not per trajectory)
+    env_time_step_totals = self.motion_loader.get_time_step_total(self.motion_indices)
+    self.metrics["motion_progress"] = self.time_steps.float() / env_time_step_totals
+
+    # Map trajectory indices to motion file indices for metrics
+    env_file_indices = self.motion_loader.trajectory_to_motion_file[self.motion_indices]
+
+    # Accumulate per-motion-file errors (using anchor pos as representative error)
+    anchor_error = self.metrics["error_anchor_pos"]
+    self._motion_file_error_sum.scatter_add_(0, env_file_indices, anchor_error)
+    self._motion_file_error_count.scatter_add_(
+      0, env_file_indices, torch.ones_like(anchor_error)
+    )
+
+    # Compute per-motion-file statistics (avoid division by zero)
+    file_failure_rate = self._motion_file_failure_counts / (
+      self._motion_file_episode_counts + 1e-8
+    )
+    file_completion_rate = self._motion_file_completion_counts / (
+      self._motion_file_episode_counts + 1e-8
+    )
+
+    # Per-env metrics: each env gets its motion FILE's rate
+    self.metrics["motion_failure_rate"][:] = file_failure_rate[env_file_indices]
+    self.metrics["motion_completion_rate"][:] = file_completion_rate[env_file_indices]
+
+    # Global metrics (same for all envs - these average correctly in wandb)
+    valid_files = self._motion_file_episode_counts > 0
+    if valid_files.any():
+      valid_rates = file_failure_rate[valid_files]
+      # Worst motion file = highest failure rate (hardest to track)
+      self.metrics["worst_motion_failure_rate"][:] = valid_rates.max()
+      # Best motion file = lowest failure rate (easiest to track)
+      self.metrics["best_motion_failure_rate"][:] = valid_rates.min()
+      # Spread = difference between worst and best (large = inconsistent difficulty)
+      self.metrics["motion_failure_rate_spread"][:] = (
+        valid_rates.max() - valid_rates.min()
+      )
+
   def _adaptive_sampling(self, env_ids: torch.Tensor):
     """
-    Adaptive sampling implementation.
+    Adaptive sampling implementation with MOTION FILE level grouping.
 
-    When horizon=1 and num_motions=1, this behaves equivalently to MotionCommand._adaptive_sampling,
-    but uses a 2D tensor structure (num_motions, bin_count) to support multiple motions.
-    When there's only 1 motion, the 2D structure (1, bin_count) is functionally equivalent
-    to MotionCommand's 1D structure (bin_count,).
+    Trajectories from the same motion file are grouped together for adaptive sampling.
+    This provides more samples per group when you have many trajectories per file.
+    E.g., 30 files × 60 trajectories = 1800 total, but only 30 adaptive sampling groups.
+
+    Failure tracking and sampling probabilities are computed per motion FILE,
+    but individual trajectories within a file can still be randomly selected.
     """
     episode_failed = self._env.termination_manager.terminated[env_ids]
     if torch.any(episode_failed):
-      # Get motion indices and time steps for failed episodes
+      # Get trajectory indices and time steps for failed episodes
       failed_env_ids = env_ids[episode_failed]
-      failed_motion_indices = self.motion_indices[failed_env_ids]
+      failed_traj_indices = self.motion_indices[failed_env_ids]
       failed_time_steps = self.time_steps[failed_env_ids]
 
-      # Get time step totals for each failed env's motion
+      # Map trajectory indices to motion FILE indices
+      failed_file_indices = self.motion_loader.trajectory_to_motion_file[
+        failed_traj_indices
+      ]
+
+      # Get time step totals for each failed env's trajectory
       failed_env_time_step_totals = self.motion_loader.get_time_step_total(
-        failed_motion_indices
+        failed_traj_indices
       )
 
       # Compute bin indices for failed episodes
-      # Note: When num_motions=1, this is equivalent to MotionCommand's bin calculation
       current_bin_index = torch.clamp(
-        (failed_time_steps * self.bin_count)
+        (failed_time_steps * self.bin_count_max)
         // torch.clamp(failed_env_time_step_totals, min=1),
         0,
-        self.bin_count - 1,
+        self.bin_count_max - 1,
       )
 
-      # Vectorized update: use scatter_add_ to update all motions at once
-      # Create linear indices: motion_idx * bin_count + bin_idx
-      linear_indices = failed_motion_indices * self.bin_count + current_bin_index
-      # Count occurrences of each (motion, bin) pair
+      # Vectorized update: use motion FILE index (not trajectory index)
+      # Create linear indices: file_idx * bin_count + bin_idx
+      linear_indices = failed_file_indices * self.bin_count_max + current_bin_index
+      # Count occurrences of each (file, bin) pair
       counts = torch.bincount(
-        linear_indices, minlength=self.motion_loader.num_motions * self.bin_count
+        linear_indices, minlength=self.num_motion_files * self.bin_count_max
       )
       # Reshape and add to _current_bin_failed
       self._current_bin_failed += counts.view(
-        self.motion_loader.num_motions, self.bin_count
+        self.num_motion_files, self.bin_count_max
       ).float()
 
-    # Get motion indices for environments that need resampling
-    resample_motion_indices = self.motion_indices[env_ids]
+    # Get motion FILE indices for environments being resampled
+    resample_traj_indices = self.motion_indices[env_ids]
+    resample_file_indices = self.motion_loader.trajectory_to_motion_file[
+      resample_traj_indices
+    ]
 
-    # Pre-compute sampling probabilities for all motions at once (vectorized)
-    # Shape: (num_motions, bin_count)
+    # Pre-compute sampling probabilities for all motion FILES (vectorized)
+    # Shape: (num_motion_files, bin_count)
     all_sampling_probabilities = (
-      self.bin_failed_count + self.cfg.adaptive_uniform_ratio / float(self.bin_count)
+      self.bin_failed_count
+      + self.cfg.adaptive_uniform_ratio / float(self.bin_count_max)
     )
-    # Pad for convolution: (num_motions, 1, bin_count + kernel_size - 1)
+    # Pad for convolution: (num_motion_files, 1, bin_count + kernel_size - 1)
     all_sampling_probabilities_padded = torch.nn.functional.pad(
       all_sampling_probabilities.unsqueeze(1),
       (0, self.cfg.adaptive_kernel_size - 1),
       mode="replicate",
     )
-    # Apply convolution to all motions at once: (num_motions, 1, bin_count)
+    # Apply convolution to all motion files at once: (num_motion_files, 1, bin_count)
     all_sampling_probabilities = torch.nn.functional.conv1d(
       all_sampling_probabilities_padded, self.kernel.view(1, 1, -1)
-    ).squeeze(1)  # (num_motions, bin_count)
+    ).squeeze(1)  # (num_motion_files, bin_count)
 
-    # Normalize each motion's distribution
+    # Normalize each motion file's distribution
     all_sampling_probabilities = (
       all_sampling_probabilities / all_sampling_probabilities.sum(dim=1, keepdim=True)
     )
 
-    # Sample from the appropriate distribution for each environment (fully vectorized)
-    # Get probabilities for each env's motion: (len(env_ids), bin_count)
-    env_sampling_probabilities = all_sampling_probabilities[resample_motion_indices]
+    # Sample bins using the motion FILE's distribution (not trajectory)
+    # Get probabilities for each env's motion file: (len(env_ids), bin_count)
+    env_sampling_probabilities = all_sampling_probabilities[resample_file_indices]
 
     # Sample all at once - multinomial supports different distributions per row
     # Shape: (len(env_ids),) - one sample per environment
@@ -2139,37 +2260,42 @@ class MultiMotionCommand(CommandTerm):
     ).squeeze(1)
 
     # Convert sampled bins to time steps for each environment
+    # Use the actual trajectory's time_step_total (all trajectories in a file have same length)
     env_time_step_totals = self.motion_loader.get_time_step_total(
       self.motion_indices[env_ids]
     )
     self.time_steps[env_ids] = (
       (sampled_bins + sample_uniform(0.0, 1.0, (len(env_ids),), device=self.device))
-      / self.bin_count
+      / self.bin_count_max
       * (env_time_step_totals - 1)
     ).long()
 
-    # Compute metrics using average across all motions (for reporting)
-    avg_sampling_probabilities = self.bin_failed_count.mean(
-      dim=0
-    ) + self.cfg.adaptive_uniform_ratio / float(self.bin_count)
-    avg_sampling_probabilities = torch.nn.functional.pad(
-      avg_sampling_probabilities.unsqueeze(0).unsqueeze(0),
-      (0, self.cfg.adaptive_kernel_size - 1),
-      mode="replicate",
-    )
-    avg_sampling_probabilities = torch.nn.functional.conv1d(
-      avg_sampling_probabilities, self.kernel.view(1, 1, -1)
-    ).view(-1)
-    avg_sampling_probabilities = (
-      avg_sampling_probabilities / avg_sampling_probabilities.sum()
+    # Compute metrics based on the actual distributions being used for sampling
+    # Weight by the number of environments using each motion file
+    file_counts = torch.bincount(
+      resample_file_indices, minlength=self.num_motion_files
+    ).float()
+    # Normalize to get weights
+    file_weights = file_counts / (file_counts.sum() + 1e-12)
+
+    # Compute weighted average of sampling probabilities
+    # all_sampling_probabilities is already normalized per file: (num_motion_files, bin_count)
+    weighted_sampling_probabilities = (
+      all_sampling_probabilities * file_weights[:, None]
+    ).sum(dim=0)
+    # Normalize to ensure it sums to 1
+    weighted_sampling_probabilities = weighted_sampling_probabilities / (
+      weighted_sampling_probabilities.sum() + 1e-12
     )
 
-    H = -(avg_sampling_probabilities * (avg_sampling_probabilities + 1e-12).log()).sum()
-    H_norm = H / math.log(self.bin_count)
-    pmax, imax = avg_sampling_probabilities.max(dim=0)
+    H = -(
+      weighted_sampling_probabilities * (weighted_sampling_probabilities + 1e-12).log()
+    ).sum()
+    H_norm = H / math.log(self.bin_count_max)
+    pmax, imax = weighted_sampling_probabilities.max(dim=0)
     self.metrics["sampling_entropy"][:] = H_norm
     self.metrics["sampling_top1_prob"][:] = pmax
-    self.metrics["sampling_top1_bin"][:] = imax.float() / self.bin_count
+    self.metrics["sampling_top1_bin"][:] = imax.float() / self.bin_count_max
 
   def _uniform_sampling(self, env_ids: torch.Tensor):
     # Get time step totals for each env's motion
@@ -2181,14 +2307,50 @@ class MultiMotionCommand(CommandTerm):
       torch.rand(len(env_ids), device=self.device) * env_time_step_totals
     ).long()
     self.metrics["sampling_entropy"][:] = 1.0
-    self.metrics["sampling_top1_prob"][:] = 1.0 / self.bin_count
+    self.metrics["sampling_top1_prob"][:] = 1.0 / self.bin_count_max
     self.metrics["sampling_top1_bin"][:] = 0.5
 
   def _resample_command(self, env_ids: torch.Tensor):
-    # # Randomly reassign motions to environments
-    # self.motion_indices[env_ids] = torch.randint(
-    #   0, self.motion_loader.num_motions, (len(env_ids),), device=self.device
-    # )
+    # Track episode statistics before resampling
+    if len(env_ids) > 0:
+      resample_traj_indices = self.motion_indices[env_ids]
+      resample_time_steps = self.time_steps[env_ids]
+      resample_time_step_totals = self.motion_loader.get_time_step_total(
+        resample_traj_indices
+      )
+
+      # Map trajectory indices to motion FILE indices for tracking
+      resample_file_indices = self.motion_loader.trajectory_to_motion_file[
+        resample_traj_indices
+      ]
+
+      # Count episodes per motion FILE (vectorized scatter)
+      ones = torch.ones(len(env_ids), dtype=torch.float, device=self.device)
+      self._motion_file_episode_counts.scatter_add_(0, resample_file_indices, ones)
+
+      # Track failures (terminated before reaching near-end of motion)
+      # Consider "completion" if within last 5% of motion
+      completion_threshold = 0.95
+      progress = resample_time_steps.float() / resample_time_step_totals
+      is_terminated = self._env.termination_manager.terminated[env_ids]
+      is_early_termination = is_terminated & (progress < completion_threshold)
+      is_completion = progress >= completion_threshold
+
+      # Accumulate failure counts per motion FILE
+      failure_counts = is_early_termination.float()
+      self._motion_file_failure_counts.scatter_add_(
+        0, resample_file_indices, failure_counts
+      )
+
+      # Accumulate completion counts per motion FILE
+      completion_counts = is_completion.float()
+      self._motion_file_completion_counts.scatter_add_(
+        0, resample_file_indices, completion_counts
+      )
+
+      self.metrics["motion_progress"][env_ids] = (
+        resample_time_steps.float() / resample_time_step_totals
+      )
 
     if self.cfg.sampling_mode == "start":
       self.time_steps[env_ids] = 0
@@ -2328,8 +2490,9 @@ class MultiMotionCommand(CommandTerm):
     )
 
     if self.cfg.sampling_mode == "adaptive":
-      # Update each motion's failure distribution separately
-      # bin_failed_count and _current_bin_failed are shape (num_motions, bin_count)
+      # Update each motion FILE's failure distribution separately
+      # bin_failed_count and _current_bin_failed are shape (num_motion_files, bin_count)
+      # This groups all trajectories from the same file together
       self.bin_failed_count = (
         self.cfg.adaptive_alpha * self._current_bin_failed
         + (1 - self.cfg.adaptive_alpha) * self.bin_failed_count
@@ -2400,6 +2563,86 @@ class MultiMotionCommand(CommandTerm):
     return ~(
       contact_indicators[:, :num_matches] == has_contact_all[:, :num_matches]
     ).all(dim=1)
+
+  def get_per_motion_file_statistics(
+    self,
+  ) -> dict[str, torch.Tensor | list[str] | list[int]]:
+    """Get per-motion-file statistics for detailed analysis.
+
+    Returns:
+      Dictionary with per-motion-file tensors:
+        - episode_counts: Total episodes per motion file
+        - failure_counts: Total early terminations per motion file
+        - completion_counts: Total completions per motion file
+        - failure_rate: Failure rate per motion file (0-1)
+        - completion_rate: Completion rate per motion file (0-1)
+        - avg_error: Average anchor position error per motion file
+        - bin_failure_distribution: (num_motion_files, bin_count) failure distribution
+        - motion_file_names: List of motion file names
+        - num_trajectories_per_file: Number of trajectories in each file
+    """
+    file_avg_error = self._motion_file_error_sum / (
+      self._motion_file_error_count + 1e-8
+    )
+    file_failure_rate = self._motion_file_failure_counts / (
+      self._motion_file_episode_counts + 1e-8
+    )
+    file_completion_rate = self._motion_file_completion_counts / (
+      self._motion_file_episode_counts + 1e-8
+    )
+
+    return {
+      "episode_counts": self._motion_file_episode_counts,
+      "failure_counts": self._motion_file_failure_counts,
+      "completion_counts": self._motion_file_completion_counts,
+      "failure_rate": file_failure_rate,
+      "completion_rate": file_completion_rate,
+      "avg_error": file_avg_error,
+      "bin_failure_distribution": self.bin_failed_count,
+      "motion_file_names": self.motion_loader.motion_file_names,
+      "num_trajectories_per_file": self.motion_loader.motion_file_trajectory_counts,
+    }
+
+  def print_motion_file_summary(self) -> None:
+    """Print a summary of per-motion-file performance to console."""
+    stats = self.get_per_motion_file_statistics()
+    print("\n" + "=" * 70)
+    print("Multi-Motion File Performance Summary (Trajectories Grouped)")
+    print("=" * 70)
+    print(
+      f"{'Motion File':<30} {'Trajs':>6} {'Episodes':>10} {'Fail%':>8} {'Comp%':>8} {'AvgErr':>8}"
+    )
+    print("-" * 70)
+
+    motion_file_names = self.motion_loader.motion_file_names
+    num_trajs_per_file = self.motion_loader.motion_file_trajectory_counts
+    for i, name in enumerate(motion_file_names):
+      episodes = int(stats["episode_counts"][i].item())  # type: ignore[union-attr]
+      fail_rate = stats["failure_rate"][i].item() * 100  # type: ignore[union-attr]
+      comp_rate = stats["completion_rate"][i].item() * 100  # type: ignore[union-attr]
+      avg_err = stats["avg_error"][i].item()  # type: ignore[union-attr]
+      n_trajs = num_trajs_per_file[i]
+      # Truncate name if too long
+      display_name = name[:28] + ".." if len(name) > 30 else name
+      print(
+        f"{display_name:<30} {n_trajs:>6} {episodes:>10} {fail_rate:>7.1f}% {comp_rate:>7.1f}% {avg_err:>8.3f}"
+      )
+
+    print("=" * 70)
+    total_episodes = stats["episode_counts"].sum().item()  # type: ignore[union-attr]
+    total_trajs = self.motion_loader.num_motions  # Total trajectories across all files
+    avg_fail_rate = (
+      stats["failure_counts"].sum() / (stats["episode_counts"].sum() + 1e-8)  # type: ignore[union-attr]
+    ).item() * 100
+    avg_comp_rate = (
+      stats["completion_counts"].sum() / (stats["episode_counts"].sum() + 1e-8)  # type: ignore[union-attr]
+    ).item() * 100
+    print(
+      f"{'TOTAL':<30} {total_trajs:>6} {int(total_episodes):>10} {avg_fail_rate:>7.1f}% {avg_comp_rate:>7.1f}%"
+    )
+    print(f"Number of motion files: {self.num_motion_files}")
+    print(f"Total trajectories: {total_trajs}")
+    print("=" * 70 + "\n")
 
   def _debug_vis_impl(self, visualizer: DebugVisualizer) -> None:
     """Draw ghost robot or frames based on visualization mode."""
