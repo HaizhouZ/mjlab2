@@ -282,7 +282,14 @@ def launch_training(task_id: str, args: TrainConfig | None = None):
       ):
         # Use the single pattern as motion name
         motion_name = args.motion_name_pattern[0]
-        args.agent.run_name = motion_name
+        # Don't use motion_name_pattern for run_name if it's too long or contains multiple patterns
+        if "|" not in motion_name:
+          args.agent.run_name = motion_name
+        # Otherwise, use the wandb project name
+        elif args.wandb_entity_project is not None:
+          _, wandb_project = get_wandb_entity_and_project(args.wandb_entity_project)
+          args.agent.run_name = wandb_project
+
       elif args.motion_dir:
         # Extract from motion_dir path (e.g., "/path/to/motion_name" -> "motion_name")
         motion_dir_path = Path(args.motion_dir)
