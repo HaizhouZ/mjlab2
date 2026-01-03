@@ -422,21 +422,22 @@ def unitree_g1_flat_tracking_env_cfg_box(
     },
   )
 
-  # cfg.events["object_mass"] = EventTermCfg(
-  #   func=mdp.randomize_field,
-  #   mode="startup",
-  #   params={
-  #     "asset_cfg": SceneEntityCfg("object"),
-  #     "operation": "scale",
-  #     "field": "body_mass",
-  #     "ranges": (0.6, 1.5),
-  #   },
-  # )
+  cfg.events["object_mass"] = EventTermCfg(
+    func=mdp.randomize_field,
+    domain_randomization=True,
+    mode="startup",
+    params={
+      "asset_cfg": SceneEntityCfg("object"),
+      "operation": "scale",
+      "field": "body_mass",
+      "ranges": (0.7, 1.3),
+    },
+  )
 
   cfg.events["hand_friction"] = EventTermCfg(
     func=mdp.randomize_field,
     mode="startup",
-    # domain_randomization=True,
+    domain_randomization=True,
     params={
       "asset_cfg": SceneEntityCfg(
         "robot", geom_names=("left_wrist_collision", "right_wrist_collision")
@@ -447,17 +448,17 @@ def unitree_g1_flat_tracking_env_cfg_box(
     },
   )
 
-  # cfg.events["box_friction"] = EventTermCfg(
-  #   func=mdp.randomize_field,
-  #   domain_randomization=True,
-  #   mode="startup",
-  #   params={
-  #     "asset_cfg": SceneEntityCfg("object", geom_names=("largebox_geom",)),
-  #     "operation": "abs",
-  #     "field": "geom_friction",
-  #     "ranges": (0.2, 0.8),
-  #   },
-  # )
+  cfg.events["box_friction"] = EventTermCfg(
+    func=mdp.randomize_field,
+    domain_randomization=True,
+    mode="startup",
+    params={
+      "asset_cfg": SceneEntityCfg("object", geom_names=("largebox_geom",)),
+      "operation": "abs",
+      "field": "geom_friction",
+      "ranges": (0.3, 0.8),
+    },
+  )
 
   # cfg.events["box_size"] = EventTermCfg(
   #   func=mdp.randomize_field,
@@ -561,13 +562,20 @@ def unitree_g1_flat_tracking_env_cfg_box(
     # Effectively infinite episode length.
     cfg.episode_length_s = int(1e9)
     cfg.observations["policy"].enable_corruption = False
-    # cfg.events.pop("push_robot", None)
-    # cfg.events.pop("push_object", None)
-    # motion_cmd.pose_range = {}
-    # motion_cmd.velocity_range = {}
-    # motion_cmd.object_pose_range = {}
-    # motion_cmd.object_velocity_range = {}
 
-    # cfg.events.pop("push_object", None)
+    cfg.events.pop("push_robot", None)
+    cfg.events.pop("push_object", None)
+    cfg.events.pop("object_mass", None)
+    cfg.events.pop("hand_friction", None)
+    cfg.events.pop("box_friction", None)
+    cfg.events.pop("base_com", None)
+    cfg.events.pop("add_joint_default_pos", None)
+    cfg.events.pop("foot_friction", None)
+
+    motion_cmd.pose_range = {}
+    motion_cmd.velocity_range = {}
+    motion_cmd.object_pose_range = {}
+    motion_cmd.object_velocity_range = {}
+    motion_cmd.joint_position_range = (0.0, 0.0)
 
   return cfg

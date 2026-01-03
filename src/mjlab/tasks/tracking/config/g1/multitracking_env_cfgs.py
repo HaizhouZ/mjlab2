@@ -9,7 +9,6 @@ from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.managers.manager_term_config import (
   ObservationTermCfg,
 )
-from mjlab.tasks.tracking.mdp import MultiMotionCommandCfg
 
 from .env_cfgs import unitree_g1_flat_tracking_env_cfg_box
 
@@ -24,7 +23,7 @@ def unitree_g1_flat_multitracking_env_cfg_box(
   )
 
   assert cfg.commands is not None
-  cfg.commands["motion"] = MultiMotionCommandCfg(
+  cfg.commands["motion"] = mdp.MultiMotionCommandCfg(
     asset_name="robot",
     anchor_body_name="torso_link",
     body_names=(

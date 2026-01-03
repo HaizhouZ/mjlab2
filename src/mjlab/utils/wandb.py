@@ -18,7 +18,7 @@ def download_motions_from_wandb(
 
   Args:
       wandb_entity: Wandb entity/username (e.g., "ATARITUM")
-      wandb_project: Wandb project name (e.g., "sbto_v1")
+      wandb_project: Wandb project name (e.g., "sbto-v2-motions")
       cache_dir: Directory to cache downloaded artifacts. If None, uses ~/.cache/mjlab/wandb_motions
       artifact_type: Type of artifact to download (default: "motions")
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import torch
 
@@ -412,12 +412,7 @@ def trajectory_encoding(env: ManagerBasedRlEnv, command_name: str) -> torch.Tens
   Returns:
     Flattened trajectory tensor of shape (num_envs, horizon * 72)
   """
-  command = env.command_manager.get_term(command_name)
-  if not isinstance(command, (MotionCommand, MultiMotionCommand)):
-    raise TypeError(
-      f"Expected MotionCommand or MultiMotionCommand, got {type(command)}"
-    )
-
+  command = cast(MultiMotionCommand, env.command_manager.get_term(command_name))
   horizon = _get_horizon(command)
 
   # Get trajectory data with horizon
