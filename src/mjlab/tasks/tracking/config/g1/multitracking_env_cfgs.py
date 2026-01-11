@@ -67,14 +67,15 @@ def unitree_g1_flat_multitracking_env_cfg_box(
     ),
     # motion_dir=str(motions_dir),
     # encoder_dir="logs/trajectory_autoencoder/unet_simple/2025-12-25/17-35-56/best_model.jit",
-    encoder_dir="logs/trajectory_autoencoder/unet_simple/2025-12-17/14-04-49/best_model.jit",
-    wandb_entity="ATARITUM",
+    # encoder_dir="logs/trajectory_autoencoder/unet_simple/2025-12-17/14-04-49/best_model.jit",
+    # wandb_entity="ATARITUM",
+    wandb_entity="mim-atari",
     # wandb_project="sbto-v2-top",
-    wandb_project="sbto_v1",
+    wandb_project="multi-trajectory-tracking",
     motion_name_pattern=[".*"],
     debug_vis=True,
     resampling_time_range=(1e9, 1e9),
-    horizon=32,
+    horizon=1,
   )
 
   # Apply play mode overrides.
