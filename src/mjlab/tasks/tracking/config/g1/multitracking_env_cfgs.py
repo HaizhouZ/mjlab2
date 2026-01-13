@@ -12,6 +12,7 @@ from mjlab.managers.manager_term_config import (
 
 from .env_cfgs import unitree_g1_flat_tracking_env_cfg_box
 
+import os
 
 def unitree_g1_flat_multitracking_env_cfg_box(
   has_state_estimation: bool = True,
@@ -75,7 +76,7 @@ def unitree_g1_flat_multitracking_env_cfg_box(
     motion_name_pattern=[".*"],
     debug_vis=True,
     resampling_time_range=(1e9, 1e9),
-    horizon=1,
+    horizon=int(os.environ.get("MJLAB_MOTION_HORIZON", 1)), # Set horizon from environment variable or default to 1
   )
 
   # Apply play mode overrides.

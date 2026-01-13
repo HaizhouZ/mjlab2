@@ -304,7 +304,10 @@ def launch_training(task_id: str, args: TrainConfig | None = None):
         args.agent.run_name = motion_name
 
   # Create log directory once before launching workers.
-  log_root_path = Path("logs") / "rsl_rl" / args.agent.experiment_name
+  # log_root_path = Path("logs") / "rsl_rl" / args.agent.experiment_name
+  log_root_path = os.environ.get("MJLAB_LOG_PATH", None)
+  assert log_root_path is not None, "Environment variable MJLAB_LOG_PATH must be set."
+  log_root_path = Path(log_root_path) / args.agent.experiment_name
   log_root_path.resolve()
   log_dir_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
   if args.agent.run_name:
