@@ -149,6 +149,7 @@ class MotionLoader:
         self._object_ang_vel_w = None
     else:
       self._object_pos_w = None
+      delattr(self, "_object_pos_w")  # Remove attribute if not present
       self._object_quat_w = None
       self._object_lin_vel_w = None
       self._object_ang_vel_w = None
@@ -267,18 +268,22 @@ class MultiMotionLoader:
     for pattern in motion_name_pattern:
       regex = re.compile(pattern)
       for d in motion_dir_path.iterdir():
+        # print(f"[INFO] Checking directory: {d}")
+        # print(f"[INFO] Using pattern: {pattern}")
         if not d.is_dir() or not regex.match(d.name):
           continue
-
         # Check if motion.npz exists directly in this directory
         motion_file = d / "motion.npz"
         if motion_file.exists():
           traj_dirs.append((d, motion_file))
+          # print(f"[INFO] Found motion file: {motion_file}")
         else:
           # Check for motion.npz in subdirectories (handles nested structure from wandb downloads)
           for motion_candidate in d.rglob("motion.npz"):
-            traj_dirs.append((d, motion_candidate))
-            break  # Only take the first match per directory
+            # motion_name = motion_candidate.parent.name
+            traj_dirs.append((motion_candidate.parent, motion_candidate))
+            # print(f"[INFO] Found motion file: {motion_candidate}")
+            # break  # Only take the first match per directory
 
     if not traj_dirs:
       raise ValueError(
@@ -1596,7 +1601,7 @@ class MultiMotionCommand(CommandTerm):
     # Set motion_name_pattern to match all if not explicitly set
     if self.cfg.motion_name_pattern == [".*"]:
       self.cfg.motion_name_pattern = [".*"]
-
+    # print("motion name patterns:", self.cfg.motion_name_pattern)
     # Load multiple motions
     self.motion_loader = MultiMotionLoader(
       motion_dir=motion_dir,

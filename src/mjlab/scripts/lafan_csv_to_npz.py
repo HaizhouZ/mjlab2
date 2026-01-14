@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -15,8 +16,6 @@ from mjlab.utils.lab_api.math import (
   quat_mul,
   quat_slerp,
 )
-from mjlab.viewer.offscreen_renderer import OffscreenRenderer
-from mjlab.viewer.viewer_config import ViewerConfig
 
 
 class MotionLoader:
@@ -189,21 +188,20 @@ def run_sim(
   output_name,
   render,
   line_range,
-  renderer: OffscreenRenderer | None = None,
+  output_path,
 ):
-  
-  import wandb
-  REGISTRY = "motions"
-  COLLECTION = output_name
-  run = wandb.init(project="csv_to_npz", name=COLLECTION)
+  # import wandb
+  # REGISTRY = "motions"
+  # COLLECTION = output_name
+  # run = wandb.init(project="csv_to_npz", name=COLLECTION)
   # check if file exists on wandb
-  try:
-    artifact = run.use_artifact(f"wandb-registry-{REGISTRY}/{COLLECTION}:latest")
-    print(f"[INFO]: Motion already exists on wandb: {COLLECTION}")
-    wandb.finish()
-    return
-  except:
-    pass
+  # try:
+  #   run.use_artifact(f"wandb-registry-{REGISTRY}/{COLLECTION}:latest")
+  #   print(f"[INFO]: Motion already exists on wandb: {COLLECTION}")
+  #   wandb.finish()
+  #   return
+  # except Exception:
+  #   pass
 
   motion = MotionLoader(
     motion_file=input_file,
@@ -227,7 +225,7 @@ def run_sim(
   }
   file_saved = False
 
-  frames = []
+  # frames = []
   scene.reset()
 
   print(f"\nStarting simulation with {motion.output_frames} frames...")
@@ -273,9 +271,6 @@ def run_sim(
 
     sim.forward()
     scene.update(sim.mj_model.opt.timestep)
-    if render and renderer is not None:
-      renderer.update(sim.data)
-      frames.append(renderer.render())
 
     if not file_saved:
       log["joint_pos"].append(robot.data.joint_pos[0, :].cpu().numpy().copy())
@@ -290,10 +285,16 @@ def run_sim(
       )
 
       torch.testing.assert_close(
-        robot.data.body_link_lin_vel_w[0, 0], motion_base_lin_vel[0], atol=1e-4, rtol=1e-4
+        robot.data.body_link_lin_vel_w[0, 0],
+        motion_base_lin_vel[0],
+        atol=1e-4,
+        rtol=1e-4,
       )
       torch.testing.assert_close(
-        robot.data.body_link_ang_vel_w[0, 0], motion_base_ang_vel[0], atol=1e-4, rtol=1e-4
+        robot.data.body_link_ang_vel_w[0, 0],
+        motion_base_ang_vel[0],
+        atol=1e-4,
+        rtol=1e-4,
       )
 
       frame_count += 1
@@ -318,36 +319,29 @@ def run_sim(
         ):
           log[k] = np.stack(log[k], axis=0)
 
-        print("Saving to /tmp/motion.npz...")
-        np.savez("/tmp/motion.npz", **log)  # type: ignore[arg-type]
+        output_dir = Path(output_path) / output_name
+        output_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Saving to {output_dir}/motion.npz...")
+        np.savez(f"{output_dir}/motion.npz", **log)  # type: ignore[arg-type]
 
-        print("Uploading to Weights & Biases...")
+        # print("Uploading to Weights & Biases...")
 
-        logged_artifact = run.log_artifact(
-          artifact_or_path="/tmp/motion.npz", name=COLLECTION, type=REGISTRY
-        )
-        run.link_artifact(
-          artifact=logged_artifact,
-          target_path=f"wandb-registry-{REGISTRY}/{COLLECTION}",
-        )
-        print(f"[INFO]: Motion saved to wandb registry: {REGISTRY}/{COLLECTION}")
+        # logged_artifact = run.log_artifact(
+        #   artifact_or_path="/tmp/motion.npz", name=COLLECTION, type=REGISTRY
+        # )
+        # run.link_artifact(
+        #   artifact=logged_artifact,
+        #   target_path=f"wandb-registry-{REGISTRY}/{COLLECTION}",
+        # )
+        # print(f"[INFO]: Motion saved to wandb registry: {REGISTRY}/{COLLECTION}")
 
-        if render:
-          from moviepy import ImageSequenceClip
-
-          print("Creating video...")
-          clip = ImageSequenceClip(frames, fps=output_fps)
-          clip.write_videofile("./motion.mp4")
-
-          print("Logging video to wandb...")
-          wandb.log({"motion_video": wandb.Video("./motion.mp4", format="mp4")})
-
-        wandb.finish()
+        # wandb.finish()
 
 
 def per_file_process(
   input_file: str,
   output_name: str,
+  output_path: str,
   input_fps: float = 30.0,
   output_fps: float = 50.0,
   device: str = "cuda:0",
@@ -410,27 +404,56 @@ def per_file_process(
     ],
     input_fps=input_fps,
     input_file=input_file,
+    output_path=output_path,
     output_fps=output_fps,
     output_name=output_name,
     render=False,
     line_range=line_range,
   )
 
-def main(folder_path: str, input_fps: float = 30.0, output_fps: float = 50.0):
+
+def main(
+  folder_path: str,
+  output_path: str = "/tmp/lafan",
+  input_fps: float = 30.0,
+  output_fps: float = 50.0,
+):
   import os
+
   for filename in os.listdir(folder_path):
     if filename.endswith(".csv"):
+      # check if file already exists
+      output_dir = Path(output_path) / filename.replace(".csv", "")
+      if (output_dir / "motion.npz").exists():
+        print(f"File {output_dir / 'motion.npz'} already exists. Skipping.")
+        continue
+
       input_file = os.path.join(folder_path, filename)
       output_name = filename.replace(".csv", "")
       print(f"Processing file: {input_file}")
       per_file_process(
         input_file=input_file,
         output_name=output_name,
+        output_path=output_path,
         input_fps=input_fps,
         output_fps=output_fps,
         device="cuda:0",
         line_range=None,
       )
+  # upload the whole lafan folder to wandb
+  import wandb
+
+  REGISTRY = "motions"
+  COLLECTION = "lafan_dataset"
+  run = wandb.init(project="csv_to_npz", name=COLLECTION)
+  # artifact = run.use_artifact(f"wandb-registry-{REGISTRY}/{COLLECTION}:latest")
+  # artifact.add_dir(output_path)
+  artifact = run.log_artifact(output_path, name=COLLECTION, type=REGISTRY)
+  run.link_artifact(
+    artifact=artifact,
+    target_path=f"wandb-registry-{REGISTRY}/{COLLECTION}",
+  )
+  wandb.finish()
 
 
 if __name__ == "__main__":

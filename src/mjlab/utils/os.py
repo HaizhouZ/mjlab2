@@ -27,7 +27,7 @@ def update_assets(
     recursive: If True, recursively search subdirectories.
   """
   for f in Path(path).glob(glob):
-    if f.name.startswith('.'):
+    if f.name.startswith("."):
       continue
     if f.is_file():
       asset_key = f"{meshdir}/{f.name}" if meshdir else f.name

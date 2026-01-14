@@ -123,9 +123,9 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
       self.body_quat_w[time_step_clamped],
       self.body_lin_vel_w[time_step_clamped],
       self.body_ang_vel_w[time_step_clamped],
-      self.joint_pd_targets[time_step_clamped]
-      if self.joint_pd_targets is not None
-      else torch.zeros(len(time_step_clamped), self.joint_pd_targets.shape[1]),
+      # self.joint_pd_targets[time_step_clamped]
+      # if self.joint_pd_targets is not None
+      # else torch.zeros(len(time_step_clamped), self.joint_pd_targets.shape[1]),
     )
 
     # Only include object outputs if object data exists
@@ -164,7 +164,7 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
       "body_quat_w",
       "body_lin_vel_w",
       "body_ang_vel_w",
-      "joint_pd_targets",
+      # "joint_pd_targets",
     ]
 
     # Only include object outputs if object data exists

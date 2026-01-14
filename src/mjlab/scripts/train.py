@@ -4,7 +4,6 @@ import logging
 import os
 import sys
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
 from pathlib import Path
 from typing import Literal, cast
 
@@ -16,6 +15,7 @@ from mjlab.rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
 from mjlab.tasks.tracking.mdp import MotionCommandCfg, MultiMotionCommandCfg
 from mjlab.utils.gpu import select_gpus
+from mjlab.utils.log_dir import get_log_dir
 from mjlab.utils.os import dump_yaml, get_checkpoint_path, get_wandb_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
 from mjlab.utils.wandb import get_wandb_entity_and_project, get_wandb_motion_cache_dir
@@ -305,14 +305,17 @@ def launch_training(task_id: str, args: TrainConfig | None = None):
 
   # Create log directory once before launching workers.
   # log_root_path = Path("logs") / "rsl_rl" / args.agent.experiment_name
-  log_root_path = os.environ.get("MJLAB_LOG_PATH", None)
-  assert log_root_path is not None, "Environment variable MJLAB_LOG_PATH must be set."
-  log_root_path = Path(log_root_path) / args.agent.experiment_name
-  log_root_path.resolve()
-  log_dir_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-  if args.agent.run_name:
-    log_dir_name += f"_{args.agent.run_name}"
-  log_dir = log_root_path / log_dir_name
+  # log_root_path = os.environ.get("MJLAB_LOG_PATH", None)
+  # assert log_root_path is not None, "Environment variable MJLAB_LOG_PATH must be set."
+  # log_root_path = Path(log_root_path) / args.agent.experiment_name
+  # log_root_path.resolve()
+  # log_dir_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+  # if args.agent.run_name:
+  #   log_dir_name += f"_{args.agent.run_name}"
+  # log_dir = log_root_path / log_dir_name
+  log_dir = get_log_dir(
+    experiment_name=args.agent.experiment_name, run_name=args.agent.run_name
+  )
 
   # Select GPUs based on CUDA_VISIBLE_DEVICES and user specification.
   selected_gpus, num_gpus = select_gpus(args.gpu_ids)

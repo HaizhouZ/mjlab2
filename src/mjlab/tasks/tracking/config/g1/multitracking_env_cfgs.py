@@ -1,5 +1,7 @@
 """Unitree G1 flat tracking environment configurations."""
 
+import os
+
 import mjlab.tasks.tracking.mdp as mdp
 from mjlab.asset_zoo.robots import (
   get_g1_robot_cfg,
@@ -10,9 +12,64 @@ from mjlab.managers.manager_term_config import (
   ObservationTermCfg,
 )
 
-from .env_cfgs import unitree_g1_flat_tracking_env_cfg_box
+from .env_cfgs import (
+  unitree_g1_flat_tracking_env_cfg,
+  unitree_g1_flat_tracking_env_cfg_box,
+)
 
-import os
+
+def unitree_g1_flat_multitracking_env_cfg(
+  has_state_estimation: bool = True,
+  play: bool = False,
+) -> ManagerBasedRlEnvCfg:
+  """Create Unitree G1 flat terrain multi-tracking configuration with multiple motion trajectories."""
+  cfg = unitree_g1_flat_tracking_env_cfg(
+    has_state_estimation=has_state_estimation, play=play
+  )
+
+  assert cfg.commands is not None
+  cfg.commands["motion"] = mdp.MultiMotionCommandCfg(
+    asset_name="robot",
+    anchor_body_name="torso_link",
+    body_names=(
+      "pelvis",
+      "left_hip_roll_link",
+      "left_knee_link",
+      "left_ankle_roll_link",
+      "right_hip_roll_link",
+      "right_knee_link",
+      "right_ankle_roll_link",
+      "torso_link",
+      "left_shoulder_roll_link",
+      "left_elbow_link",
+      "left_wrist_yaw_link",
+      "right_shoulder_roll_link",
+      "right_elbow_link",
+      "right_wrist_yaw_link",
+    ),
+    eef_body_names=(
+      "left_wrist_yaw_link",
+      "right_wrist_yaw_link",
+      "left_ankle_roll_link",
+      "right_ankle_roll_link",
+    ),
+    motion_name_pattern=[".*"],
+    debug_vis=True,
+    wandb_entity="mim-atari",
+    wandb_project="g1-multitracking",
+    resampling_time_range=(1e9, 1e9),
+    horizon=int(
+      os.environ.get("MJLAB_MOTION_HORIZON", 1)
+    ),  # Set horizon from environment variable or default to 1
+  )
+
+  # Apply play mode overrides.
+  if play:
+    cfg.commands["motion"].motion_assignment_mode = "best"
+    cfg.commands["motion"].sampling_mode = "start"
+
+  return cfg
+
 
 def unitree_g1_flat_multitracking_env_cfg_box(
   has_state_estimation: bool = True,
@@ -68,15 +125,14 @@ def unitree_g1_flat_multitracking_env_cfg_box(
     ),
     # motion_dir=str(motions_dir),
     # encoder_dir="logs/trajectory_autoencoder/unet_simple/2025-12-25/17-35-56/best_model.jit",
-    # encoder_dir="logs/trajectory_autoencoder/unet_simple/2025-12-17/14-04-49/best_model.jit",
-    # wandb_entity="ATARITUM",
-    wandb_entity="mim-atari",
+    encoder_dir="logs/trajectory_autoencoder/unet_simple/2025-12-17/14-04-49/best_model.jit",
+    wandb_entity="ATARITUM",
     # wandb_project="sbto-v2-top",
-    wandb_project="multi-trajectory-tracking",
+    wandb_project="sbto_v1",
     motion_name_pattern=[".*"],
     debug_vis=True,
     resampling_time_range=(1e9, 1e9),
-    horizon=int(os.environ.get("MJLAB_MOTION_HORIZON", 1)), # Set horizon from environment variable or default to 1
+    horizon=32,
   )
 
   # Apply play mode overrides.
