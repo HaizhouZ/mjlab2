@@ -131,9 +131,10 @@ def run_play(task: str, cfg: PlayConfig):
           if isinstance(motion_cmd, MotionCommandCfg):
             motion_cmd.motion_file = str(Path(art.download()) / "motion.npz")
           elif isinstance(motion_cmd, MultiMotionCommandCfg):
-            motion_dir = str(Path(art.download()) / "motions")
+            # motion_dir = str(Path(art.download()) / "motions")
+            motion_dir = str(Path(art.download()))
             motion_cmd.motion_dir = motion_dir
-            motion_cmd.traj_name_patterns = [".*"]
+            motion_cmd.motion_name_pattern = [".*"]
 
   log_dir: Path | None = None
   resume_path: Path | None = None

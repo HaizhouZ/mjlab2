@@ -63,6 +63,19 @@ def unitree_g1_flat_multitracking_env_cfg(
     ),  # Set horizon from environment variable or default to 1
   )
 
+  ###
+  # Trajectory Encoding Observation Terms
+  ###
+  cfg.observations["policy"].terms["future_traj"] = ObservationTermCfg(
+    func=mdp.trajectory_encoding,
+    params={"command_name": "motion"},
+  )
+
+  cfg.observations["critic"].terms["future_traj"] = ObservationTermCfg(
+    func=mdp.trajectory_encoding,
+    params={"command_name": "motion"},
+  )
+
   # Apply play mode overrides.
   if play:
     cfg.commands["motion"].motion_assignment_mode = "best"
