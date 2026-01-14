@@ -6,13 +6,13 @@ from pathlib import Path
 def get_log_dir(
   experiment_name: str, run_name: str | None = None, parent_dir: str = "rsl_rl"
 ) -> Path:
-  env_log_dir: str | None = os.environ.get("MJLAB_LOG_DIR", None)
+  env_log_dir: str | None = os.environ.get("MJLAB_LOG_PATH", None)
   log_root_path: Path
   if env_log_dir is not None:
-    print(f"Using log directory from MJLAB_LOG_DIR: {env_log_dir}")
+    print(f"Using log directory from MJLAB_LOG_PATH: {env_log_dir}")
     log_root_path = Path(env_log_dir)
   else:
-    print("[INFO] MJLAB_LOG_DIR not set, using default log directory.")
+    print("[INFO] MJLAB_LOG_PATH not set, using default log directory.")
     log_root_path = Path("logs") / parent_dir
 
   log_root_path.resolve()
