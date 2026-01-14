@@ -110,7 +110,8 @@ def run_train(
       if isinstance(motion_cmd, MotionCommandCfg):
         motion_cmd.motion_file = str(Path(artifact.download()) / "motion.npz")
       elif isinstance(motion_cmd, MultiMotionCommandCfg):
-        motion_dir = str(Path(artifact.download()) / "motions")
+        # motion_dir = str(Path(artifact.download()) / "motions")
+        motion_dir = str(artifact.download())
         motion_cmd.motion_dir = motion_dir
         motion_cmd.motion_name_pattern = cfg.motion_name_pattern
     elif cfg.motion_file is not None:
