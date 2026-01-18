@@ -1170,22 +1170,10 @@ class MultiMotionCommand(CommandTerm):
     # Global step counter used for aging calculations
     self._global_clip_step = 0
 
-    # Assign initial clips to each environment based on assignment mode
-    if self.cfg.motion_assignment_mode == "linear":
-      # env 0 -> clip 0, env1 -> clip1, wrap
-      self.clip_indices = (
-        torch.arange(self.num_envs, device=self.device) % self.num_clips
-      )
-    elif self.cfg.motion_assignment_mode == "best":
-      # fallback to linear assignment for clips
-      self.clip_indices = (
-        torch.arange(self.num_envs, device=self.device) % self.num_clips
-      )
-    else:
-      # random
-      self.clip_indices = torch.randint(
-        0, self.num_clips, (self.num_envs,), device=self.device
-      )
+    # Assign initial clips to each environment based on assignment mode randomly
+    self.clip_indices = torch.randint(
+      0, self.num_clips, (self.num_envs,), device=self.device
+    )
 
     # Derive motion_indices and absolute time_steps from clip assignment
     self.motion_indices = self.clip_traj_indices[self.clip_indices]
@@ -1873,7 +1861,6 @@ class MultiMotionCommandCfg(CommandTermCfg):
   velocity_range: dict[str, tuple[float, float]] = field(default_factory=dict)
   joint_position_range: tuple[float, float] = (-0.52, 0.52)
   sampling_mode: Literal["adaptive", "uniform", "start"] = "uniform"
-  motion_assignment_mode: Literal["random", "linear", "best"] = "random"
   horizon: int = 0
   """Horizon for future motion data. If > 0, properties will return sequences
   of shape (num_envs, horizon, ...) instead of (num_envs, ...). 
