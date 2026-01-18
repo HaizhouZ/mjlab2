@@ -420,8 +420,6 @@ def trajectory_encoding(env: ManagerBasedRlEnv, command_name: str) -> torch.Tens
   joint_vel = command.get_joint_vel_horizon(horizon)  # (num_envs, horizon, 29)
   anchor_pos = command.get_anchor_pos_w_horizon(horizon)  # (num_envs, horizon, 3)
   anchor_quat = command.get_anchor_quat_w_horizon(horizon)  # (num_envs, horizon, 4)
-  object_pos = command.get_object_pos_w_horizon(horizon)  # (num_envs, horizon, 3)
-  object_quat = command.get_object_quat_w_horizon(horizon)  # (num_envs, horizon, 4)
   # Concatenate along feature dimension: (num_envs, horizon, 72)
   trajectory = torch.cat(
     [
@@ -429,8 +427,6 @@ def trajectory_encoding(env: ManagerBasedRlEnv, command_name: str) -> torch.Tens
       joint_vel,  # (num_envs, horizon, 29)
       anchor_pos,  # (num_envs, horizon, 3)
       anchor_quat,  # (num_envs, horizon, 4)
-      object_pos,  # (num_envs, horizon, 3)
-      object_quat,  # (num_envs, horizon, 4)
     ],
     dim=2,
   )
