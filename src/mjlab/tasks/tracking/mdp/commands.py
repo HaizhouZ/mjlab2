@@ -1863,7 +1863,7 @@ class MultiMotionCommandCfg(CommandTermCfg):
   # Clip segmentation: length of each clip in seconds and fraction overlap between
   # consecutive clips (0.0 = no overlap, 0.5 = 50% overlap). When > 0 clips may
   # intersect by up to this fraction of clip length (randomized per-trajectory).
-  clip_seconds: float = 1.0
+  clip_seconds: float = 10.0
   clip_overlap_fraction: float = 0.0  # must be in [0.0, 1.0)
   clip_age_tau: float = 1000.0
   # Hard-example mining probability for adaptive sampling
