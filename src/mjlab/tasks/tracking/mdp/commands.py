@@ -569,9 +569,7 @@ class MotionCommand(CommandTerm):
     # - binary indicator if the top-1 action was sampled
     self.metrics["sampling_entropy"] = torch.zeros(self.num_envs, device=self.device)
     # probability mass of the top-1 sampled bin/clip
-    self.metrics["sampling_top1_probability"] = torch.zeros(
-      self.num_envs, device=self.device
-    )
+    self.metrics["sampling_top1_prob"] = torch.zeros(self.num_envs, device=self.device)
     # normalized clip index (in [0,1]) of the top-1 sampled bin/clip
     self.metrics["sampling_top1_clip_index"] = torch.zeros(
       self.num_envs, device=self.device
@@ -771,16 +769,14 @@ class MotionCommand(CommandTerm):
     H_norm = H / math.log(self.bin_count)
     pmax, imax = sampling_probabilities.max(dim=0)
     self.metrics["sampling_entropy"][:] = H_norm
-    self.metrics["sampling_top1_probability"][:] = pmax
-    self.metrics["sampling_top1_clip_index"][:] = imax.float() / self.bin_count
+    self.metrics["sampling_top1_prob"][:] = pmax
 
   def _uniform_sampling(self, env_ids: torch.Tensor):
     self.time_steps[env_ids] = torch.randint(
       0, self.motion.time_step_total, (len(env_ids),), device=self.device
     )
     self.metrics["sampling_entropy"][:] = 1.0  # Maximum entropy for uniform.
-    self.metrics["sampling_top1_probability"][:] = 1.0 / self.bin_count
-    self.metrics["sampling_top1_clip_index"][:] = 0.5  # No specific bin preference.
+    self.metrics["sampling_top1_prob"][:] = 1.0 / self.bin_count
 
   def _resample_command(self, env_ids: torch.Tensor):
     if self.cfg.sampling_mode == "start":
@@ -1202,9 +1198,7 @@ class MultiMotionCommand(CommandTerm):
     self.metrics["error_joint_pos"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["error_joint_vel"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["sampling_entropy"] = torch.zeros(self.num_envs, device=self.device)
-    self.metrics["sampling_top1_probability"] = torch.zeros(
-      self.num_envs, device=self.device
-    )
+    self.metrics["sampling_top1_prob"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["sampling_top1_clip_index"] = torch.zeros(
       self.num_envs, device=self.device
     )
@@ -1481,10 +1475,9 @@ class MultiMotionCommand(CommandTerm):
     # or exposed as config later.
 
     # Use configurable weights for tracking-error accumulation
-    aw = float(getattr(self.cfg, "tracking_anchor_weight", 1.0))
-    jw = float(getattr(self.cfg, "tracking_joint_weight", 0.05))
     tracking_error = (
-      aw * self.metrics["error_anchor_pos"] + jw * self.metrics["error_joint_pos"]
+      self.cfg.tracking_anchor_weight * self.metrics["error_anchor_pos"]
+      + self.cfg.tracking_joint_weight * self.metrics["error_joint_pos"]
     )
     # Update per-clip EMA from current batch of envs. We aggregate per-clip
     # mean error across envs that currently map to each clip, then update
@@ -1590,17 +1583,13 @@ class MultiMotionCommand(CommandTerm):
     H_norm = H / math.log(float(self.num_clips) + 1e-12)
     pmax, imax = hard_probs.max(dim=0)
     if nonhard_idx.numel() > 0:
-      self.metrics["sampling_entropy"][env_ids[nonhard_idx]] = 1.0
-      self.metrics["sampling_top1_probability"][env_ids[nonhard_idx]] = 1.0 / float(
-        self.num_clips
-      )
-      self.metrics["sampling_top1_clip_index"][env_ids[nonhard_idx]] = 0.5
+      env_ids_nonhard = env_ids[nonhard_idx]
+      self.metrics["sampling_entropy"][env_ids_nonhard] = 1.0
+      self.metrics["sampling_top1_prob"][env_ids_nonhard] = 1.0 / float(self.num_clips)
     if hard_idx.numel() > 0:
-      self.metrics["sampling_entropy"][env_ids[hard_idx]] = H_norm
-      self.metrics["sampling_top1_probability"][env_ids[hard_idx]] = pmax
-      self.metrics["sampling_top1_clip_index"][env_ids[hard_idx]] = (
-        imax.float() / float(self.num_clips)
-      )
+      env_ids_hard = env_ids[hard_idx]
+      self.metrics["sampling_entropy"][env_ids_hard] = H_norm
+      self.metrics["sampling_top1_prob"][env_ids_hard] = pmax
 
   def _uniform_sampling(self, env_ids: torch.Tensor):
     # If clips are present, perform uniform CLIP sampling (choose clip then offset)
@@ -1615,8 +1604,7 @@ class MultiMotionCommand(CommandTerm):
     self.time_steps[env_ids] = self.clip_start_frames[clip_choices] + offsets
     # sampling metrics
     self.metrics["sampling_entropy"][env_ids] = 1.0
-    self.metrics["sampling_top1_probability"][env_ids] = 1.0 / float(self.num_clips)
-    self.metrics["sampling_top1_clip_index"][env_ids] = 0.5
+    self.metrics["sampling_top1_prob"][env_ids] = 1.0 / float(self.num_clips)
     return
 
   def _resample_command(self, env_ids: torch.Tensor):
@@ -1860,7 +1848,7 @@ class MultiMotionCommandCfg(CommandTermCfg):
   pose_range: dict[str, tuple[float, float]] = field(default_factory=dict)
   velocity_range: dict[str, tuple[float, float]] = field(default_factory=dict)
   joint_position_range: tuple[float, float] = (-0.52, 0.52)
-  sampling_mode: Literal["adaptive", "uniform", "start"] = "uniform"
+  sampling_mode: Literal["adaptive", "uniform", "start"] = "adaptive"
   horizon: int = 0
   """Horizon for future motion data. If > 0, properties will return sequences
   of shape (num_envs, horizon, ...) instead of (num_envs, ...). 

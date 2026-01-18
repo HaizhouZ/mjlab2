@@ -149,7 +149,7 @@ def unitree_g1_flat_multitracking_env_cfg_box(
 
   # Apply play mode overrides.
   if play:
-    cfg.commands["motion"].sampling_mode = "start"
+    cfg.commands["motion"].sampling_mode = "uniform"
 
   return cfg
 
