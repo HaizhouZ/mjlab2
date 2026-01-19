@@ -1474,11 +1474,26 @@ class MultiMotionCommand(CommandTerm):
     # error and joint position error. This is a heuristic; it can be adjusted
     # or exposed as config later.
 
-    # Use configurable weights for tracking-error accumulation
-    tracking_error = (
-      self.cfg.tracking_anchor_weight * self.metrics["error_anchor_pos"]
-      + self.cfg.tracking_joint_weight * self.metrics["error_joint_pos"]
-    )
+    # Compute tracking error from the set of motion-related reward terms.
+    # We form a simple sum over the per-term instantaneous rewards stored in
+    # RewardManager._step_reward for the motion-related terms defined in the
+    # tracking env config. We negate the sum so higher tracking_error means
+    # worse performance (reward is higher when performance is better).
+    rm = self._env.reward_manager
+    # List of reward term names related to tracking (must match env config)
+    motion_terms = [
+      "motion_global_root_pos",
+      "motion_global_root_ori",
+      "motion_body_pos",
+      "motion_body_ori",
+      "motion_body_lin_vel",
+      "motion_body_ang_vel",
+    ]
+    # Gather indices for the listed terms (assume they exist in RewardManager)
+    indices = [rm._term_names.index(name) for name in motion_terms]
+    # Sum the per-term instantaneous rewards (these entries already include term weight)
+    per_term_slice = rm._step_reward[:, indices]  # shape: (num_envs, len(indices))
+    tracking_error = -torch.sum(per_term_slice, dim=1)
     # Update per-clip EMA from current batch of envs. We aggregate per-clip
     # mean error across envs that currently map to each clip, then update
     # an exponential moving average so the estimate remains bounded and
@@ -1864,14 +1879,12 @@ class MultiMotionCommandCfg(CommandTermCfg):
   # consecutive clips (0.0 = no overlap, 0.5 = 50% overlap). When > 0 clips may
   # intersect by up to this fraction of clip length (randomized per-trajectory).
   clip_seconds: float = 10.0
-  clip_overlap_fraction: float = 0.0  # must be in [0.0, 1.0)
-  clip_age_tau: float = 1000.0
+  clip_overlap_fraction: float = 0.2  # must be in [0.0, 1.0)
+  # time constant for clip age-based error decay, the higher the value the slower the decay
+  clip_age_tau: float = 100.0
   # Hard-example mining probability for adaptive sampling
   hard_mining_prob: float = 0.5
   # EMA alpha for per-clip tracking error estimation
   clip_ema_alpha: float = 0.1
-  # Tracking error combination weights used for clip sampling
-  tracking_anchor_weight: float = 1.0
-  tracking_joint_weight: float = 0.1
   # Adaptive sampling sharpness (higher => prioritize high-error clips)
-  adaptive_beta: float = 1.0
+  adaptive_beta: float = 10.0
