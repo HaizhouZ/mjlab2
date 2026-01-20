@@ -16,7 +16,6 @@ from mjlab.envs.mdp.actions import (
 from mjlab.managers.manager_term_config import (
   EventTermCfg,
   ObservationGroupCfg,
-  ObservationTermCfg,
   RewardTermCfg,
   TerminationTermCfg,
 )
@@ -24,7 +23,6 @@ from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
 from mjlab.tasks.tracking.mdp import MotionCommandCfg
 from mjlab.tasks.tracking.tracking_env_cfg import make_tracking_env_cfg
-from mjlab.utils.noise import UniformNoiseCfg as Unoise
 
 _MAX_ANG_VEL = 500 * math.pi / 180.0  # [rad/s]
 
@@ -106,7 +104,7 @@ def unitree_g1_flat_tracking_env_cfg(
     cfg.episode_length_s = int(1e9)
 
     cfg.observations["policy"].enable_corruption = False
-    # cfg.events.pop("push_robot", None)
+    cfg.events.pop("push_robot", None)
     # cfg.events.pop("base_com", None)
     # cfg.events.pop("add_joint_default_pos", None)
     # cfg.events.pop("foot_friction", None)
@@ -118,8 +116,8 @@ def unitree_g1_flat_tracking_env_cfg(
     # cfg.terminations["anchor_ori"] = None
 
     # # Disable RSI randomization.
-    # motion_cmd.pose_range = {}
-    # motion_cmd.velocity_range = {}
+    motion_cmd.pose_range = {}
+    motion_cmd.velocity_range = {}
 
     motion_cmd.sampling_mode = "start"
 
@@ -479,66 +477,66 @@ def unitree_g1_flat_tracking_env_cfg_box(
   ###
   # Actor (Policy) Object Tracking Observation Terms
   ###
-  cfg.observations["policy"].terms["object_pos_b"] = ObservationTermCfg(
-    func=mdp.object_pos_b,
-    noise=Unoise(n_min=-0.1, n_max=0.1),
-    params={"command_name": "motion"},
-  )
-  # cfg.observations["policy"].terms["object_ori_b"] = ObservationTermCfg(
-  #   func=mdp.object_ori_b,
-  #   noise=Unoise(n_min=-0.05, n_max=0.05),
+  # cfg.observations["policy"].terms["object_pos_b"] = ObservationTermCfg(
+  #   func=mdp.object_pos_b,
+  #   noise=Unoise(n_min=-0.1, n_max=0.1),
   #   params={"command_name": "motion"},
   # )
-  # cfg.observations["policy"].terms["object_lin_vel_w"] = ObservationTermCfg(
-  #   func=mdp.object_lin_vel_w,
-  #   noise=Unoise(n_min=-0.25, n_max=0.25),
-  #   params={"asset_cfg": SceneEntityCfg("object")},
+  # # cfg.observations["policy"].terms["object_ori_b"] = ObservationTermCfg(
+  # #   func=mdp.object_ori_b,
+  # #   noise=Unoise(n_min=-0.05, n_max=0.05),
+  # #   params={"command_name": "motion"},
+  # # )
+  # # cfg.observations["policy"].terms["object_lin_vel_w"] = ObservationTermCfg(
+  # #   func=mdp.object_lin_vel_w,
+  # #   noise=Unoise(n_min=-0.25, n_max=0.25),
+  # #   params={"asset_cfg": SceneEntityCfg("object")},
+  # # )
+  # # cfg.observations["policy"].terms["object_ang_vel_w"] = ObservationTermCfg(
+  # #   func=mdp.object_ang_vel_w,
+  # #   noise=Unoise(n_min=-0.25, n_max=0.25),
+  # #   params={"asset_cfg": SceneEntityCfg("object")},
+  # # )
+  # cfg.observations["policy"].terms["object_pos_error"] = ObservationTermCfg(
+  #   func=mdp.object_position_error,
+  #   noise=Unoise(n_min=-0.05, n_max=0.05),
+  #   params={"command_name": "motion", "asset_cfg": SceneEntityCfg("object")},
   # )
-  # cfg.observations["policy"].terms["object_ang_vel_w"] = ObservationTermCfg(
-  #   func=mdp.object_ang_vel_w,
-  #   noise=Unoise(n_min=-0.25, n_max=0.25),
-  #   params={"asset_cfg": SceneEntityCfg("object")},
+  # cfg.observations["policy"].terms["object_ori_error"] = ObservationTermCfg(
+  #   func=mdp.object_orientation_error,
+  #   noise=Unoise(n_min=-0.05, n_max=0.05),
+  #   params={"command_name": "motion", "asset_cfg": SceneEntityCfg("object")},
   # )
-  cfg.observations["policy"].terms["object_pos_error"] = ObservationTermCfg(
-    func=mdp.object_position_error,
-    noise=Unoise(n_min=-0.05, n_max=0.05),
-    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("object")},
-  )
-  cfg.observations["policy"].terms["object_ori_error"] = ObservationTermCfg(
-    func=mdp.object_orientation_error,
-    noise=Unoise(n_min=-0.05, n_max=0.05),
-    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("object")},
-  )
 
-  ###
-  # Critic Object Tracking Observation Terms
-  ###
-  cfg.observations["critic"].terms["object_pos_b"] = ObservationTermCfg(
-    func=mdp.object_pos_b, history_length=10, params={"command_name": "motion"}
-  )
-  cfg.observations["critic"].terms["object_ori_b"] = ObservationTermCfg(
-    func=mdp.object_ori_b, history_length=10, params={"command_name": "motion"}
-  )
-  cfg.observations["critic"].terms["object_lin_vel_w"] = ObservationTermCfg(
-    func=mdp.object_lin_vel_w,
-    history_length=10,
-    params={"asset_cfg": SceneEntityCfg("object")},
-  )
-  cfg.observations["critic"].terms["object_ang_vel_w"] = ObservationTermCfg(
-    func=mdp.object_ang_vel_w,
-    history_length=10,
-    params={"asset_cfg": SceneEntityCfg("object")},
-  )
-  cfg.observations["critic"].terms["object_pos_error"] = ObservationTermCfg(
-    func=mdp.object_position_error,
-    history_length=10,
-    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("object")},
-  )
-  cfg.observations["critic"].terms["object_ori_error"] = ObservationTermCfg(
-    func=mdp.object_orientation_error,
-    history_length=10,
-    params={"command_name": "motion", "asset_cfg": SceneEntityCfg("object")},
-  )
+  # ###
+  # # Critic Object Tracking Observation Terms
+  # ###
+  # cfg.observations["critic"].terms["object_pos_b"] = ObservationTermCfg(
+  #   func=mdp.object_pos_b, history_length=10, params={"command_name": "motion"}
+  # )
+  # cfg.observations["critic"].terms["object_ori_b"] = ObservationTermCfg(
+  #   func=mdp.object_ori_b, history_length=10, params={"command_name": "motion"}
+  # )
+  # cfg.observations["critic"].terms["object_lin_vel_w"] = ObservationTermCfg(
+  #   func=mdp.object_lin_vel_w,
+  #   history_length=10,
+  #   params={"asset_cfg": SceneEntityCfg("object")},
+  # )
+  # cfg.observations["critic"].terms["object_ang_vel_w"] = ObservationTermCfg(
+  #   func=mdp.object_ang_vel_w,
+  #   history_length=10,
+  #   params={"asset_cfg": SceneEntityCfg("object")},
+  # )
+  # cfg.observations["critic"].terms["object_pos_error"] = ObservationTermCfg(
+  #   func=mdp.object_position_error,
+  #   history_length=10,
+  #   params={"command_name": "motion", "asset_cfg": SceneEntityCfg("object")},
+  # )
+  # cfg.observations["critic"].terms["object_ori_error"] = ObservationTermCfg(
+  #   func=mdp.object_orientation_error,
+  #   history_length=10,
+  #   params={"command_name": "motion", "asset_cfg": SceneEntityCfg("object")},
+  # )
   # cfg.observations["critic"].terms["object_contact"] = ObservationTermCfg(
   #   func=mdp.contact_indicator,
   #   params={"command_name": "motion"},

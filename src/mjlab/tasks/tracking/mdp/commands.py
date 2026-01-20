@@ -848,7 +848,6 @@ class MotionCommand(CommandTerm):
     self.metrics["error_body_rot"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["error_joint_pos"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["error_joint_vel"] = torch.zeros(self.num_envs, device=self.device)
-    self.metrics["sbto_pd_deviation"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["sampling_entropy"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["sampling_top1_prob"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["sampling_top1_bin"] = torch.zeros(self.num_envs, device=self.device)
@@ -856,71 +855,6 @@ class MotionCommand(CommandTerm):
     # Ghost model created lazily on first visualization
     self._ghost_model: mujoco.MjModel | None = None
     self._ghost_color = np.array(cfg.viz.ghost_color, dtype=np.float32)
-
-    # Object tracking metrics - only if object exists in motion data
-    self.object: Entity | None = self._env.scene.entities.get("object")
-    self._has_object = hasattr(self.motion, "_object_pos_w")
-    if self._has_object:
-      self.metrics["error_object_pos"] = torch.zeros(self.num_envs, device=self.device)
-      self.metrics["error_object_rot"] = torch.zeros(self.num_envs, device=self.device)
-
-    # Contact indicator from motion data
-    self._object_contact = (
-      self.motion.object_contact
-    )  # (time_step_total, num_contacts) or None
-    self._contact_positions = (
-      self.motion.contact_positions
-    )  # (time_step_total, num_contacts, 3) or None
-    if self._object_contact is not None:
-      # Initialize contact reference arrays
-      num_contacts = (
-        self._object_contact.shape[1] if self._object_contact.ndim > 1 else 1
-      )
-      self.ref_object_contact_future = torch.zeros(
-        self.num_envs, 1, num_contacts, dtype=torch.bool, device=self.device
-      )
-      self.ref_object_contact = torch.zeros(
-        self.num_envs, num_contacts, dtype=torch.bool, device=self.device
-      )
-    else:
-      self.ref_object_contact_future = None
-      self.ref_object_contact = None
-
-    # Contact mismatch counter for termination condition
-    self.contact_mismatch_count = torch.zeros(
-      self.num_envs, dtype=torch.long, device=self.device
-    )
-
-    # # Contact target positions (reconstructed from offsets in YAML/config)
-    # # These will be set in _update_command based on object pose and offsets
-    # contact_target_pos_offset = getattr(cfg, "contact_target_pos_offset", None)
-    # contact_eef_pos_offset = getattr(cfg, "contact_eef_pos_offset", None)
-
-    # if contact_target_pos_offset is not None:
-    #   # Convert list of lists to tensor
-    #   if isinstance(contact_target_pos_offset, list):
-    #     self.contact_target_pos_offset = torch.tensor(
-    #       contact_target_pos_offset, dtype=torch.float32, device=self.device
-    #     )  # (num_contacts, 3)
-    #   else:
-    #     self.contact_target_pos_offset = contact_target_pos_offset
-    #   num_contacts = self.contact_target_pos_offset.shape[0]
-    #   self.contact_target_pos_w = torch.zeros(
-    #     self.num_envs, num_contacts, 3, dtype=torch.float32, device=self.device
-    #   )
-    # else:
-    #   self.contact_target_pos_offset = None
-    #   self.contact_target_pos_w = None
-
-    # if contact_eef_pos_offset is not None:
-    #   if isinstance(contact_eef_pos_offset, list):
-    #     self.contact_eef_pos_offset = torch.tensor(
-    #       contact_eef_pos_offset, dtype=torch.float32, device=self.device
-    #     )  # (num_contacts, 3)
-    #   else:
-    #     self.contact_eef_pos_offset = contact_eef_pos_offset
-    # else:
-    #   self.contact_eef_pos_offset = None
 
   @property
   def command(self) -> torch.Tensor:
@@ -1100,25 +1034,6 @@ class MotionCommand(CommandTerm):
       self.joint_vel - self.robot_joint_vel, dim=-1
     )
 
-    joint_pos_action_term = self._env.action_manager.get_term("joint_pos")
-    applied_pd_actions = joint_pos_action_term._processed_actions  # type: ignore[attr-defined]
-    # Compute sum of squared errors
-    self.metrics["sbto_pd_deviation"] = torch.norm(
-      self.joint_pd_targets - applied_pd_actions, dim=-1
-    )
-    if self.object is not None:
-      # Desired object pose from motion data
-      desired_pos = self.object_pos_w  # (N, 3)
-      desired_quat = self.object_quat_w  # (N, 4)
-
-      # Actual object pose from simulation
-      actual_pos = self.object.data.body_link_pos_w[:, 0]  # (N, 3) root body
-      actual_quat = self.object.data.body_link_quat_w[:, 0]  # (N, 4) root body
-
-      # Compute tracking errors
-      self.metrics["error_object_pos"] = torch.norm(desired_pos - actual_pos, dim=-1)
-      self.metrics["error_object_rot"] = quat_error_magnitude(desired_quat, actual_quat)
-
   def _adaptive_sampling(self, env_ids: torch.Tensor):
     episode_failed = self._env.termination_manager.terminated[env_ids]
     if torch.any(episode_failed):
@@ -1237,92 +1152,11 @@ class MotionCommand(CommandTerm):
     self.robot.write_root_state_to_sim(root_state, env_ids=env_ids)
     self.robot.clear_state(env_ids=env_ids)
 
-    # RSI for object
-    if self.object is not None and not self.object.data.is_fixed_base:
-      object_pos = self.object_pos_w[env_ids]
-      object_quat = self.object_quat_w[env_ids]
-      object_lin_vel = self.object_lin_vel_w[env_ids]
-      object_ang_vel = self.object_ang_vel_w[env_ids]
-
-      transition_phase = self.time_steps[env_ids] < 50
-
-      if transition_phase.any():
-        range_list = [
-          self.cfg.object_pose_range.get(key, (0.0, 0.0))
-          for key in ["x", "y", "z", "roll", "pitch", "yaw"]
-        ]
-        object_pose_ranges = torch.tensor(range_list, device=self.device)
-        rand_samples = sample_uniform(
-          object_pose_ranges[:, 0],
-          object_pose_ranges[:, 1],
-          (len(env_ids), 6),
-          device=self.device,
-        )
-        # Pose from motion object state (already includes per-env origin offset via object_pos_w)
-
-        object_pos[transition_phase] += rand_samples[transition_phase, 0:3]
-        object_quat[transition_phase] = quat_mul(
-          quat_from_euler_xyz(
-            rand_samples[transition_phase, 3],
-            rand_samples[transition_phase, 4],
-            rand_samples[transition_phase, 5],
-          ),
-          object_quat[transition_phase],
-        )
-      if (~transition_phase).any():
-        range_list = [
-          self.cfg.object_velocity_range.get(key, (0.0, 0.0))
-          for key in ["x", "y", "z", "roll", "pitch", "yaw"]
-        ]
-        object_velocity_ranges = torch.tensor(range_list, device=self.device)
-        rand_samples = sample_uniform(
-          object_velocity_ranges[:, 0],
-          object_velocity_ranges[:, 1],
-          (len(env_ids), 6),
-          device=self.device,
-        )
-        object_lin_vel[~transition_phase] += rand_samples[~transition_phase, :3]
-        object_ang_vel[~transition_phase] += rand_samples[~transition_phase, 3:]
-
-      object_state = torch.cat(
-        [
-          object_pos,
-          object_quat,
-          object_lin_vel,
-          object_ang_vel,
-        ],
-        dim=-1,
-      )
-
-      self.object.write_root_state_to_sim(object_state, env_ids=env_ids)
-      self.object.clear_state(env_ids=env_ids)
-
-      # Reset contact mismatch counter
-      self.contact_mismatch_count[env_ids] = 0
-
   def _update_command(self):
     self.time_steps += 1
     env_ids = torch.where(self.time_steps >= self.motion.time_step_total)[0]
     if env_ids.numel() > 0:
       self._resample_command(env_ids)
-
-    # final_time_steps_env_ids = torch.where(
-    #   self.time_steps >= self.motion.time_step_total - 100
-    # )[0]
-    # if final_time_steps_env_ids.numel() > 0 and self.object is not None:
-    #   object_state = torch.cat(
-    #     [
-    #       self.object.data.body_link_pos_w[final_time_steps_env_ids, 0],
-    #       self.object.data.body_link_quat_w[final_time_steps_env_ids, 0],
-    #       torch.zeros(len(final_time_steps_env_ids), 3, device=self.device),
-    #       torch.zeros(len(final_time_steps_env_ids), 3, device=self.device),
-    #     ],
-    #     dim=-1,
-    #   )
-    #   self.object.write_root_state_to_sim(
-    #     object_state, env_ids=final_time_steps_env_ids
-    #   )
-    #   self.object.clear_state(env_ids=final_time_steps_env_ids)
 
     anchor_pos_w_repeat = self.anchor_pos_w[:, None, :].repeat(
       1, len(self.cfg.body_names), 1
@@ -1355,76 +1189,6 @@ class MotionCommand(CommandTerm):
       )
       self._current_bin_failed.zero_()
 
-    # Update contact indicator from motion data
-    if self._object_contact is not None:
-      # Get contact indicator for current time steps
-      # time_steps: (num_envs,), _object_contact: (time_step_total, num_contacts)
-      contact_at_timesteps = self._object_contact[
-        self.time_steps
-      ]  # (num_envs, num_contacts)
-      if contact_at_timesteps.ndim == 1:
-        contact_at_timesteps = contact_at_timesteps.unsqueeze(1)  # (num_envs, 1)
-      # Update future contact (for horizon=1, just current step)
-      self.ref_object_contact_future = contact_at_timesteps.unsqueeze(
-        1
-      )  # (num_envs, 1, num_contacts)
-      self.ref_object_contact = contact_at_timesteps  # (num_envs, num_contacts)
-
-  def check_contact_mismatch(self, sensor_names: list[str]) -> torch.Tensor:
-    """Check if actual contacts match reference contacts.
-
-    Args:
-      sensor_names: List of contact sensor names to check
-
-    Returns:
-      Boolean tensor of shape (num_envs,) indicating which environments have mismatched contacts
-    """
-    if self.ref_object_contact is None:
-      return torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
-
-    contact_indicators = self.ref_object_contact  # (num_envs, num_contacts)
-    num_matches = min(contact_indicators.shape[1], len(sensor_names))
-
-    # Collect sensor found tensors (minimal Python loop for object access)
-    found_tensors = []
-    valid_indices = []
-    for i in range(num_matches):
-      if sensor_names[i] in self._env.scene.sensors:
-        found = self._env.scene.sensors[sensor_names[i]].data.found
-        if found is not None:
-          found_tensors.append(found)
-          valid_indices.append(i)
-
-    if not found_tensors:
-      return torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
-
-    # Process each tensor to extract contact flags using torch operations
-    has_contact_list = []
-    for found in found_tensors:
-      has_contact = (found > 0).any(dim=1) if found.dim() > 1 else (found > 0)
-      has_contact_list.append(has_contact)
-
-    # Stack into tensor: (num_valid_sensors, num_envs) -> (num_envs, num_valid_sensors)
-    has_contact_stacked = (
-      torch.stack(has_contact_list, dim=0).transpose(0, 1)
-      if len(has_contact_list) > 1
-      else has_contact_list[0].unsqueeze(1)
-    )
-
-    # Map to full num_matches shape using advanced indexing
-    has_contact_all = torch.zeros(
-      self.num_envs, num_matches, device=self.device, dtype=torch.bool
-    )
-    if valid_indices:
-      has_contact_all[:, torch.tensor(valid_indices, device=self.device)] = (
-        has_contact_stacked
-      )
-
-    # Compare reference and actual contacts: mismatch if not all match
-    return ~(
-      contact_indicators[:, :num_matches] == has_contact_all[:, :num_matches]
-    ).all(dim=1)
-
   def _debug_vis_impl(self, visualizer: DebugVisualizer) -> None:
     """Draw ghost robot or frames based on visualization mode."""
     if self.cfg.viz.mode == "ghost":
@@ -1443,13 +1207,6 @@ class MotionCommand(CommandTerm):
         self.body_quat_w[visualizer.env_idx, 0].cpu().numpy()
       )
       qpos[joint_q_adr] = self.joint_pos[visualizer.env_idx].cpu().numpy()
-
-      if self.object is not None:
-        object_free_joint_q_adr = self.object.indexing.free_joint_q_adr.cpu().numpy()
-        target_pos = self.object_pos_w[visualizer.env_idx].cpu().numpy()
-        target_quat = self.object_quat_w[visualizer.env_idx].cpu().numpy()
-        qpos[object_free_joint_q_adr[:3]] = target_pos
-        qpos[object_free_joint_q_adr[3:7]] = target_quat
 
       visualizer.add_ghost_mesh(qpos, model=self._ghost_model)
 
