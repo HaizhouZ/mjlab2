@@ -1825,7 +1825,7 @@ class MultiMotionCommandCfg(CommandTermCfg):
   # time constant for clip age-based error decay, the higher the value the slower the decay
   clip_age_tau: float = 1000.0
   # Hard-example mining probability for adaptive sampling
-  hard_mining_prob: float = 0.7
+  hard_mining_prob: float = 0.5
   # EMA alpha for per-clip tracking error estimation, the higher the value the slower the decay
   clip_ema_alpha: float = 0.01
   # Adaptive sampling sharpness (higher => prioritize high-error clips)
