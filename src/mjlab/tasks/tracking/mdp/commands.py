@@ -918,7 +918,7 @@ class MultiMotionCommand(CommandTerm):
   def __init__(self, cfg: MultiMotionCommandCfg, env: ManagerBasedRlEnv):
     super().__init__(cfg, env)
 
-    self.robot: Entity = env.scene[cfg.asset_name]
+    self.robot: Entity = env.scene[cfg.entity_name]
     self.robot_anchor_body_index = self.robot.body_names.index(
       self.cfg.anchor_body_name
     )
