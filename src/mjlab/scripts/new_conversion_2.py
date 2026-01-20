@@ -1078,7 +1078,7 @@ def main(
       height=480,
       width=640,
       origin_type=ViewerConfig.OriginType.ASSET_ROOT,
-      asset_name="robot",  # Specify robot entity for camera tracking when multiple entities exist
+      entity_name="robot",  # Specify robot entity for camera tracking when multiple entities exist
       distance=2.0,
       elevation=-5.0,
       azimuth=20,

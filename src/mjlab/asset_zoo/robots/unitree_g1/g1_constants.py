@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import mujoco
-import numpy as np
 
 from mjlab import MJLAB_SRC_PATH
 from mjlab.actuator import BuiltinPositionActuatorCfg
@@ -34,81 +33,6 @@ def get_assets(meshdir: str) -> dict[str, bytes]:
 def get_spec() -> mujoco.MjSpec:
   spec = mujoco.MjSpec.from_file(str(G1_XML))
   spec.assets = get_assets(spec.meshdir)
-  return spec
-
-
-def get_spec_box() -> mujoco.MjSpec:
-  spec = mujoco.MjSpec()
-  world = spec.worldbody
-  body = world.add_body(name="largebox_link")
-  body.pos = np.array([0.35, 0.0, 0.115], dtype=np.float64)
-  body.add_freejoint(name="largebox_freejoint")
-  geom = body.add_geom(
-    name="largebox_geom",
-    type=mujoco.mjtGeom.mjGEOM_BOX,
-    friction=(1.0, 0.005, 0.0001),
-    size=(0.1, 0.1, 0.115),
-    mass=0.6,
-  )
-
-  geom.rgba = np.array([0.2, 0.6, 0.8, 1.0], dtype=np.float32)
-  return spec
-
-
-def get_spec_largebox() -> mujoco.MjSpec:
-  spec = mujoco.MjSpec()
-  world = spec.worldbody
-  body = world.add_body(name="largebox_link")
-  body.pos = np.array([0.4, 0, 0.1], dtype=np.float64)
-  body.add_freejoint(name="largebox_freejoint")
-  geom = body.add_geom(
-    name="largebox_geom",
-    type=mujoco.mjtGeom.mjGEOM_BOX,
-    friction=(0.6, 0.005, 0.0001),
-    size=(0.155, 0.155, 0.17),
-    # pos=(0.01, 0, 0.03),
-    # quat=(0.00991298, 0.849052, -0.523456, 0.0707591),
-    mass=0.6,
-  )
-
-  geom.rgba = np.array([0.2, 0.6, 0.8, 1.0], dtype=np.float32)
-  return spec
-
-
-def get_spec_cylinder() -> mujoco.MjSpec:
-  spec = mujoco.MjSpec()
-  world = spec.worldbody
-  body = world.add_body(name="largebox_link")
-  body.pos = np.array([0.4, 0, 0.1], dtype=np.float64)
-  body.add_freejoint(name="largebox_freejoint")
-  geom = body.add_geom(
-    name="largebox_geom",
-    type=mujoco.mjtGeom.mjGEOM_CYLINDER,
-    friction=(0.6, 0.005, 0.0001),
-    size=(0.12, 0.165, 0.0),
-    # pos=(0.01, 0, 0.03),
-    # quat=(0.00991298, 0.849052, -0.523456, 0.0707591),
-    mass=0.6,
-  )
-
-  geom.rgba = np.array([0.2, 0.6, 0.8, 1.0], dtype=np.float32)
-  return spec
-
-
-def get_spec_platform() -> mujoco.MjSpec:
-  spec = mujoco.MjSpec()
-  world = spec.worldbody
-  body = world.add_body(name="platform")
-  body.pos = np.array([0.0, 0.35, 0.8], dtype=np.float64)
-  body.mocap = True
-  geom = body.add_geom(
-    name="platform_geom",
-    type=mujoco.mjtGeom.mjGEOM_BOX,
-    friction=(0.6, 0.005, 0.0001),
-    size=(0.3, 0.2, 0.005),
-    mass=0.6,
-  )
-  geom.rgba = np.array([0.8, 0.0, 0.0, 1.0], dtype=np.float32)
   return spec
 
 
@@ -208,7 +132,7 @@ DAMPING_7520_22 = 2.0 * DAMPING_RATIO * ARMATURE_7520_22 * NATURAL_FREQ
 DAMPING_4010 = 2.0 * DAMPING_RATIO * ARMATURE_4010 * NATURAL_FREQ
 
 G1_ACTUATOR_5020 = BuiltinPositionActuatorCfg(
-  joint_names_expr=(
+  target_names_expr=(
     ".*_elbow_joint",
     ".*_shoulder_pitch_joint",
     ".*_shoulder_roll_joint",
@@ -221,21 +145,21 @@ G1_ACTUATOR_5020 = BuiltinPositionActuatorCfg(
   armature=ACTUATOR_5020.reflected_inertia,
 )
 G1_ACTUATOR_7520_14 = BuiltinPositionActuatorCfg(
-  joint_names_expr=(".*_hip_pitch_joint", ".*_hip_yaw_joint", "waist_yaw_joint"),
+  target_names_expr=(".*_hip_pitch_joint", ".*_hip_yaw_joint", "waist_yaw_joint"),
   stiffness=STIFFNESS_7520_14,
   damping=DAMPING_7520_14,
   effort_limit=ACTUATOR_7520_14.effort_limit,
   armature=ACTUATOR_7520_14.reflected_inertia,
 )
 G1_ACTUATOR_7520_22 = BuiltinPositionActuatorCfg(
-  joint_names_expr=(".*_hip_roll_joint", ".*_knee_joint"),
+  target_names_expr=(".*_hip_roll_joint", ".*_knee_joint"),
   stiffness=STIFFNESS_7520_22,
   damping=DAMPING_7520_22,
   effort_limit=ACTUATOR_7520_22.effort_limit,
   armature=ACTUATOR_7520_22.reflected_inertia,
 )
 G1_ACTUATOR_4010 = BuiltinPositionActuatorCfg(
-  joint_names_expr=(".*_wrist_pitch_joint", ".*_wrist_yaw_joint"),
+  target_names_expr=(".*_wrist_pitch_joint", ".*_wrist_yaw_joint"),
   stiffness=STIFFNESS_4010,
   damping=DAMPING_4010,
   effort_limit=ACTUATOR_4010.effort_limit,
@@ -248,14 +172,14 @@ G1_ACTUATOR_4010 = BuiltinPositionActuatorCfg(
 # assume a nominal 1:1 gear ratio. Under this assumption, the joint armature in the
 # nominal configuration is approximated as the sum of the 2 actuators' armatures.
 G1_ACTUATOR_WAIST = BuiltinPositionActuatorCfg(
-  joint_names_expr=("waist_pitch_joint", "waist_roll_joint"),
+  target_names_expr=("waist_pitch_joint", "waist_roll_joint"),
   stiffness=STIFFNESS_5020 * 2,
   damping=DAMPING_5020 * 2,
   effort_limit=ACTUATOR_5020.effort_limit * 2,
   armature=ACTUATOR_5020.reflected_inertia * 2,
 )
 G1_ACTUATOR_ANKLE = BuiltinPositionActuatorCfg(
-  joint_names_expr=(".*_ankle_pitch_joint", ".*_ankle_roll_joint"),
+  target_names_expr=(".*_ankle_pitch_joint", ".*_ankle_roll_joint"),
   stiffness=STIFFNESS_5020 * 2,
   damping=DAMPING_5020 * 2,
   effort_limit=ACTUATOR_5020.effort_limit * 2,
@@ -291,10 +215,6 @@ KNEES_BENT_KEYFRAME = EntityCfg.InitialStateCfg(
     "left_shoulder_pitch_joint": 0.2,
     "right_shoulder_roll_joint": -0.2,
     "right_shoulder_pitch_joint": 0.2,
-    ".*_wrist_roll_joint": 0.0,
-    ".*_wrist_pitch_joint": 0.0,
-    "left_wrist_yaw_joint": -1.61 * 0.89,
-    "right_wrist_yaw_joint": 1.61 * 0.89,
   },
   joint_vel={".*": 0.0},
 )
@@ -308,18 +228,9 @@ KNEES_BENT_KEYFRAME = EntityCfg.InitialStateCfg(
 # are given condim=3.
 FULL_COLLISION = CollisionCfg(
   geom_names_expr=(".*_collision",),
-  condim={
-    r"^(left|right)_(foot|wrist|hand|elbow_yaw)[1-7]?_collision$": 3,
-    ".*_collision": 1,
-  },
-  priority={r"^(left|right)_(foot|wrist|hand|elbow_yaw)[1-7]?_collision$": 1},
-  friction={
-    r"^(left|right)_(foot|wrist|hand|elbow_yaw)[1-7]?_collision$": (0.6,),
-    # r"^(left|right)_wrist[1-7]?_collision$": (0.6,),
-  },
-  # condim={r"^(left|right)_foot[1-7]_collision$": 3, ".*_collision": 1},
-  # priority={r"^(left|right)_foot[1-7]_collision$": 1},
-  # friction={r"^(left|right)_foot[1-7]_collision$": (0.6,)},
+  condim={r"^(left|right)_foot[1-7]_collision$": 3, ".*_collision": 1},
+  priority={r"^(left|right)_foot[1-7]_collision$": 1},
+  friction={r"^(left|right)_foot[1-7]_collision$": (0.6,)},
 )
 
 FULL_COLLISION_WITHOUT_SELF = CollisionCfg(
@@ -373,80 +284,15 @@ def get_g1_robot_cfg() -> EntityCfg:
   )
 
 
-def get_box_cfg() -> EntityCfg:
-  """Get a fresh box configuration instance."""
-  return EntityCfg(
-    init_state=EntityCfg.InitialStateCfg(
-      pos=(0.35, 0.0, 0.115),
-      rot=(1.0, 0.0, 0.0, 0.0),
-    ),
-    spec_fn=get_spec_box,
-  )
-
-
-def get_largebox_cfg() -> EntityCfg:
-  """Get a fresh largebox configuration instance."""
-  return EntityCfg(
-    init_state=EntityCfg.InitialStateCfg(
-      pos=(0.35, 0.0, 0.115),
-      rot=(1.0, 0.0, 0.0, 0.0),
-    ),
-    spec_fn=get_spec_largebox,
-  )
-
-
-def get_cylinder_cfg() -> EntityCfg:
-  """Get a fresh cylinder configuration instance."""
-  return EntityCfg(
-    init_state=EntityCfg.InitialStateCfg(
-      pos=(0.35, 0.0, 0.115),
-      rot=(1.0, 0.0, 0.0, 0.0),
-    ),
-    spec_fn=get_spec_cylinder,
-  )
-
-
-def get_largeboxmesh_cfg() -> EntityCfg:
-  """Get a fresh largebox configuration instance."""
-  largebox_xml = "src/mjlab/asset_zoo/objects/largebox.xml"
-  return EntityCfg(
-    init_state=EntityCfg.InitialStateCfg(
-      pos=(0.35, 0.0, 0.115),
-      rot=(1.0, 0.0, 0.0, 0.0),
-    ),
-    spec_fn=lambda: mujoco.MjSpec.from_file(str(largebox_xml)),
-  )
-
-
-def get_platform_cfg() -> EntityCfg:
-  """Get a fresh platform configuration instance."""
-  return EntityCfg(
-    init_state=EntityCfg.InitialStateCfg(
-      pos=(0.0, 0.0, 0.0),
-      rot=(1.0, 0.0, 0.0, 0.0),
-    ),
-    spec_fn=get_spec_platform,
-  )
-
-
-CONSTANT_ACTION_SCALE = 0.0
-CONST_JOINT_NAMES = [
-  # ".*_wrist_pitch_joint",
-  # ".*_wrist_yaw_joint",
-  # ".*_wrist_roll_joint",
-]
 G1_ACTION_SCALE: dict[str, float] = {}
 for a in G1_ARTICULATION.actuators:
   assert isinstance(a, BuiltinPositionActuatorCfg)
   e = a.effort_limit
   s = a.stiffness
-  names = a.joint_names_expr
+  names = a.target_names_expr
   assert e is not None
   for n in names:
-    if n in CONST_JOINT_NAMES:
-      G1_ACTION_SCALE[n] = CONSTANT_ACTION_SCALE
-    else:
-      G1_ACTION_SCALE[n] = 0.25 * e / s
+    G1_ACTION_SCALE[n] = 0.25 * e / s
 
 
 if __name__ == "__main__":

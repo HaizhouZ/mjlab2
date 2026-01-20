@@ -39,87 +39,12 @@ def unitree_g1_tracking_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
   )
 
 
-def unitree_g1_tracking_ppo_runner_cfg_box() -> RslRlOnPolicyRunnerCfg:
-  """Create RL runner configuration for Unitree G1 tracking task with a box."""
-
-  cfg = unitree_g1_tracking_ppo_runner_cfg()
-  cfg.experiment_name = "g1_object_tracking"
-
-  return cfg
-
-
 def unitree_g1_multitracking_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
   """Create RL runner configuration for Unitree G1 multi-tracking task."""
 
-  cfg = unitree_g1_tracking_ppo_runner_cfg_box()
+  cfg = unitree_g1_tracking_ppo_runner_cfg()
   cfg.policy.actor_hidden_dims = (1024, 512, 512)
   cfg.policy.critic_hidden_dims = (1024, 512, 512)
   cfg.experiment_name = "g1_multitracking"
 
-  return cfg
-
-
-def unitree_g1_tracking_ppo_runner_cfg_multitracking_box() -> RslRlOnPolicyRunnerCfg:
-  """Create RL runner configuration for Unitree G1 multi-tracking task with a box."""
-
-  cfg = unitree_g1_tracking_ppo_runner_cfg_box()
-  cfg.policy.actor_hidden_dims = (1024, 512, 256, 128)
-  cfg.policy.critic_hidden_dims = (1024, 512, 256, 128)
-  cfg.experiment_name = "g1_object_multitracking"
-
-  return cfg
-
-
-def unitree_g1_tracking_ppo_runner_cfg_largebox() -> RslRlOnPolicyRunnerCfg:
-  """Create RL runner configuration for Unitree G1 tracking task with a large box."""
-  cfg = unitree_g1_tracking_ppo_runner_cfg_box()
-  cfg.experiment_name = "g1_largebox_tracking"
-  return cfg
-
-
-def unitree_g1_tracking_ppo_runner_cfg_multitracking_largebox() -> (
-  RslRlOnPolicyRunnerCfg
-):
-  """Create RL runner configuration for Unitree G1 multi-tracking task with a large box."""
-  cfg = unitree_g1_tracking_ppo_runner_cfg_largebox()
-  cfg.experiment_name = "g1_largebox_multitracking"
-  return cfg
-
-
-def unitree_g1_tracking_ppo_runner_cfg_largebox_pdtargets() -> RslRlOnPolicyRunnerCfg:
-  """Create RL runner configuration for Unitree G1 tracking task with a large box and PD targets."""
-  cfg = unitree_g1_tracking_ppo_runner_cfg_largebox()
-  cfg.experiment_name = "g1_largebox_tracking_pdtargets"
-  return cfg
-
-
-def unitree_g1_tracking_ppo_runner_cfg_largebox_default() -> RslRlOnPolicyRunnerCfg:
-  """Create RL runner configuration for Unitree G1 tracking task with a large box and default action."""
-  cfg = unitree_g1_tracking_ppo_runner_cfg_largebox()
-  cfg.experiment_name = "g1_largebox_tracking_default"
-  return cfg
-
-
-def unitree_g1_tracking_ppo_runner_cfg_cylinder() -> RslRlOnPolicyRunnerCfg:
-  """Create RL runner configuration for Unitree G1 tracking task with a cylinder."""
-  cfg = unitree_g1_tracking_ppo_runner_cfg_box()
-  cfg.experiment_name = "g1_cylinder_tracking"
-  return cfg
-
-
-def unitree_g1_tracking_ppo_runner_cfg_multitracking_box_encoding() -> (
-  RslRlOnPolicyRunnerCfg
-):
-  """Create RL runner configuration for Unitree G1 multi-tracking task with a box and encoding."""
-  cfg = unitree_g1_tracking_ppo_runner_cfg_multitracking_box()
-  cfg.experiment_name = "g1_box_multitracking_encoding"
-  return cfg
-
-
-def unitree_g1_tracking_ppo_runner_cfg_multitracking_largebox_encoding() -> (
-  RslRlOnPolicyRunnerCfg
-):
-  """Create RL runner configuration for Unitree G1 multi-tracking task with a large box and encoding."""
-  cfg = unitree_g1_tracking_ppo_runner_cfg_multitracking_largebox()
-  cfg.experiment_name = "g1_largebox_multitracking_encoding"
   return cfg

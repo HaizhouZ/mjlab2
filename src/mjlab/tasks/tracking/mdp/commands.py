@@ -104,40 +104,11 @@ class MotionLoader:
       body_ang_vel_w, dtype=torch.float32, device=device
     )
     self._body_indexes = body_indexes
+    self.body_pos_w = self._body_pos_w[:, self._body_indexes]
+    self.body_quat_w = self._body_quat_w[:, self._body_indexes]
+    self.body_lin_vel_w = self._body_lin_vel_w[:, self._body_indexes]
+    self.body_ang_vel_w = self._body_ang_vel_w[:, self._body_indexes]
     self.time_step_total = self.joint_pos.shape[0]
-
-    if "joint_pd_targets" in data:
-      pd_targets = data["joint_pd_targets"]
-      if is_multi_motion:
-        pd_targets = pd_targets[0]
-      self._joint_pd_targets = torch.tensor(
-        pd_targets, dtype=torch.float32, device=device
-      )
-    else:
-      self._joint_pd_targets = None
-
-  @property
-  def body_pos_w(self) -> torch.Tensor:
-    return self._body_pos_w[:, self._body_indexes]
-
-  @property
-  def body_quat_w(self) -> torch.Tensor:
-    return self._body_quat_w[:, self._body_indexes]
-
-  @property
-  def body_lin_vel_w(self) -> torch.Tensor:
-    return self._body_lin_vel_w[:, self._body_indexes]
-
-  @property
-  def body_ang_vel_w(self) -> torch.Tensor:
-    return self._body_ang_vel_w[:, self._body_indexes]
-
-  @property
-  def joint_pd_targets(self) -> torch.Tensor | None:
-    """PD targets from motion data. Shape: (time_step_total, num_joints)"""
-    if not hasattr(self, "_joint_pd_targets") or self._joint_pd_targets is None:
-      return None
-    return self._joint_pd_targets
 
 
 class MultiMotionLoader:
@@ -253,8 +224,6 @@ class MultiMotionLoader:
       n = math.ceil(self.max_time_steps / pad_to_frames)
       self.max_time_steps = int(n * pad_to_frames)
 
-    self._has_pd_targets = any(m.joint_pd_targets is not None for m in self.motions)
-
     # Get shapes from first motion to determine tensor dimensions
     first_motion = self.motions[0]
     num_bodies = len(body_indexes)
@@ -325,9 +294,6 @@ class MultiMotionLoader:
       self._batched_body_quat_w[i, :t] = motion.body_quat_w
       self._batched_body_lin_vel_w[i, :t] = motion.body_lin_vel_w
       self._batched_body_ang_vel_w[i, :t] = motion.body_ang_vel_w
-
-      if self._batched_pd_targets is not None and motion.joint_pd_targets is not None:
-        self._batched_pd_targets[i, :t] = motion.joint_pd_targets
 
   def _load_motions_from_file(
     self, motion_file: str, body_indexes: torch.Tensor, device: str = "cpu"
@@ -415,26 +381,6 @@ class MultiMotionLoader:
       return self._batched_body_lin_vel_w[motion_indices, time_steps_clamped]
     elif field_name == "body_ang_vel_w":
       return self._batched_body_ang_vel_w[motion_indices, time_steps_clamped]
-    elif field_name == "joint_pd_targets":
-      if self._batched_pd_targets is None:
-        num_envs = motion_indices.shape[0]
-        return torch.zeros(
-          num_envs,
-          self._batched_joint_pos.shape[2],
-          dtype=torch.float32,
-          device=self.device,
-        )
-      return self._batched_pd_targets[motion_indices, time_steps_clamped]
-    elif field_name == "joint_pd_targets":
-      if self._batched_pd_targets is None:
-        num_envs = motion_indices.shape[0]
-        return torch.zeros(
-          num_envs,
-          self._batched_joint_pos.shape[2],
-          dtype=torch.float32,
-          device=self.device,
-        )
-      return self._batched_pd_targets[motion_indices, time_steps_clamped]
     else:
       raise ValueError(f"Unknown field name: {field_name}")
 
@@ -511,7 +457,7 @@ class MotionCommand(CommandTerm):
   def __init__(self, cfg: MotionCommandCfg, env: ManagerBasedRlEnv):
     super().__init__(cfg, env)
 
-    self.robot: Entity = env.scene[cfg.asset_name]
+    self.robot: Entity = env.scene[cfg.entity_name]
     self.robot_anchor_body_index = self.robot.body_names.index(
       self.cfg.anchor_body_name
     )
@@ -580,11 +526,6 @@ class MotionCommand(CommandTerm):
     # Ghost model created lazily on first visualization
     self._ghost_model: mujoco.MjModel | None = None
     self._ghost_color = np.array(cfg.viz.ghost_color, dtype=np.float32)
-
-    # Object/contact handling removed: commands no longer track or write
-    # object poses or contact indicators. MotionLoader still provides object
-    # properties if available, but command classes ignore them.
-    self._has_object = False
 
   @property
   def command(self) -> torch.Tensor:
@@ -683,16 +624,6 @@ class MotionCommand(CommandTerm):
   def robot_eef_quat_w(self) -> torch.Tensor:
     return self.robot.data.body_link_quat_w[:, self.eef_body_indexes]
 
-  @property
-  def joint_pd_targets(self) -> torch.Tensor | None:
-    """PD targets from motion data. Shape: (time_step_total, num_joints)"""
-    if (
-      not hasattr(self.motion, "_joint_pd_targets")
-      or self.motion.joint_pd_targets is None
-    ):
-      return None
-    return self.motion.joint_pd_targets[self.time_steps]
-
   def _update_metrics(self):
     self.metrics["error_anchor_pos"] = torch.norm(
       self.anchor_pos_w - self.robot_anchor_pos_w, dim=-1
@@ -727,7 +658,6 @@ class MotionCommand(CommandTerm):
     self.metrics["error_joint_vel"] = torch.norm(
       self.joint_vel - self.robot_joint_vel, dim=-1
     )
-    # Object tracking removed from MotionCommand._update_metrics
 
   def _adaptive_sampling(self, env_ids: torch.Tensor):
     episode_failed = self._env.termination_manager.terminated[env_ids]
@@ -889,7 +819,7 @@ class MotionCommand(CommandTerm):
         self._ghost_model = copy.deepcopy(self._env.sim.mj_model)
         self._ghost_model.geom_rgba[:] = self._ghost_color
 
-      entity: Entity = self._env.scene[self.cfg.asset_name]
+      entity: Entity = self._env.scene[self.cfg.entity_name]
       indexing = entity.indexing
       free_joint_q_adr = indexing.free_joint_q_adr.cpu().numpy()
       joint_q_adr = indexing.joint_q_adr.cpu().numpy()
@@ -955,12 +885,10 @@ class MotionCommandCfg(CommandTermCfg):
   anchor_body_name: str
   body_names: tuple[str, ...]
   eef_body_names: tuple[str, ...]
-  asset_name: str
+  entity_name: str
   class_type: type[CommandTerm] = MotionCommand
   pose_range: dict[str, tuple[float, float]] = field(default_factory=dict)
-  object_pose_range: dict[str, tuple[float, float]] = field(default_factory=dict)
   velocity_range: dict[str, tuple[float, float]] = field(default_factory=dict)
-  object_velocity_range: dict[str, tuple[float, float]] = field(default_factory=dict)
   joint_position_range: tuple[float, float] = (-0.52, 0.52)
   adaptive_kernel_size: int = 1
   adaptive_lambda: float = 0.8
@@ -974,6 +902,9 @@ class MotionCommandCfg(CommandTermCfg):
     ghost_color: tuple[float, float, float, float] = (0.5, 0.7, 0.5, 0.5)
 
   viz: VizCfg = field(default_factory=VizCfg)
+
+  def build(self, env: ManagerBasedRlEnv) -> MotionCommand:
+    return MotionCommand(self, env)
 
 
 class MultiMotionCommand(CommandTerm):
@@ -1427,13 +1358,6 @@ class MultiMotionCommand(CommandTerm):
   def robot_eef_quat_w(self) -> torch.Tensor:
     return self.robot.data.body_link_quat_w[:, self.eef_body_indexes]
 
-  @property
-  def joint_pd_targets(self) -> torch.Tensor | None:
-    """PD targets from motion data. Shape: (time_step_total, num_joints)"""
-    return self.motion_loader.get_motion_data(
-      self.motion_indices, self.time_steps, "joint_pd_targets"
-    )
-
   def _update_metrics(self):
     self.metrics["error_anchor_pos"] = torch.norm(
       self.anchor_pos_w - self.robot_anchor_pos_w, dim=-1
@@ -1803,7 +1727,7 @@ class MultiMotionCommand(CommandTerm):
         self._ghost_model = copy.deepcopy(self._env.sim.mj_model)
         self._ghost_model.geom_rgba[:] = self._ghost_color
 
-      entity: Entity = self._env.scene[self.cfg.asset_name]
+      entity: Entity = self._env.scene[self.cfg.entity_name]
       indexing = entity.indexing
       free_joint_q_adr = indexing.free_joint_q_adr.cpu().numpy()
       joint_q_adr = indexing.joint_q_adr.cpu().numpy()
@@ -1872,7 +1796,7 @@ class MultiMotionCommandCfg(CommandTermCfg):
   anchor_body_name: str
   body_names: tuple[str, ...]
   eef_body_names: tuple[str, ...]
-  asset_name: str
+  entity_name: str
   encoder_dir: str | None = None
   wandb_entity: str | None = None
   wandb_project: str | None = None
@@ -1906,3 +1830,6 @@ class MultiMotionCommandCfg(CommandTermCfg):
   clip_ema_alpha: float = 0.01
   # Adaptive sampling sharpness (higher => prioritize high-error clips)
   adaptive_beta: float = 10.0
+
+  def build(self, env: ManagerBasedRlEnv) -> MultiMotionCommand:
+    return MultiMotionCommand(self, env)

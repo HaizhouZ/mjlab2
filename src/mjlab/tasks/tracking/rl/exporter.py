@@ -4,11 +4,6 @@ from typing import cast
 import torch
 
 from mjlab.envs import ManagerBasedRlEnv
-from mjlab.envs.mdp.actions import (
-  JointPositionActionCfg,
-  MotionTrackingJointPositionActionCfg,
-  MotionTrackingPDTargetsActionCfg,
-)
 from mjlab.rl.exporter_utils import (
   attach_metadata_to_onnx,
   get_base_metadata,
@@ -50,30 +45,6 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
       self.body_lin_vel_w = first_motion.body_lin_vel_w.to("cpu")
       self.body_ang_vel_w = first_motion.body_ang_vel_w.to("cpu")
 
-      self.has_object_data = hasattr(first_motion, "_object_pos_w")
-      if self.has_object_data:
-        self.object_pos_w = first_motion.object_pos_w.to("cpu")
-        self.object_quat_w = first_motion.object_quat_w.to("cpu")
-        object_lin_vel_w = first_motion.object_lin_vel_w
-        self.object_lin_vel_w = (
-          object_lin_vel_w.to("cpu") if object_lin_vel_w is not None else None
-        )
-        object_ang_vel_w = first_motion.object_ang_vel_w
-        self.object_ang_vel_w = (
-          object_ang_vel_w.to("cpu") if object_ang_vel_w is not None else None
-        )
-        object_contact = first_motion.object_contact
-        self.contact_indicators = (
-          object_contact.to("cpu") if object_contact is not None else None
-        )
-        contact_positions = first_motion.contact_positions
-        self.contact_positions = (
-          contact_positions.to("cpu") if contact_positions is not None else None
-        )
-        joint_pd_targets = first_motion.joint_pd_targets
-        self.joint_pd_targets = (
-          joint_pd_targets.to("cpu") if joint_pd_targets is not None else None
-        )
     else:
       # Original MotionCommand handling
       cmd = cast(MotionCommand, cmd)
@@ -84,34 +55,9 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
       self.body_lin_vel_w = cmd.motion.body_lin_vel_w.to("cpu")
       self.body_ang_vel_w = cmd.motion.body_ang_vel_w.to("cpu")
 
-      self.has_object_data = hasattr(cmd.motion, "_object_pos_w")
-      if self.has_object_data:
-        self.object_pos_w = cmd.motion.object_pos_w.to("cpu")
-        self.object_quat_w = cmd.motion.object_quat_w.to("cpu")
-        object_lin_vel_w = cmd.motion.object_lin_vel_w
-        self.object_lin_vel_w = (
-          object_lin_vel_w.to("cpu") if object_lin_vel_w is not None else None
-        )
-        object_ang_vel_w = cmd.motion.object_ang_vel_w
-        self.object_ang_vel_w = (
-          object_ang_vel_w.to("cpu") if object_ang_vel_w is not None else None
-        )
-        object_contact = cmd.motion.object_contact
-        self.contact_indicators = (
-          object_contact.to("cpu") if object_contact is not None else None
-        )
-        contact_positions = cmd.motion.contact_positions
-        self.contact_positions = (
-          contact_positions.to("cpu") if contact_positions is not None else None
-        )
-        joint_pd_targets = cmd.motion.joint_pd_targets
-        self.joint_pd_targets = (
-          joint_pd_targets.to("cpu") if joint_pd_targets is not None else None
-        )
-
     self.time_step_total: int = self.joint_pos.shape[0]
 
-  def forward(self, x, time_step):  # pyright: ignore [reportIncompatibleMethodOverride]
+  def forward(self, x, time_step):  # type: ignore[invalid-method-override]
     time_step_clamped = torch.clamp(
       time_step.long().squeeze(-1), max=self.time_step_total - 1
     )
@@ -123,32 +69,9 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
       self.body_quat_w[time_step_clamped],
       self.body_lin_vel_w[time_step_clamped],
       self.body_ang_vel_w[time_step_clamped],
-      # self.joint_pd_targets[time_step_clamped]
-      # if self.joint_pd_targets is not None
-      # else torch.zeros(len(time_step_clamped), self.joint_pd_targets.shape[1]),
     )
 
-    # Only include object outputs if object data exists
-    if self.has_object_data:
-      object_outputs = (
-        self.object_pos_w[time_step_clamped],
-        self.object_quat_w[time_step_clamped],
-        self.object_lin_vel_w[time_step_clamped]
-        if self.object_lin_vel_w is not None
-        else torch.zeros(len(time_step_clamped), 3),
-        self.object_ang_vel_w[time_step_clamped]
-        if self.object_ang_vel_w is not None
-        else torch.zeros(len(time_step_clamped), 3),
-        self.contact_indicators[time_step_clamped]
-        if self.contact_indicators is not None
-        else torch.zeros(len(time_step_clamped), dtype=torch.bool),
-        self.contact_positions[time_step_clamped]
-        if self.contact_positions is not None
-        else torch.zeros(len(time_step_clamped), 2, 3),
-      )
-      return outputs + object_outputs
-    else:
-      return outputs
+    return outputs
 
   def export(self, path, filename):
     self.to("cpu")
@@ -164,21 +87,7 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
       "body_quat_w",
       "body_lin_vel_w",
       "body_ang_vel_w",
-      # "joint_pd_targets",
     ]
-
-    # Only include object outputs if object data exists
-    if self.has_object_data:
-      output_names.extend(
-        [
-          "object_pos_w",
-          "object_quat_w",
-          "object_lin_vel_w",
-          "object_ang_vel_w",
-          "contact_indicators",
-          "contact_positions",
-        ]
-      )
 
     torch.onnx.export(
       self,
@@ -213,33 +122,12 @@ def attach_onnx_metadata(
   # Add tracking-specific metadata.
   motion_term = env.command_manager.get_term("motion")
   # Handle both MotionCommand and MultiMotionCommand
-  if isinstance(motion_term, MultiMotionCommand):
-    motion_term_cfg = motion_term.cfg
-  else:
-    assert isinstance(motion_term, MotionCommand)
-    motion_term_cfg = motion_term.cfg
-
-  # Determine use_motion_offset based on action configuration
-  joint_pos_action = env.cfg.actions.get("joint_pos")
-  if isinstance(joint_pos_action, MotionTrackingJointPositionActionCfg):
-    use_motion_offset = True
-    use_motion_pd_offset = False
-  elif isinstance(joint_pos_action, MotionTrackingPDTargetsActionCfg):
-    use_motion_offset = False
-    use_motion_pd_offset = True
-  elif isinstance(joint_pos_action, JointPositionActionCfg):
-    use_motion_offset = False
-    use_motion_pd_offset = False
-  else:
-    # Default to False if action type is unknown
-    use_motion_offset = False
-    use_motion_pd_offset = False
+  assert isinstance(motion_term, (MotionCommand, MultiMotionCommand))
+  motion_term_cfg = motion_term.cfg
   metadata.update(
     {
       "anchor_body_name": motion_term_cfg.anchor_body_name,
       "body_names": list(motion_term_cfg.body_names),
-      "use_motion_offset": use_motion_offset,
-      "use_motion_pd_offset": use_motion_pd_offset,
     }
   )
   attach_metadata_to_onnx(onnx_path, metadata)
