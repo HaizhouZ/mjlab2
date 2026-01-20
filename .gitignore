@@ -12,13 +12,10 @@ motions/
 artifacts/
 .venv/
 render_robots.py
-<<<<<<< HEAD
 .ruff_cache/
-=======
 benchmark_results/
 
 # Documentation outputs.
 **/_build/*
 **/generated/*
 
->>>>>>> v1_main

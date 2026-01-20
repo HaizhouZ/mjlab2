@@ -894,9 +894,7 @@ class MotionCommandCfg(CommandTermCfg):
   entity_name: str
   class_type: type[CommandTerm] = MotionCommand
   pose_range: dict[str, tuple[float, float]] = field(default_factory=dict)
-  object_pose_range: dict[str, tuple[float, float]] = field(default_factory=dict)
   velocity_range: dict[str, tuple[float, float]] = field(default_factory=dict)
-  object_velocity_range: dict[str, tuple[float, float]] = field(default_factory=dict)
   joint_position_range: tuple[float, float] = (-0.52, 0.52)
   adaptive_kernel_size: int = 1
   adaptive_lambda: float = 0.8

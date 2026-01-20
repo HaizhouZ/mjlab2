@@ -148,8 +148,6 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
         "pitch": (-0.1, 0.1),
         "yaw": (-0.2, 0.2),
       },
-      object_pose_range={},
-      object_velocity_range={},
       velocity_range=VELOCITY_RANGE,
       joint_position_range=(-0.1, 0.1),
       # Override in robot cfg.
@@ -251,7 +249,7 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "self_collisions": RewardTermCfg(
       func=mdp.self_collision_cost,
-      weight=-1.0,
+      weight=-10.0,
       params={"sensor_name": "self_collision"},
     ),
   }
@@ -278,7 +276,7 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
       func=mdp.bad_motion_body_pos_z_only,
       params={
         "command_name": "motion",
-        "threshold": 0.2,
+        "threshold": 0.25,
         "body_names": (),  # Set per-robot.
       },
     ),
