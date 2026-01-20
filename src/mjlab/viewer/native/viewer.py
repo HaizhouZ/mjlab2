@@ -193,6 +193,11 @@ class NativeMujocoViewer(BaseViewer):
           )
 
       v.sync(state_only=True)
+      # If a resample requested a pause for user inspection, block here after
+      # the visualization update so the user sees the new state before resuming.
+      extras = getattr(self.env.unwrapped, "extras", None)
+      if extras and extras.pop("wait_for_resample_input", False):
+        input("[INFO] Press Enter to continue after resampling command...")
 
   def sync_viewer_to_env(self) -> None:
     """Copy perturbation forces from viewer to env (when not paused)."""

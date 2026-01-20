@@ -183,6 +183,30 @@ class BaseViewer(ABC):
         obs = self.env.get_observations()
         actions = self.policy(obs)
         self.env.step(actions)
+        # Print termination reasons for any envs that were reset during this step.
+        # Viewer-based play runs through BaseViewer, so surface per-reset
+        # information immediately after the step.
+        unwrapped = getattr(self.env, "unwrapped", None)
+        if unwrapped is not None and hasattr(unwrapped, "reset_buf"):
+          reset_env_ids = unwrapped.reset_buf.nonzero(as_tuple=False).squeeze(-1)
+          if reset_env_ids is not None and len(reset_env_ids) > 0:
+            tm = getattr(unwrapped, "termination_manager", None)
+            for eid in reset_env_ids:
+              eid_i = int(eid.item()) if hasattr(eid, "item") else int(eid)
+              reasons = []
+              if tm is not None:
+                for name in getattr(tm, "_term_names", []):
+                  term_tensor = tm.get_term(name)
+                  if bool(term_tensor[eid_i].item()):
+                    reasons.append(name)
+              was_timeout = (
+                bool(unwrapped.reset_time_outs[eid_i].item())
+                if hasattr(unwrapped, "reset_time_outs")
+                else False
+              )
+              print(
+                f"[INFO] Reset env {eid_i} | timeout={was_timeout} | reasons={reasons}"
+              )
         self._step_count += 1
       self._accumulated_sim_time += self._sim_timer.measured_time
 

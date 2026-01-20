@@ -216,6 +216,11 @@ class ViserPlayViewer(BaseViewer):
         frame_delay = 1.0 / (self.frame_rate * self._time_multiplier)
         # insert_sleep captures the current scene state and adds a delay
         self._recording_serializer.insert_sleep(frame_delay)
+      # After the scene update/flush, if a resample requested a pause for user
+      # inspection (set by the command term), block here until the user presses Enter.
+      extras = getattr(self.env.unwrapped, "extras", None)
+      if extras and extras.pop("wait_for_resample_input", False):
+        input("[INFO] Press Enter to continue after resampling command...")
 
     self._threadpool.submit(update_scene)
     self._needs_update = False

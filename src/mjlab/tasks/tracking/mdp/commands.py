@@ -1110,8 +1110,8 @@ class MultiMotionCommand(CommandTerm):
           if nclips == 1 or (k > 0 and k < nclips - 1):
             # single clip: allow bilateral expansion
             # interior clip: expand both sides independently
-            left = random.randint(0, overlap_max)
-            right = random.randint(0, overlap_max)
+            left = random.randint(0, overlap_max // 2)
+            right = random.randint(0, overlap_max // 2)
           elif k == 0:
             # first clip: only extend the end
             right = random.randint(0, overlap_max)
@@ -1623,6 +1623,14 @@ class MultiMotionCommand(CommandTerm):
     return
 
   def _resample_command(self, env_ids: torch.Tensor):
+    if self.cfg.play:
+      # In interactive/play mode with a single environment, print the chosen
+      # motion name so the user knows which trajectory was selected.
+      if self.num_envs == 1:
+        midx = int(self.motion_indices[0].item())
+        mname = self.motion_loader.traj_names[midx]
+        print(f"[INFO] Selected motion: {mname}")
+      print("[INFO] Motion clip resampling...")
     # Track per-clip statistics before resampling
     resample_clip_indices = self.clip_indices[env_ids]
     resample_time_steps = self.time_steps[env_ids]
@@ -1720,6 +1728,13 @@ class MultiMotionCommand(CommandTerm):
     # Write robot root state and clear robot state. Object handling removed.
     self.robot.write_root_state_to_sim(root_state, env_ids=env_ids)
     self.robot.clear_state(env_ids=env_ids)
+    # Signal viewers to wait for user input after the new state is visualized.
+    # Viewers will consume this flag and perform the blocking input() so that
+    # visualization is visible when the user presses Enter.
+    try:
+      self._env.extras["wait_for_resample_input"] = True
+    except Exception:
+      pass
 
   def _update_command(self):
     self.time_steps += 1
@@ -1729,6 +1744,8 @@ class MultiMotionCommand(CommandTerm):
     )
     env_ids = torch.where(self.time_steps >= clip_ends)[0]
     if env_ids.numel() > 0:
+      if self.cfg.play:
+        print(f"[INFO] Resampling command for {env_ids.numel()} envs due to clip end.")
       self._resample_command(env_ids)
 
     anchor_pos_w_repeat = self.anchor_pos_w[:, None, :].repeat(
@@ -1875,16 +1892,17 @@ class MultiMotionCommandCfg(CommandTermCfg):
     ghost_color: tuple[float, float, float, float] = (0.5, 0.7, 0.5, 0.5)
 
   viz: VizCfg = field(default_factory=VizCfg)
+  play: bool = False
   # Clip segmentation: length of each clip in seconds and fraction overlap between
   # consecutive clips (0.0 = no overlap, 0.5 = 50% overlap). When > 0 clips may
   # intersect by up to this fraction of clip length (randomized per-trajectory).
   clip_seconds: float = 10.0
-  clip_overlap_fraction: float = 0.2  # must be in [0.0, 1.0)
+  clip_overlap_fraction: float = 0.3  # must be in [0.0, 1.0)
   # time constant for clip age-based error decay, the higher the value the slower the decay
-  clip_age_tau: float = 100.0
+  clip_age_tau: float = 1000.0
   # Hard-example mining probability for adaptive sampling
-  hard_mining_prob: float = 0.5
-  # EMA alpha for per-clip tracking error estimation
-  clip_ema_alpha: float = 0.1
+  hard_mining_prob: float = 0.7
+  # EMA alpha for per-clip tracking error estimation, the higher the value the slower the decay
+  clip_ema_alpha: float = 0.01
   # Adaptive sampling sharpness (higher => prioritize high-error clips)
   adaptive_beta: float = 10.0
