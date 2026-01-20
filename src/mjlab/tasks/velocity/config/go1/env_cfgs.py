@@ -3,11 +3,10 @@
 from mjlab.asset_zoo.robots import (
   GO1_ACTION_SCALE,
   get_go1_robot_cfg,
-  get_go1_robot_cfg_learned,
 )
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
-from mjlab.managers.manager_term_config import TerminationTermCfg
+from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
 from mjlab.tasks.velocity import mdp
 from mjlab.tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
@@ -16,6 +15,9 @@ from mjlab.tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
 def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   """Create Unitree Go1 rough terrain velocity configuration."""
   cfg = make_velocity_env_cfg()
+
+  cfg.sim.mujoco.ccd_iterations = 500
+  cfg.sim.contact_sensor_maxmatch = 500
 
   cfg.scene.entities = {"robot": get_go1_robot_cfg()}
 
@@ -65,6 +67,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   ].site_names = site_names
 
   cfg.events["foot_friction"].params["asset_cfg"].geom_names = geom_names
+  cfg.events["base_com"].params["asset_cfg"].body_names = ("trunk",)
 
   cfg.rewards["pose"].params["std_standing"] = {
     r".*(FR|FL|RR|RL)_(hip|thigh)_joint.*": 0.05,
@@ -116,19 +119,16 @@ def unitree_go1_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   """Create Unitree Go1 flat terrain velocity configuration."""
   cfg = unitree_go1_rough_env_cfg(play=play)
 
+  cfg.sim.njmax = 300
+  cfg.sim.mujoco.ccd_iterations = 50
+  cfg.sim.contact_sensor_maxmatch = 64
+
   # Switch to flat terrain.
   assert cfg.scene.terrain is not None
   cfg.scene.terrain.terrain_type = "plane"
   cfg.scene.terrain.terrain_generator = None
 
   # Disable terrain curriculum.
-  assert cfg.curriculum is not None
   del cfg.curriculum["terrain_levels"]
 
-  return cfg
-
-
-def unitree_go1_flat_env_cfg_learned(play: bool = False) -> ManagerBasedRlEnvCfg:
-  cfg = unitree_go1_flat_env_cfg(play=play)
-  cfg.scene.entities["robot"] = get_go1_robot_cfg_learned()
   return cfg

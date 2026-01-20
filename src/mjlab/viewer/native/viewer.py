@@ -128,8 +128,9 @@ class NativeMujocoViewer(BaseViewer):
 
     with self._mj_lock:
       sim_data = self.env.unwrapped.sim.data
-      self.mjd.qpos[:] = sim_data.qpos[self.env_idx].cpu().numpy()
-      self.mjd.qvel[:] = sim_data.qvel[self.env_idx].cpu().numpy()
+      if self.mjm.nq > 0:
+        self.mjd.qpos[:] = sim_data.qpos[self.env_idx].cpu().numpy()
+        self.mjd.qvel[:] = sim_data.qvel[self.env_idx].cpu().numpy()
       if self.mjm.nmocap > 0:
         self.mjd.mocap_pos[:] = sim_data.mocap_pos[self.env_idx].cpu().numpy()
         self.mjd.mocap_quat[:] = sim_data.mocap_quat[self.env_idx].cpu().numpy()
@@ -195,14 +196,16 @@ class NativeMujocoViewer(BaseViewer):
       v.sync(state_only=True)
 
   def sync_viewer_to_env(self) -> None:
-    """Copy perturbation forces from viewer to env (when not paused)."""
-    if not (self.enable_perturbations and not self._is_paused and self.mjd):
+    """Copy perturbation forces from viewer to env."""
+    if not self.enable_perturbations or self._is_paused or not self.mjd:
       return
+    assert self.mjm is not None
     with self._mj_lock:
       xfrc = torch.as_tensor(
         self.mjd.xfrc_applied, dtype=torch.float, device=self.env.device
       )
-    self.env.unwrapped.sim.data.xfrc_applied[:] = xfrc[None]
+    sim_data = self.env.unwrapped.sim.data
+    sim_data.xfrc_applied[self.env_idx] = xfrc[None]
 
   def close(self) -> None:
     """Close viewer and cleanup."""
@@ -298,21 +301,21 @@ class NativeMujocoViewer(BaseViewer):
         self.viewer.cam.trackbodyid = -1
 
       elif self.cfg.origin_type == self.cfg.OriginType.ASSET_ROOT:
-        if not self.cfg.asset_name:
+        if not self.cfg.entity_name:
           raise ValueError("Asset name must be specified for ASSET_ROOT origin type")
-        robot: Entity = self.env.unwrapped.scene[self.cfg.asset_name]
+        robot: Entity = self.env.unwrapped.scene[self.cfg.entity_name]
         body_id = robot.indexing.root_body_id
         self.viewer.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING.value
         self.viewer.cam.trackbodyid = body_id
         self.viewer.cam.fixedcamid = -1
 
       else:  # ASSET_BODY
-        if not self.cfg.asset_name or not self.cfg.body_name:
-          raise ValueError("asset_name/body_name required for ASSET_BODY origin type")
-        robot: Entity = self.env.unwrapped.scene[self.cfg.asset_name]
+        if not self.cfg.entity_name or not self.cfg.body_name:
+          raise ValueError("entity_name/body_name required for ASSET_BODY origin type")
+        robot: Entity = self.env.unwrapped.scene[self.cfg.entity_name]
         if self.cfg.body_name not in robot.body_names:
           raise ValueError(
-            f"Body '{self.cfg.body_name}' not found in asset '{self.cfg.asset_name}'"
+            f"Body '{self.cfg.body_name}' not found in asset '{self.cfg.entity_name}'"
           )
         body_id_list, _ = robot.find_bodies(self.cfg.body_name)
         body_id = robot.indexing.bodies[body_id_list[0]].id

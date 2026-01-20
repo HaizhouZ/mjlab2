@@ -5,8 +5,10 @@ from mjlab.asset_zoo.robots import (
   get_g1_robot_cfg,
 )
 from mjlab.envs import ManagerBasedRlEnvCfg
+from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
-from mjlab.managers.manager_term_config import RewardTermCfg
+from mjlab.managers.event_manager import EventTermCfg
+from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
 from mjlab.tasks.velocity import mdp
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
@@ -16,6 +18,10 @@ from mjlab.tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
 def unitree_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   """Create Unitree G1 rough terrain velocity configuration."""
   cfg = make_velocity_env_cfg()
+
+  cfg.sim.mujoco.ccd_iterations = 500
+  cfg.sim.contact_sensor_maxmatch = 500
+  cfg.sim.nconmax = 45
 
   cfg.scene.entities = {"robot": get_g1_robot_cfg()}
 
@@ -56,7 +62,6 @@ def unitree_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   cfg.viewer.body_name = "torso_link"
 
-  assert cfg.commands is not None
   twist_cmd = cfg.commands["twist"]
   assert isinstance(twist_cmd, UniformVelocityCommandCfg)
   twist_cmd.viz.z_offset = 1.15
@@ -66,7 +71,16 @@ def unitree_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   ].site_names = site_names
 
   cfg.events["foot_friction"].params["asset_cfg"].geom_names = geom_names
+  cfg.events["base_com"].params["asset_cfg"].body_names = ("torso_link",)
 
+  # Rationale for std values:
+  # - Knees/hip_pitch get the loosest std to allow natural leg bending during stride.
+  # - Hip roll/yaw stay tighter to prevent excessive lateral sway and keep gait stable.
+  # - Ankle roll is very tight for balance; ankle pitch looser for foot clearance.
+  # - Waist roll/pitch stay tight to keep the torso upright and stable.
+  # - Shoulders/elbows get moderate freedom for natural arm swing during walking.
+  # - Wrists are loose (0.3) since they don't affect balance much.
+  # Running values are ~1.5-2x walking values to accommodate larger motion range.
   cfg.rewards["pose"].params["std_standing"] = {".*": 0.05}
   cfg.rewards["pose"].params["std_walking"] = {
     # Lower body.
@@ -130,6 +144,11 @@ def unitree_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
     cfg.observations["policy"].enable_corruption = False
     cfg.events.pop("push_robot", None)
+    cfg.events["randomize_terrain"] = EventTermCfg(
+      func=envs_mdp.randomize_terrain,
+      mode="reset",
+      params={},
+    )
 
     if cfg.scene.terrain is not None:
       if cfg.scene.terrain.terrain_generator is not None:
@@ -145,20 +164,22 @@ def unitree_g1_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   """Create Unitree G1 flat terrain velocity configuration."""
   cfg = unitree_g1_rough_env_cfg(play=play)
 
+  cfg.sim.njmax = 300
+  cfg.sim.mujoco.ccd_iterations = 50
+  cfg.sim.contact_sensor_maxmatch = 64
+  cfg.sim.nconmax = None
+
   # Switch to flat terrain.
   assert cfg.scene.terrain is not None
   cfg.scene.terrain.terrain_type = "plane"
   cfg.scene.terrain.terrain_generator = None
 
   # Disable terrain curriculum.
-  assert cfg.curriculum is not None
   assert "terrain_levels" in cfg.curriculum
   del cfg.curriculum["terrain_levels"]
 
   if play:
-    commands = cfg.commands
-    assert commands is not None
-    twist_cmd = commands["twist"]
+    twist_cmd = cfg.commands["twist"]
     assert isinstance(twist_cmd, UniformVelocityCommandCfg)
     twist_cmd.ranges.lin_vel_x = (-1.5, 2.0)
     twist_cmd.ranges.ang_vel_z = (-0.7, 0.7)

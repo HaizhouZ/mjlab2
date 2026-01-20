@@ -8,17 +8,20 @@ from pathlib import Path
 from typing import Literal, cast
 
 import tyro
-from rsl_rl.runners import OnPolicyRunner
 
 from mjlab.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
-from mjlab.rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
+from mjlab.rl import MjlabOnPolicyRunner, RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
 from mjlab.tasks.tracking.mdp import MotionCommandCfg, MultiMotionCommandCfg
 from mjlab.utils.gpu import select_gpus
 from mjlab.utils.log_dir import get_log_dir
 from mjlab.utils.os import dump_yaml, get_checkpoint_path, get_wandb_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
-from mjlab.utils.wandb import get_wandb_entity_and_project, get_wandb_motion_cache_dir
+from mjlab.utils.wandb import (
+  add_wandb_tags,
+  get_wandb_entity_and_project,
+  get_wandb_motion_cache_dir,
+)
 from mjlab.utils.wrappers import VideoRecorder
 
 
@@ -210,7 +213,7 @@ def run_train(
 
   runner_cls = load_runner_cls(task_id)
   if runner_cls is None:
-    runner_cls = OnPolicyRunner
+    runner_cls = MjlabOnPolicyRunner
 
   runner_kwargs = {}
   if is_tracking_task:
@@ -218,6 +221,7 @@ def run_train(
 
   runner = runner_cls(env, agent_cfg, str(log_dir), device, **runner_kwargs)
 
+  add_wandb_tags(cfg.agent.wandb_tags)
   runner.add_git_repo_to_log(__file__)
   if resume_path is not None:
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")

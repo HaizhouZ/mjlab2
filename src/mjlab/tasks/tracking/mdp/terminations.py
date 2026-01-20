@@ -84,12 +84,3 @@ def bad_motion_body_pos_z_only(
     - command.robot_body_pos_w[:, body_indexes, -1]
   )
   return torch.any(error > threshold, dim=-1)
-
-
-def base_ang_vel_exceed(
-  env: ManagerBasedRlEnv,
-  threshold: float,
-) -> torch.Tensor:
-  asset: Entity = env.scene["robot"]
-  ang_vel = asset.data.root_link_ang_vel_b
-  return torch.any(ang_vel.abs() > threshold, dim=-1)

@@ -12,9 +12,8 @@ from rsl_rl.runners import OnPolicyRunner
 
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.rl import RslRlVecEnvWrapper
-from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg
+from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
 from mjlab.tasks.tracking.mdp import MotionCommandCfg, MultiMotionCommandCfg
-from mjlab.tasks.tracking.rl import MotionTrackingOnPolicyRunner
 from mjlab.tasks.tracking.rl.exporter import (
   attach_onnx_metadata as attach_tracking_onnx_metadata,
 )
@@ -52,13 +51,13 @@ class PlayConfig:
   _demo_mode: tyro.conf.Suppress[bool] = False
 
 
-def run_play(task: str, cfg: PlayConfig):
+def run_play(task_id: str, cfg: PlayConfig):
   configure_torch_backends()
 
   device = cfg.device or ("cuda:0" if torch.cuda.is_available() else "cpu")
 
-  env_cfg = load_env_cfg(task, play=True)
-  agent_cfg = load_rl_cfg(task)
+  env_cfg = load_env_cfg(task_id, play=True)
+  agent_cfg = load_rl_cfg(task_id)
 
   DUMMY_MODE = cfg.agent in {"zero", "random"}
   TRAINED_MODE = not DUMMY_MODE
@@ -74,13 +73,11 @@ def run_play(task: str, cfg: PlayConfig):
 
   if is_tracking_task and cfg._demo_mode:
     # Demo mode: use uniform sampling to see more diversity with num_envs > 1.
-    assert env_cfg.commands is not None
     motion_cmd = env_cfg.commands["motion"]
     assert isinstance(motion_cmd, (MotionCommandCfg, MultiMotionCommandCfg))
     motion_cmd.sampling_mode = "uniform"
 
   if is_tracking_task:
-    assert env_cfg.commands is not None
     motion_cmd = env_cfg.commands["motion"]
     assert isinstance(motion_cmd, (MotionCommandCfg, MultiMotionCommandCfg))
 
@@ -207,14 +204,8 @@ def run_play(task: str, cfg: PlayConfig):
 
       policy = PolicyRandom()
   else:
-    if is_tracking_task:
-      runner = MotionTrackingOnPolicyRunner(
-        env, asdict(agent_cfg), log_dir=str(log_dir), device=device
-      )
-    else:
-      runner = OnPolicyRunner(
-        env, asdict(agent_cfg), log_dir=str(log_dir), device=device
-      )
+    runner_cls = load_runner_cls(task_id) or OnPolicyRunner
+    runner = runner_cls(env, asdict(agent_cfg), device=device)
     runner.load(str(resume_path), map_location=device)
     policy = runner.get_inference_policy(device=device)
 
