@@ -10,6 +10,7 @@ from typing import Any, NoReturn
 import torch
 import torch.nn as nn
 from rsl_rl.networks import EmpiricalNormalization
+from rsl_rl.utils import resolve_nn_activation
 from tensordict import TensorDict
 from torch.distributions import Normal
 
@@ -126,14 +127,14 @@ class ActorCriticLayerNorm(nn.Module):
     # Actor (MLP-based)
     self.state_dependent_std = state_dependent_std
     # Input to actor MLP: concatenated actor observation vector
-
+    activation_fn = resolve_nn_activation(activation)
     self.actor = make_network(
       num_actor_obs,
       2 * num_actions if self.state_dependent_std else num_actions,
       res_dim=actor_hidden_dims[0],
       num_res_blocks=len(actor_hidden_dims),
-      input_activation=nn.Mish(),
-      res_activation=nn.Mish(),
+      input_activation=activation_fn,
+      res_activation=activation_fn,
       output_activation=None,
     )
     print(f"Actor Network: {self.actor}")
@@ -151,8 +152,8 @@ class ActorCriticLayerNorm(nn.Module):
       1,
       res_dim=critic_hidden_dims[0],
       num_res_blocks=len(critic_hidden_dims),
-      input_activation=nn.Mish(),
-      res_activation=nn.Mish(),
+      input_activation=activation_fn,
+      res_activation=activation_fn,
       output_activation=None,
     )
     print(f"Critic Network: {self.critic}")

@@ -1,5 +1,7 @@
 """RL configuration for Unitree G1 tracking task."""
 
+import os
+
 from mjlab.rl import (
   RslRlOnPolicyRunnerCfg,
   RslRlPpoActorCriticCfg,
@@ -43,8 +45,8 @@ def unitree_g1_multitracking_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
   """Create RL runner configuration for Unitree G1 multi-tracking task."""
 
   cfg = unitree_g1_tracking_ppo_runner_cfg()
-
-  cfg.policy.activation = "mish"
+  activation = os.getenv("MJLAB_MULTIRACK_ACTIVATION", "elu")
+  cfg.policy.activation = activation
   cfg.policy.class_name = "mjlab.rl.actor_critic_with_ln:ActorCriticLayerNorm"
   cfg.policy.actor_hidden_dims = (1024,) * 1
   cfg.policy.critic_hidden_dims = (1024,) * 2
