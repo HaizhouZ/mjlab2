@@ -1,7 +1,9 @@
 import os
+from pyexpat import model
 from typing import cast
 
 import torch
+import torch.nn as nn
 
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.rl.exporter_utils import (
@@ -24,6 +26,25 @@ def export_motion_policy_as_onnx(
     os.makedirs(path, exist_ok=True)
   policy_exporter = _OnnxMotionPolicyExporter(env, actor_critic, normalizer, verbose)
   policy_exporter.export(path, filename)
+
+
+def get_input_dim(module: nn.Module) -> int:
+  # Get the very first module in the Sequential
+  first = model[0] if isinstance(model, nn.Sequential) else model
+
+  # 1. Check for Linear
+  if hasattr(first, "in_features"):
+    return first.in_features  # type: ignore
+
+  # 2. Check for LayerNorm
+  if hasattr(first, "normalized_shape"):
+    return first.normalized_shape[0]  # type: ignore
+
+  # 3. Check for custom blocks (like your residual_block)
+  if hasattr(first, "input_dim"):  # If you saved it as an attribute
+    return first.input_dim  # type: ignore
+
+  raise AttributeError("Could not automatically determine input dimension.")
 
 
 class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
@@ -75,7 +96,7 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
 
   def export(self, path, filename):
     self.to("cpu")
-    obs = torch.zeros(1, self.actor[0].in_features)
+    obs = torch.zeros(1, self.actor[0][1].in_features)
     time_step = torch.zeros(1, 1)
 
     # Base output names (always included)

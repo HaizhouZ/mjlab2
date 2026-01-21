@@ -9,8 +9,77 @@ from typing import Any, NoReturn
 
 import torch
 import torch.nn as nn
-from rsl_rl.networks import MLP, EmpiricalNormalization
+from rsl_rl.networks import EmpiricalNormalization
+from tensordict import TensorDict
 from torch.distributions import Normal
+
+
+def make_layernorm_block(
+  in_dim: int,
+  out_dim: int,
+  ln_pos: str = "pre",
+  activation: nn.Module | None = None,
+) -> nn.Module:
+  """Create a block with LayerNorm, Linear, and activation (no activation if None)."""
+  if activation is None:
+    activation = nn.Identity()
+  if ln_pos == "pre":
+    block = nn.Sequential(
+      nn.LayerNorm(in_dim),
+      nn.Linear(in_dim, out_dim),
+      activation,
+    )
+  elif ln_pos == "post":
+    block = nn.Sequential(
+      nn.Linear(in_dim, out_dim),
+      nn.LayerNorm(out_dim),
+      activation,
+    )
+  else:
+    raise ValueError(
+      f"Invalid ln_pos '{ln_pos}' or in_dim '{in_dim}' or out_dim '{out_dim}'"
+    )
+  return block
+
+
+class residual_block(nn.Module):
+  def __init__(
+    self,
+    input_dim: int,
+    out_dim: int,
+    ln_pos: str = "pre",
+    activation: nn.Module | None = None,
+  ) -> None:
+    super().__init__()
+    if activation is None:
+      activation = nn.Mish()
+    self.block = nn.Sequential(
+      make_layernorm_block(input_dim, out_dim, ln_pos, activation),
+    )
+
+  def forward(self, x: torch.Tensor) -> torch.Tensor:
+    return x + self.block(x)
+
+
+def make_network(
+  input_dim: int,
+  output_dim: int,
+  res_dim: int,
+  num_res_blocks: int,
+  input_activation: nn.Module | None = None,
+  res_activation: nn.Module | None = None,
+  output_activation: nn.Module | None = None,
+) -> nn.Module:
+  # make a BRO-like network with layernorm
+  layers: list[nn.Module] = []
+  # input layer
+  layers.append(make_layernorm_block(input_dim, res_dim, "pre", input_activation))
+  # residual blocks
+  for _ in range(num_res_blocks):
+    layers.append(residual_block(res_dim, res_dim, "pre", res_activation))
+  # output layer
+  layers.append(make_layernorm_block(res_dim, output_dim, "pre", output_activation))
+  return nn.Sequential(*layers)
 
 
 class ActorCriticLayerNorm(nn.Module):
@@ -57,11 +126,17 @@ class ActorCriticLayerNorm(nn.Module):
     # Actor (MLP-based)
     self.state_dependent_std = state_dependent_std
     # Input to actor MLP: concatenated actor observation vector
-    if self.state_dependent_std:
-      self.actor = MLP(num_actor_obs, [2, num_actions], actor_hidden_dims, activation)
-    else:
-      self.actor = MLP(num_actor_obs, num_actions, actor_hidden_dims, activation)
-    print(f"Actor MLP: {self.actor}")
+
+    self.actor = make_network(
+      num_actor_obs,
+      2 * num_actions if self.state_dependent_std else num_actions,
+      res_dim=actor_hidden_dims[0],
+      num_res_blocks=len(actor_hidden_dims),
+      input_activation=nn.Mish(),
+      res_activation=nn.Mish(),
+      output_activation=None,
+    )
+    print(f"Actor Network: {self.actor}")
 
     # Actor observation normalization
     self.actor_obs_normalization = actor_obs_normalization
@@ -70,12 +145,17 @@ class ActorCriticLayerNorm(nn.Module):
     else:
       self.actor_obs_normalizer = torch.nn.Identity()
 
-    # Actor LayerNorm applied to actor observation vector before MLP
-    self.actor_layernorm = nn.LayerNorm(num_actor_obs, eps=layernorm_eps)
-
     # Critic (MLP-based)
-    self.critic = MLP(num_critic_obs, 1, critic_hidden_dims, activation)
-    print(f"Critic MLP: {self.critic}")
+    self.critic = make_network(
+      num_critic_obs,
+      1,
+      res_dim=critic_hidden_dims[0],
+      num_res_blocks=len(critic_hidden_dims),
+      input_activation=nn.Mish(),
+      res_activation=nn.Mish(),
+      output_activation=None,
+    )
+    print(f"Critic Network: {self.critic}")
 
     # Critic observation normalization
     self.critic_obs_normalization = critic_obs_normalization
@@ -84,18 +164,16 @@ class ActorCriticLayerNorm(nn.Module):
     else:
       self.critic_obs_normalizer = torch.nn.Identity()
 
-    # Critic LayerNorm applied to critic observation vector before MLP
-    self.critic_layernorm = nn.LayerNorm(num_critic_obs, eps=layernorm_eps)
-
     # Action noise
     self.noise_std_type = noise_std_type
+    actor_output_layer = self.actor[-1][1]  # type: ignore[index]
     if self.state_dependent_std:
-      torch.nn.init.zeros_(self.actor[-2].weight[num_actions:])  # type: ignore[index]
+      torch.nn.init.zeros_(actor_output_layer.weight[num_actions:])  # type: ignore[index]
       if self.noise_std_type == "scalar":
-        torch.nn.init.constant_(self.actor[-2].bias[num_actions:], init_noise_std)  # type: ignore[index]
+        torch.nn.init.constant_(actor_output_layer.bias[num_actions:], init_noise_std)  # type: ignore[index]
       elif self.noise_std_type == "log":
         torch.nn.init.constant_(
-          self.actor[-2].bias[num_actions:],  # type: ignore[index]
+          actor_output_layer.bias[num_actions:],  # type: ignore[index]
           torch.log(torch.tensor(init_noise_std + 1e-7)),  # type: ignore[arg-type]
         )
       else:
@@ -141,7 +219,7 @@ class ActorCriticLayerNorm(nn.Module):
   def _update_distribution(self, obs: torch.Tensor) -> None:
     if self.state_dependent_std:
       # Compute mean and standard deviation
-      mean_and_std = self.actor(self.actor_layernorm(obs))
+      mean_and_std = self.actor(obs)
       if self.noise_std_type == "scalar":
         mean, std = torch.unbind(mean_and_std, dim=-2)
       elif self.noise_std_type == "log":
@@ -153,7 +231,7 @@ class ActorCriticLayerNorm(nn.Module):
         )
     else:
       # Compute mean
-      mean = self.actor(self.actor_layernorm(obs))
+      mean = self.actor(obs)
       # Compute standard deviation
       if self.noise_std_type == "scalar":
         std = self.std.expand_as(mean)
@@ -166,59 +244,61 @@ class ActorCriticLayerNorm(nn.Module):
     # Create distribution
     self.distribution = Normal(mean, std)
 
-  def act(self, obs) -> torch.Tensor:
-    obs = self.get_actor_obs(obs)
+  def act(self, obs: TensorDict, **kwargs: dict[str, Any]) -> torch.Tensor:
+    obs = self.get_actor_obs(obs)  # type: ignore
     obs = self.actor_obs_normalizer(obs)
-    # No RNN: pass normalized observation vector into actor
     self._update_distribution(obs)
-    return self.distribution.sample()  # type: ignore[return-value]
+    assert isinstance(self.distribution, Normal), (
+      "Action distribution has not been initialized."
+    )
+    return self.distribution.sample()
 
-  def act_inference(self, obs) -> torch.Tensor:
-    obs = self.get_actor_obs(obs)
+  def act_inference(self, obs: TensorDict) -> torch.Tensor:
+    obs = self.get_actor_obs(obs)  # type: ignore
     obs = self.actor_obs_normalizer(obs)
-    # MLP-only inference
     if self.state_dependent_std:
-      return self.actor(self.actor_layernorm(obs))[..., 0, :]
+      return self.actor(obs)[..., 0, :]
     else:
-      return self.actor(self.actor_layernorm(obs))
+      return self.actor(obs)
 
-  def evaluate(self, obs) -> torch.Tensor:
-    obs = self.get_critic_obs(obs)
+  def evaluate(self, obs: TensorDict, **kwargs: dict[str, Any]) -> torch.Tensor:
+    obs = self.get_critic_obs(obs)  # type: ignore
     obs = self.critic_obs_normalizer(obs)
-    # MLP-only evaluation (apply critic LayerNorm)
-    return self.critic(self.critic_layernorm(obs))
+    return self.critic(obs)
 
-  def get_actor_obs(self, obs) -> torch.Tensor:
+  def get_actor_obs(self, obs: TensorDict) -> torch.Tensor:
     obs_list = [obs[obs_group] for obs_group in self.obs_groups["policy"]]
     return torch.cat(obs_list, dim=-1)
 
-  def get_critic_obs(self, obs) -> torch.Tensor:
+  def get_critic_obs(self, obs: TensorDict) -> torch.Tensor:
     obs_list = [obs[obs_group] for obs_group in self.obs_groups["critic"]]
     return torch.cat(obs_list, dim=-1)
 
   def get_actions_log_prob(self, actions: torch.Tensor) -> torch.Tensor:
-    return self.distribution.log_prob(actions).sum(dim=-1)  # type: ignore[return-value]
+    assert isinstance(self.distribution, Normal), (
+      "Action distribution has not been initialized."
+    )
+    return self.distribution.log_prob(actions).sum(dim=-1)
 
-  def update_normalization(self, obs) -> None:
+  def update_normalization(self, obs: TensorDict) -> None:
     if self.actor_obs_normalization:
       actor_obs = self.get_actor_obs(obs)
-      self.actor_obs_normalizer.update(actor_obs)  # type: ignore[union-attr]
+      self.actor_obs_normalizer.update(actor_obs)  # type: ignore
     if self.critic_obs_normalization:
       critic_obs = self.get_critic_obs(obs)
-      self.critic_obs_normalizer.update(critic_obs)  # type: ignore[union-attr]
+      self.critic_obs_normalizer.update(critic_obs)  # type: ignore
 
-  def load_state_dict(self, state_dict, strict=True):  # type: ignore
+  def load_state_dict(self, state_dict: dict, strict: bool = True) -> bool:  # type: ignore
     """Load the parameters of the actor-critic model.
 
     Args:
-        state_dict (dict): State dictionary of the model.
-        strict (bool): Whether to strictly enforce that the keys in state_dict match the keys returned by this
-                        module's state_dict() function.
+        state_dict: State dictionary of the model.
+        strict: Whether to strictly enforce that the keys in `state_dict` match the keys returned by this module's
+            :meth:`state_dict` function.
 
     Returns:
-        bool: Whether this training resumes a previous training. This flag is used by the `load()` function of
-                `OnPolicyRunner` to determine how to load further parameters (relevant for, e.g., distillation).
+        Whether this training resumes a previous training. This flag is used by the :func:`load` function of
+            :class:`OnPolicyRunner` to determine how to load further parameters (relevant for, e.g., distillation).
     """
-
     super().load_state_dict(state_dict, strict=strict)
-    return True  # training resumes
+    return True
