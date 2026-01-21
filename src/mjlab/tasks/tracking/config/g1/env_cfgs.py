@@ -84,15 +84,16 @@ def unitree_g1_flat_tracking_env_cfg(
 
   # Apply play mode overrides.
   if play:
+    cfg.is_play = True
     # Effectively infinite episode length.
     cfg.episode_length_s = int(1e9)
 
     cfg.observations["policy"].enable_corruption = False
-    # cfg.events.pop("push_robot", None)
+    cfg.events.pop("push_robot", None)
     # cfg.events.pop("base_com", None)
     # cfg.events.pop("add_joint_default_pos", None)
     # cfg.events.pop("foot_friction", None)
-    cfg.events["push_robot"].params["visualize"] = True
+    # cfg.events["push_robot"].params["visualize"] = True
 
     # Disable RSI randomization.
     motion_cmd.pose_range = {}

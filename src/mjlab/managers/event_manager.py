@@ -155,6 +155,12 @@ class EventManager(ManagerBase):
           self._interval_term_time_left[index][env_ids] = sampled_interval
     return {}
 
+  def log_event(self, mode, env_ids, index, term_cfg):
+    term_name = self._mode_term_names[mode][index]
+    print(
+      f"[PLAY][EVENT] '{term_name}' mode={mode} env_ids={env_ids} params={term_cfg.params}"
+    )
+
   def apply(
     self,
     mode: EventMode,
@@ -175,8 +181,12 @@ class EventManager(ManagerBase):
       raise ValueError(
         f"Event mode '{mode}' requires the total number of environment steps to be provided."
       )
-
     for index, term_cfg in enumerate(self._mode_term_cfgs[mode]):
+
+      def log_event(env_ids, idx=index, cfg=term_cfg):
+        if getattr(self._env.cfg, "is_play", False):
+          self.log_event(mode, env_ids, idx, cfg)
+
       if mode == "interval":
         time_left = self._interval_term_time_left[index]
         assert dt is not None
@@ -187,6 +197,7 @@ class EventManager(ManagerBase):
             lower, upper = term_cfg.interval_range_s
             sampled_interval = torch.rand(1) * (upper - lower) + lower
             self._interval_term_time_left[index][:] = sampled_interval
+            log_event(None)  # log global interval event
             term_cfg.func(self._env, None, **term_cfg.params)
         else:
           valid_env_ids = (time_left < 1e-6).nonzero().flatten()
@@ -198,6 +209,7 @@ class EventManager(ManagerBase):
               + lower
             )
             self._interval_term_time_left[index][valid_env_ids] = sampled_time
+            log_event(valid_env_ids)  # log per-environment interval event
             term_cfg.func(self._env, valid_env_ids, **term_cfg.params)
       elif mode == "reset":
         assert global_env_step_count is not None
@@ -209,6 +221,7 @@ class EventManager(ManagerBase):
             global_env_step_count
           )
           self._reset_term_last_triggered_once[index][env_ids] = True
+          log_event(env_ids)
           term_cfg.func(self._env, env_ids, **term_cfg.params)
         else:
           last_triggered_step = self._reset_term_last_triggered_step_id[index][env_ids]
@@ -225,13 +238,11 @@ class EventManager(ManagerBase):
             self._reset_term_last_triggered_step_id[index][valid_env_ids] = (
               global_env_step_count
             )
+            log_event(valid_env_ids)
             term_cfg.func(self._env, valid_env_ids, **term_cfg.params)
       else:
+        log_event(env_ids)
         term_cfg.func(self._env, env_ids, **term_cfg.params)
-      term_name = self._mode_term_names[mode][index]
-      print(
-        f"[PLAY][EVENT] '{term_name}' mode={mode} env_ids={env_ids} params={term_cfg.params}"
-      )
 
   def _prepare_terms(self) -> None:
     self._interval_term_time_left: list[torch.Tensor] = list()

@@ -132,6 +132,9 @@ class ManagerBasedRlEnvCfg:
   algorithms that expect unscaled reward signals (e.g., HER, static reward scaling).
   """
 
+  is_play: bool = False
+  """Whether the environment is in play mode. """
+
 
 class ManagerBasedRlEnv:
   """Manager-based RL environment."""
@@ -397,7 +400,6 @@ class ManagerBasedRlEnv:
     # the normal manager/sensor debug_vis flow (for example, events).
     if visualizer is not None:
       arrows = self._debug_primitives.get("arrows", [])
-      print("arrow draw called")
       for a in arrows:
         visualizer.add_arrow(
           a["start"],

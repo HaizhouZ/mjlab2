@@ -237,9 +237,9 @@ def push_by_setting_velocity(
       # This avoids accessing a visualizer attribute on the env directly.
       env.add_debug_arrow(
         start_pos,
-        start_pos + linear_velocity * 0.1,
+        start_pos + linear_velocity * 1.0,
         color=(1.0, 0.0, 0.0, 1.0),
-        width=0.015,
+        width=0.02,
       )
 
 
