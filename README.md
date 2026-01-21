@@ -124,11 +124,12 @@ Train a Unitree G1 to mimic reference motions. mjlab uses
 ```bash
 uv run train Mjlab-Tracking-Flat-Unitree-G1 --registry-name your-org/motions/motion-name --env.scene.num-envs 4096
 
-uv run train Mjlab-ObjectMotionTracking-Unitree-G1 \
-  --registry-name ataritum-org/wandb-registry-motions/victor_object_repeated \
-  --env.scene.num_envs 4096 \
+MJLAB_MOTION_HORIZON=1 uv run train Mjlab-MultiTracking-Flat-Unitree-G1 \
+  --agent.wandb-project multitrack \
+  --agent.run-name H_1_10s_bro \
+  --registry-name wandb-registry-motions/lafan_dataset \
   --agent.max-iterations 30000 \
-  --device cuda:0
+  --env.scene.num-envs 4096
 ```
 ---
 
