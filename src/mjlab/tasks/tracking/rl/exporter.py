@@ -1,5 +1,4 @@
 import os
-from pyexpat import model
 from typing import cast
 
 import torch
@@ -28,10 +27,9 @@ def export_motion_policy_as_onnx(
   policy_exporter.export(path, filename)
 
 
-def get_input_dim(module: nn.Module) -> int:
+def get_input_dim(model: nn.Module) -> int:
   # Get the very first module in the Sequential
   first = model[0] if isinstance(model, nn.Sequential) else model
-
   # 1. Check for Linear
   if hasattr(first, "in_features"):
     return first.in_features  # type: ignore
@@ -96,7 +94,7 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
 
   def export(self, path, filename):
     self.to("cpu")
-    obs = torch.zeros(1, self.actor[0][1].in_features)
+    obs = torch.zeros(1, get_input_dim(self.actor[0]))
     time_step = torch.zeros(1, 1)
 
     # Base output names (always included)
