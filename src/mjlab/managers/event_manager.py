@@ -228,6 +228,10 @@ class EventManager(ManagerBase):
             term_cfg.func(self._env, valid_env_ids, **term_cfg.params)
       else:
         term_cfg.func(self._env, env_ids, **term_cfg.params)
+      term_name = self._mode_term_names[mode][index]
+      print(
+        f"[PLAY][EVENT] '{term_name}' mode={mode} env_ids={env_ids} params={term_cfg.params}"
+      )
 
   def _prepare_terms(self) -> None:
     self._interval_term_time_left: list[torch.Tensor] = list()

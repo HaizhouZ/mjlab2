@@ -1582,8 +1582,37 @@ class MultiMotionCommand(CommandTerm):
 
     # Sampling by clip (delegated to helper methods for clarity).
     if self.cfg.sampling_mode == "start":
-      # restart at beginning of assigned clip
-      self.time_steps[env_ids] = self.clip_start_frames[self.clip_indices[env_ids]]
+      # restart at beginning of assigned clip, or start from a specific
+      # motion if `start_motion_name` is provided in the cfg.
+      if getattr(self.cfg, "start_motion_name", None) is not None:
+        mname = self.cfg.start_motion_name
+        # find matching motion indices in motion_loader.traj_names
+        matches = [i for i, n in enumerate(self.motion_loader.traj_names) if n == mname]
+        if len(matches) == 0:
+          raise ValueError(
+            f"start_motion_name '{mname}' not found among loaded motions"
+          )
+        motion_idx = matches[0]
+        # find clips that originate from this motion (clip_traj_indices indexes motions)
+        candidate_clips = torch.nonzero(
+          self.clip_traj_indices == motion_idx, as_tuple=False
+        ).view(-1)
+        if candidate_clips.numel() == 0:
+          raise ValueError(
+            f"No clips found for motion '{mname}' (motion index {motion_idx})"
+          )
+        # choose uniformly among candidate clips for each resampled env
+        # sample indices into candidate_clips
+        n_candidates = candidate_clips.numel()
+        # If multiple envs, pick a random candidate per env
+        rand_idx = torch.randint(0, n_candidates, (len(env_ids),), device=self.device)
+        chosen_clips = candidate_clips[rand_idx]
+        self.clip_indices[env_ids] = chosen_clips
+        self.motion_indices[env_ids] = self.clip_traj_indices[chosen_clips]
+        self.time_steps[env_ids] = self.clip_start_frames[chosen_clips]
+      else:
+        # restart at beginning of assigned clip
+        self.time_steps[env_ids] = self.clip_start_frames[self.clip_indices[env_ids]]
     elif self.cfg.sampling_mode == "uniform":
       # delegate to uniform sampler (will handle clip assignment when clips exist)
       self._uniform_sampling(env_ids)
@@ -1830,6 +1859,10 @@ class MultiMotionCommandCfg(CommandTermCfg):
   clip_ema_alpha: float = 0.01
   # Adaptive sampling sharpness (higher => prioritize high-error clips)
   adaptive_beta: float = 10.0
+  # Optional: when `sampling_mode == "start"`, use this motion name as the
+  # specific motion to start from for resampled envs. If `None`, behavior is
+  # unchanged (time step 0 / clip start).
+  start_motion_name: str | None = None
 
   def build(self, env: ManagerBasedRlEnv) -> MultiMotionCommand:
     return MultiMotionCommand(self, env)

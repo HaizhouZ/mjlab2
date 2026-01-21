@@ -207,6 +207,9 @@ class ManagerBasedRlEnv:
     # Load all managers.
     self.load_managers()
     self.setup_manager_visualizers()
+    # Queue for debug visualization primitives produced outside render time
+    # (e.g., events). Each frame render will draw and then clear these.
+    self._debug_primitives: dict = {"arrows": []}
 
   # Properties.
 
@@ -390,10 +393,46 @@ class ManagerBasedRlEnv:
     return seed
 
   def update_visualizers(self, visualizer: DebugVisualizer) -> None:
+    # First, render any queued primitives (arrows etc.) produced outside
+    # the normal manager/sensor debug_vis flow (for example, events).
+    if visualizer is not None:
+      arrows = self._debug_primitives.get("arrows", [])
+      print("arrow draw called")
+      for a in arrows:
+        visualizer.add_arrow(
+          a["start"],
+          a["end"],
+          color=a.get("color", (1, 0, 0, 1)),
+          width=a.get("width", 0.015),
+          label=a.get("label", None),
+        )
+      # Clear after drawing so they aren't repeated next frame.
+      arrows.clear()
+
     for mod in self.manager_visualizers.values():
       mod.debug_vis(visualizer)
     for sensor in self.scene.sensors.values():
       sensor.debug_vis(visualizer)
+
+  # Debug primitives API -------------------------------------------------
+  def add_debug_arrow(
+    self,
+    start,
+    end,
+    *,
+    color: tuple = (1.0, 0.0, 0.0, 1.0),
+    width: float = 0.015,
+    label: str | None = None,
+  ) -> None:
+    """Queue an arrow primitive to be drawn on the next render.
+
+    This is safe to call from code that runs outside the render callback
+    (events, resets, etc.). The primitives are drawn once during
+    `update_visualizers` and then cleared.
+    """
+    self._debug_primitives.setdefault("arrows", []).append(
+      {"start": start, "end": end, "color": color, "width": width, "label": label}
+    )
 
   # Private methods.
 

@@ -167,7 +167,7 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
       func=mdp.push_by_setting_velocity,
       mode="interval",
       interval_range_s=(1.0, 3.0),
-      params={"velocity_range": VELOCITY_RANGE},
+      params={"velocity_range": VELOCITY_RANGE, "visualize": False},
     ),
     "base_com": EventTermCfg(
       mode="startup",
@@ -193,7 +193,7 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
       },
     ),
     "foot_friction": EventTermCfg(
-      mode="startup",
+      mode="reset",
       func=mdp.randomize_field,
       domain_randomization=True,
       params={

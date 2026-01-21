@@ -210,6 +210,7 @@ def push_by_setting_velocity(
   env: ManagerBasedRlEnv,
   env_ids: torch.Tensor,
   velocity_range: dict[str, tuple[float, float]],
+  visualize: bool = False,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> None:
   asset: Entity = env.scene[asset_cfg.name]
@@ -221,6 +222,25 @@ def push_by_setting_velocity(
   ranges = torch.tensor(range_list, device=env.device)
   vel_w += sample_uniform(ranges[:, 0], ranges[:, 1], vel_w.shape, device=env.device)
   asset.write_root_link_velocity_to_sim(vel_w, env_ids=env_ids)
+  if visualize:
+    # visualize the push as a red arrow
+    for i, env_id in enumerate(env_ids):
+      start_pos = asset.data.root_link_pos_w[env_id].cpu().numpy()
+      velocity = vel_w[i].cpu().numpy()
+      # Use only the linear (x, y, z) components for arrow visualization.
+      linear_velocity = velocity[0:3]
+      # DebugVisualizer API uses `add_arrow(start, end, color_rgba, width, label)`.
+      # The environment does not always expose a `debug_visualizer` attribute
+      # (visualizers are passed into `env.update_visualizers` during rendering),
+      # so only draw the arrow if a visualizer is attached to the env object.
+      # Queue arrow for next render via the env debug-primitives API.
+      # This avoids accessing a visualizer attribute on the env directly.
+      env.add_debug_arrow(
+        start_pos,
+        start_pos + linear_velocity * 0.1,
+        color=(1.0, 0.0, 0.0, 1.0),
+        width=0.015,
+      )
 
 
 def apply_external_force_torque(

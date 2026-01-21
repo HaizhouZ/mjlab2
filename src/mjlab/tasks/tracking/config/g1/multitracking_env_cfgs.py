@@ -70,6 +70,7 @@ def unitree_g1_flat_multitracking_env_cfg(
 
   # Apply play mode overrides.
   if play:
-    cfg.commands["motion"].sampling_mode = "uniform"
+    cfg.commands["motion"].sampling_mode = "start"
+    cfg.commands["motion"].start_motion_name = "fight1_subject5"
 
   return cfg
