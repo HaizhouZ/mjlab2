@@ -2076,6 +2076,13 @@ class MultiMotionCommand(CommandTerm):
       delta_ori_w, self.body_pos_w - anchor_pos_w_repeat
     )
 
+    if self.cfg.sampling_mode == "adaptive":
+      self.motion_bin_failed_count = (
+        self.cfg.adaptive_alpha * self._current_motion_bin_failed
+        + (1 - self.cfg.adaptive_alpha) * self.motion_bin_failed_count
+      )
+      self._current_motion_bin_failed.zero_()
+
   def get_per_clip_statistics(self) -> dict:
     """Return per-clip aggregated statistics (CPU tensors).
 
