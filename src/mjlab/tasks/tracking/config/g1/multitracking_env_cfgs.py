@@ -72,5 +72,6 @@ def unitree_g1_flat_multitracking_env_cfg(
   if play:
     cfg.commands["motion"].sampling_mode = "start"
     cfg.commands["motion"].start_motion_name = "walk3_subject1"
+    cfg.commands["motion"].start_play_whole_motion = True
 
   return cfg

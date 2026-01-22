@@ -485,6 +485,7 @@ class MotionCommand(CommandTerm):
     self.body_quat_relative_w[:, :, 0] = 1.0
 
     self.bin_count = int(self.motion.time_step_total // (1 / env.step_dt)) + 1
+    print(f"[INFO] MotionCommand: adaptive sampling using {self.bin_count} bins")
     self.bin_failed_count = torch.zeros(
       self.bin_count, dtype=torch.float, device=self.device
     )
@@ -496,6 +497,53 @@ class MotionCommand(CommandTerm):
       device=self.device,
     )
     self.kernel = self.kernel / self.kernel.sum()
+
+    # Optional clip-based adaptive sampling for a single motion.
+    # This mirrors the clip-based logic used in MultiMotionCommand but
+    # operates on the single loaded motion.
+    if getattr(self.cfg, "adaptive_clip_mode", False):
+      # Determine clip length in frames and segment the single motion.
+      clip_seconds = float(self.cfg.clip_seconds)
+      clip_length_frames = max(1, int(round(clip_seconds / env.step_dt)))
+      T = int(self.motion.time_step_total)
+      nclips = max(1, math.ceil(T / clip_length_frames))
+      clip_starts: list[int] = []
+      clip_lens: list[int] = []
+      for k in range(nclips):
+        start = int(k * clip_length_frames)
+        end = int(min(T, start + clip_length_frames))
+        clip_starts.append(start)
+        clip_lens.append(max(1, end - start))
+
+      self.clip_start_frames = torch.tensor(
+        clip_starts, dtype=torch.long, device=self.device
+      )
+      self.clip_lengths = torch.tensor(clip_lens, dtype=torch.long, device=self.device)
+      self.num_clips = int(self.clip_start_frames.shape[0])
+
+      # Per-clip statistics / EMA similar to MultiMotionCommand
+      self._clip_episode_counts = torch.zeros(
+        self.num_clips, dtype=torch.float, device=self.device
+      )
+      self._clip_failure_counts = torch.zeros(
+        self.num_clips, dtype=torch.float, device=self.device
+      )
+      self._clip_completion_counts = torch.zeros(
+        self.num_clips, dtype=torch.float, device=self.device
+      )
+      self._clip_error_ema = torch.zeros(
+        self.num_clips, dtype=torch.float, device=self.device
+      )
+      self._clip_last_seen = torch.full(
+        (self.num_clips,), -1, dtype=torch.long, device=self.device
+      )
+      self._global_clip_step = 0
+
+      # Assign initial clip index 0 to all envs and set time_steps accordingly
+      self.clip_indices = torch.zeros(
+        self.num_envs, dtype=torch.long, device=self.device
+      )
+      self.time_steps = self.clip_start_frames[self.clip_indices].clone()
 
     self.metrics["error_anchor_pos"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["error_anchor_rot"] = torch.zeros(self.num_envs, device=self.device)
@@ -659,6 +707,39 @@ class MotionCommand(CommandTerm):
       self.joint_vel - self.robot_joint_vel, dim=-1
     )
 
+    # If configured, accumulate per-clip tracking error and update EMA used
+    # by clip-based adaptive sampling. This mirrors the MultiMotionCommand
+    # implementation but operates on the single motion's clips.
+    if getattr(self.cfg, "adaptive_clip_mode", False):
+      rm = self._env.reward_manager
+      motion_terms = [
+        "motion_global_root_pos",
+        "motion_global_root_ori",
+        "motion_body_pos",
+        "motion_body_ori",
+        "motion_body_lin_vel",
+        "motion_body_ang_vel",
+      ]
+      indices = [rm._term_names.index(name) for name in motion_terms]
+      per_term_slice = rm._step_reward[:, indices]
+      tracking_error = -torch.sum(per_term_slice, dim=1)
+
+      ones = torch.ones(self.num_envs, dtype=torch.float, device=self.device)
+      sums = torch.zeros(self.num_clips, dtype=torch.float, device=self.device)
+      counts = torch.zeros(self.num_clips, dtype=torch.float, device=self.device)
+      sums.scatter_add_(0, self.clip_indices, tracking_error)
+      counts.scatter_add_(0, self.clip_indices, ones)
+      nonzero = counts > 0
+      if nonzero.any():
+        mean_errors = torch.zeros_like(sums)
+        mean_errors[nonzero] = sums[nonzero] / counts[nonzero]
+        alpha = self.cfg.clip_ema_alpha
+        self._clip_error_ema[nonzero] = (1.0 - alpha) * self._clip_error_ema[
+          nonzero
+        ] + alpha * mean_errors[nonzero]
+        self._clip_last_seen[nonzero] = int(self._global_clip_step)
+      self._global_clip_step += 1
+
   def _adaptive_sampling(self, env_ids: torch.Tensor):
     episode_failed = self._env.termination_manager.terminated[env_ids]
     if torch.any(episode_failed):
@@ -701,7 +782,104 @@ class MotionCommand(CommandTerm):
     self.metrics["sampling_entropy"][:] = H_norm
     self.metrics["sampling_top1_prob"][:] = pmax
 
+  def _adaptive_clip_sampling(self, env_ids: torch.Tensor):
+    """Clip-based adaptive sampling for a single motion.
+
+    Mirrors the MultiMotionCommand clip-based hard-mining policy but operates
+    on the precomputed clips for the single loaded motion.
+    """
+    # Build effective per-clip error (age-decayed EMA -> higher => harder)
+    known_mask = self._clip_last_seen >= 0
+    if known_mask.any():
+      known_mean = self._clip_error_ema[known_mask].mean()
+    else:
+      known_mean = torch.tensor(0.0, device=self.device)
+
+    age = (self._global_clip_step - self._clip_last_seen).clamp(min=0).float()
+    tau = float(self.cfg.clip_age_tau)
+    decay = torch.exp(-age / (tau + 1e-12))
+    clip_effective = self._clip_error_ema * decay + known_mean * (1.0 - decay)
+
+    # Normalize effective error to [0,1]
+    eps = 1e-8
+    cmin = clip_effective.min()
+    cmax = clip_effective.max()
+    clip_norm = (clip_effective - cmin) / (cmax - cmin + eps)
+
+    # Build hard-example probability distribution (higher clip_norm -> higher prob)
+    logits = clip_norm * self.cfg.adaptive_beta
+    logits = torch.nan_to_num(logits, nan=0.0, posinf=1e6, neginf=-1e6)
+    hard_probs = torch.softmax(logits, dim=0)
+    hard_probs = torch.clamp(
+      torch.nan_to_num(hard_probs, nan=0.0, posinf=0.0, neginf=0.0), min=0.0
+    )
+    if not torch.isfinite(hard_probs.sum()):
+      eps2 = 1e-12
+      hard_probs = hard_probs + eps2
+      hard_probs = hard_probs / hard_probs.sum()
+
+    n = len(env_ids)
+    device = self.device
+
+    # Per-env decision: whether to do hard mining or uniform sampling
+    hard_mask = torch.rand(n, device=device) < self.cfg.hard_mining_prob
+
+    clip_choices = torch.empty(n, dtype=torch.long, device=device)
+
+    # Uniform choices for envs that did not select hard mining
+    nonhard_idx = (~hard_mask).nonzero(as_tuple=False).view(-1)
+    if nonhard_idx.numel() > 0:
+      clip_choices[nonhard_idx] = torch.randint(
+        0, self.num_clips, (nonhard_idx.numel(),), device=device
+      )
+
+    # Hard choices sampled from weighted distribution
+    hard_idx = hard_mask.nonzero(as_tuple=False).view(-1)
+    if hard_idx.numel() > 0:
+      sampled = torch.multinomial(
+        hard_probs, num_samples=hard_idx.numel(), replacement=True
+      )
+      clip_choices[hard_idx] = sampled
+
+    # Assign chosen clips and set offsets
+    self.clip_indices[env_ids] = clip_choices
+    offsets = (
+      torch.rand(n, device=device) * self.clip_lengths[clip_choices].float()
+    ).long()
+    self.time_steps[env_ids] = self.clip_start_frames[clip_choices] + offsets
+
+    # Metrics: entropy/top1 for hard-sampled envs, uniform metrics for others
+    H = -(hard_probs * (hard_probs + 1e-12).log()).sum()
+    H_norm = H / math.log(float(self.num_clips) + 1e-12)
+    pmax, imax = hard_probs.max(dim=0)
+    if nonhard_idx.numel() > 0:
+      env_ids_nonhard = env_ids[nonhard_idx]
+      self.metrics["sampling_entropy"][env_ids_nonhard] = 1.0
+      self.metrics["sampling_top1_prob"][env_ids_nonhard] = 1.0 / float(self.num_clips)
+    if hard_idx.numel() > 0:
+      env_ids_hard = env_ids[hard_idx]
+      self.metrics["sampling_entropy"][env_ids_hard] = H_norm
+      self.metrics["sampling_top1_prob"][env_ids_hard] = pmax
+
   def _uniform_sampling(self, env_ids: torch.Tensor):
+    # If configured, perform uniform CLIP sampling on single motion; otherwise
+    # fall back to uniform frame sampling across the whole motion.
+    if getattr(self.cfg, "adaptive_clip_mode", False):
+      # Uniform clip sampling: choose a clip then a random offset within it.
+      clip_choices = torch.randint(
+        0, self.num_clips, (len(env_ids),), device=self.device
+      )
+      self.clip_indices[env_ids] = clip_choices
+      offsets = (
+        torch.rand(len(env_ids), device=self.device)
+        * self.clip_lengths[clip_choices].float()
+      ).long()
+      self.time_steps[env_ids] = self.clip_start_frames[clip_choices] + offsets
+      # sampling metrics
+      self.metrics["sampling_entropy"][env_ids] = 1.0
+      self.metrics["sampling_top1_prob"][env_ids] = 1.0 / float(self.num_clips)
+      return
+
     self.time_steps[env_ids] = torch.randint(
       0, self.motion.time_step_total, (len(env_ids),), device=self.device
     )
@@ -710,12 +888,19 @@ class MotionCommand(CommandTerm):
 
   def _resample_command(self, env_ids: torch.Tensor):
     if self.cfg.sampling_mode == "start":
-      self.time_steps[env_ids] = 0
+      # Start mode: begin at motion start or at current clip start when in clip mode
+      if getattr(self.cfg, "adaptive_clip_mode", False):
+        self.time_steps[env_ids] = self.clip_start_frames[self.clip_indices[env_ids]]
+      else:
+        self.time_steps[env_ids] = 0
     elif self.cfg.sampling_mode == "uniform":
       self._uniform_sampling(env_ids)
     else:
       assert self.cfg.sampling_mode == "adaptive"
-      self._adaptive_sampling(env_ids)
+      if getattr(self.cfg, "adaptive_clip_mode", False):
+        self._adaptive_clip_sampling(env_ids)
+      else:
+        self._adaptive_sampling(env_ids)
 
     root_pos = self.body_pos_w[:, 0].clone()
     root_ori = self.body_quat_w[:, 0].clone()
@@ -777,7 +962,15 @@ class MotionCommand(CommandTerm):
 
   def _update_command(self):
     self.time_steps += 1
-    env_ids = torch.where(self.time_steps >= self.motion.time_step_total)[0]
+    # When using clip-based adaptive sampling for a single motion, resample
+    # when the current clip ends. Otherwise resample when motion end reached.
+    if getattr(self.cfg, "adaptive_clip_mode", False):
+      clip_ends = (
+        self.clip_start_frames[self.clip_indices] + self.clip_lengths[self.clip_indices]
+      )
+      env_ids = torch.where(self.time_steps >= clip_ends)[0]
+    else:
+      env_ids = torch.where(self.time_steps >= self.motion.time_step_total)[0]
     if env_ids.numel() > 0:
       self._resample_command(env_ids)
 
@@ -895,6 +1088,14 @@ class MotionCommandCfg(CommandTermCfg):
   adaptive_uniform_ratio: float = 0.1
   adaptive_alpha: float = 0.001
   sampling_mode: Literal["adaptive", "uniform", "start"] = "adaptive"
+  # Optional clip-based adaptive sampling (single motion)
+  adaptive_clip_mode: bool = False
+  clip_seconds: float = 1.0
+  clip_overlap_fraction: float = 0.0
+  clip_ema_alpha: float = 0.001
+  clip_age_tau: float = 1000.0
+  adaptive_beta: float = 1.0
+  hard_mining_prob: float = 0.5
 
   @dataclass
   class VizCfg:
@@ -1582,37 +1783,70 @@ class MultiMotionCommand(CommandTerm):
 
     # Sampling by clip (delegated to helper methods for clarity).
     if self.cfg.sampling_mode == "start":
-      # restart at beginning of assigned clip, or start from a specific
-      # motion if `start_motion_name` is provided in the cfg.
-      if getattr(self.cfg, "start_motion_name", None) is not None:
-        mname = self.cfg.start_motion_name
-        # find matching motion indices in motion_loader.traj_names
-        matches = [i for i, n in enumerate(self.motion_loader.traj_names) if n == mname]
-        if len(matches) == 0:
-          raise ValueError(
-            f"start_motion_name '{mname}' not found among loaded motions"
+      # If configured, play whole motions (single-trajectory mode) instead
+      # of clip-based sampling. In this mode we select motions (optionally
+      # by `start_motion_name`) and set the time step to 0 for the chosen
+      # motion. Resampling will occur when the motion's end is reached.
+      if getattr(self.cfg, "start_play_whole_motion", False):
+        # Choose motions for each resampled env
+        if getattr(self.cfg, "start_motion_name", None) is not None:
+          mname = self.cfg.start_motion_name
+          # find matching motion indices in motion_loader.traj_names
+          matches = [
+            i for i, n in enumerate(self.motion_loader.traj_names) if n == mname
+          ]
+          if len(matches) == 0:
+            raise ValueError(
+              f"start_motion_name '{mname}' not found among loaded motions"
+            )
+          match_tensor = torch.tensor(matches, device=self.device, dtype=torch.long)
+          if match_tensor.numel() == 1:
+            chosen_motions = match_tensor.expand(len(env_ids))
+          else:
+            rand_idx = torch.randint(
+              0, match_tensor.numel(), (len(env_ids),), device=self.device
+            )
+            chosen_motions = match_tensor[rand_idx]
+        else:
+          # Pick random motions across all loaded motions
+          chosen_motions = torch.randint(
+            0, self.motion_loader.num_motions, (len(env_ids),), device=self.device
           )
-        motion_idx = matches[0]
-        # find clips that originate from this motion (clip_traj_indices indexes motions)
-        candidate_clips = torch.nonzero(
-          self.clip_traj_indices == motion_idx, as_tuple=False
-        ).view(-1)
-        if candidate_clips.numel() == 0:
-          raise ValueError(
-            f"No clips found for motion '{mname}' (motion index {motion_idx})"
-          )
-        # choose uniformly among candidate clips for each resampled env
-        # sample indices into candidate_clips
-        n_candidates = candidate_clips.numel()
-        # If multiple envs, pick a random candidate per env
-        rand_idx = torch.randint(0, n_candidates, (len(env_ids),), device=self.device)
-        chosen_clips = candidate_clips[rand_idx]
-        self.clip_indices[env_ids] = chosen_clips
-        self.motion_indices[env_ids] = self.clip_traj_indices[chosen_clips]
-        self.time_steps[env_ids] = self.clip_start_frames[chosen_clips]
+
+        self.motion_indices[env_ids] = chosen_motions
+        # start from beginning of chosen motion
+        self.time_steps[env_ids] = 0
       else:
-        # restart at beginning of assigned clip
-        self.time_steps[env_ids] = self.clip_start_frames[self.clip_indices[env_ids]]
+        # original clip-based "start" behavior
+        if getattr(self.cfg, "start_motion_name", None) is not None:
+          mname = self.cfg.start_motion_name
+          # find matching motion indices in motion_loader.traj_names
+          matches = [
+            i for i, n in enumerate(self.motion_loader.traj_names) if n == mname
+          ]
+          if len(matches) == 0:
+            raise ValueError(
+              f"start_motion_name '{mname}' not found among loaded motions"
+            )
+          motion_idx = matches[0]
+          # find clips that originate from this motion (clip_traj_indices indexes motions)
+          candidate_clips = torch.nonzero(
+            self.clip_traj_indices == motion_idx, as_tuple=False
+          ).view(-1)
+          if candidate_clips.numel() == 0:
+            raise ValueError(
+              f"No clips found for motion '{mname}' (motion index {motion_idx})"
+            )
+          # choose uniformly among candidate clips for each resampled env
+          n_candidates = candidate_clips.numel()
+          rand_idx = torch.randint(0, n_candidates, (len(env_ids),), device=self.device)
+          chosen_clips = candidate_clips[rand_idx]
+          self.clip_indices[env_ids] = chosen_clips
+          self.motion_indices[env_ids] = self.clip_traj_indices[chosen_clips]
+          self.time_steps[env_ids] = self.clip_start_frames[chosen_clips]
+        else:
+          # restart at beginning of assigned clip
+          self.time_steps[env_ids] = self.clip_start_frames[self.clip_indices[env_ids]]
     elif self.cfg.sampling_mode == "uniform":
       # delegate to uniform sampler (will handle clip assignment when clips exist)
       self._uniform_sampling(env_ids)
@@ -1691,11 +1925,17 @@ class MultiMotionCommand(CommandTerm):
 
   def _update_command(self):
     self.time_steps += 1
-    # Check which envs have exceeded their current clip's time steps
-    clip_ends = (
-      self.clip_start_frames[self.clip_indices] + self.clip_lengths[self.clip_indices]
-    )
-    env_ids = torch.where(self.time_steps >= clip_ends)[0]
+    # Determine which envs have exceeded their current clip's or motion's time steps
+    if getattr(self.cfg, "start_play_whole_motion", False):
+      # In whole-motion mode, resample when the full motion ends
+      motion_ends = self.motion_loader.time_step_totals[self.motion_indices]
+      env_ids = torch.where(self.time_steps >= motion_ends)[0]
+    else:
+      # Check which envs have exceeded their current clip's time steps
+      clip_ends = (
+        self.clip_start_frames[self.clip_indices] + self.clip_lengths[self.clip_indices]
+      )
+      env_ids = torch.where(self.time_steps >= clip_ends)[0]
     if env_ids.numel() > 0:
       if self.cfg.play:
         print(f"[INFO] Resampling command for {env_ids.numel()} envs due to clip end.")
@@ -1863,6 +2103,11 @@ class MultiMotionCommandCfg(CommandTermCfg):
   # specific motion to start from for resampled envs. If `None`, behavior is
   # unchanged (time step 0 / clip start).
   start_motion_name: str | None = None
+  # When True and `sampling_mode == "start"`, select and play whole motions
+  # (single-trajectory mode) instead of clip-based sampling. Resampled envs
+  # will begin at timestep 0 of the chosen motion and will only resample when
+  # the full motion ends.
+  start_play_whole_motion: bool = False
 
   def build(self, env: ManagerBasedRlEnv) -> MultiMotionCommand:
     return MultiMotionCommand(self, env)
