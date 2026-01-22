@@ -52,7 +52,7 @@ def unitree_g1_multitracking_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
   # cfg.policy.critic_hidden_dims = (1024,) * 2
 
   # mlp only
-  cfg.policy.activation = "mish"
+  cfg.policy.activation = activation
   cfg.policy.actor_hidden_dims = (1024, 512, 512)
   cfg.policy.critic_hidden_dims = (1024, 512, 512)
 
