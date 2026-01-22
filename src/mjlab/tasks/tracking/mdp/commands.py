@@ -1317,6 +1317,28 @@ class MultiMotionCommand(CommandTerm):
     # Number of motion files (for adaptive sampling - group trajectories from same file)
     self.num_motion_files = self.motion_loader.num_motion_files
 
+    # Optional per-motion bin-based adaptive sampling (mirrors MotionCommand)
+    if getattr(self.cfg, "adaptive_motion_bin_mode", False):
+      # Bin count based on maximum padded motion length and env step_dt
+      self.bin_count = int(self.motion_loader.max_time_steps // (1 / env.step_dt)) + 1
+      print(
+        f"[INFO] MultiMotionCommand: adaptive motion-bin sampling using {self.bin_count} bins per motion"
+      )
+      # Per-motion per-bin failure counts (EMA) and current-episode counters
+      self.motion_bin_failed_count = torch.zeros(
+        self.motion_loader.num_motions,
+        self.bin_count,
+        dtype=torch.float,
+        device=self.device,
+      )
+      self._current_motion_bin_failed = torch.zeros_like(self.motion_bin_failed_count)
+      # Kernel for smoothing bin scores (same semantics as MotionCommand)
+      self.kernel = torch.tensor(
+        [self.cfg.adaptive_lambda**i for i in range(self.cfg.adaptive_kernel_size)],
+        device=self.device,
+      )
+      self.kernel = self.kernel / self.kernel.sum()
+
     self.metrics["error_anchor_pos"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["error_anchor_rot"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["error_anchor_lin_vel"] = torch.zeros(
@@ -1747,6 +1769,92 @@ class MultiMotionCommand(CommandTerm):
     self.metrics["sampling_top1_prob"][env_ids] = 1.0 / float(self.num_clips)
     return
 
+  def _adaptive_motion_bin_sampling(self, env_ids: torch.Tensor):
+    """Adaptive two-stage sampling:
+    - Sample motions according to per-motion success/failure statistics.
+    - Within each chosen motion, sample a bin according to per-bin failure
+      statistics (smoothed by the kernel), then set the time step inside
+      that motion accordingly.
+    """
+    n = len(env_ids)
+    device = self.device
+
+    # Record failures into current per-motion bin counters
+    episode_failed = self._env.termination_manager.terminated[env_ids]
+    if torch.any(episode_failed):
+      failed_mask = episode_failed
+      motion_failed = self.motion_indices[env_ids][failed_mask]
+      t_failed = self.time_steps[env_ids][failed_mask]
+      # per-motion time totals for failed motions
+      mt = self.motion_loader.time_step_totals[motion_failed]
+      mt_clamped = torch.clamp(mt, min=1)
+      bin_idx = torch.clamp(
+        (t_failed * self.bin_count) // mt_clamped, 0, self.bin_count - 1
+      )
+      flat = (motion_failed * self.bin_count + bin_idx).to(dtype=torch.long)
+      counts = torch.bincount(
+        flat, minlength=self.motion_loader.num_motions * self.bin_count
+      )
+      counts = counts.to(device=device, dtype=torch.float32)
+      self._current_motion_bin_failed += counts.view(
+        self.motion_loader.num_motions, self.bin_count
+      )
+
+    # Motion-level sampling probabilities (aggregate across bins)
+    motion_scores = self.motion_bin_failed_count.sum(dim=1)
+    motion_scores = motion_scores + self.cfg.adaptive_uniform_ratio / float(
+      self.motion_loader.num_motions
+    )
+    if not torch.isfinite(motion_scores.sum()):
+      motion_scores = motion_scores + 1e-12
+    motion_probs = motion_scores / motion_scores.sum()
+
+    # Sample motions for each env
+    sampled_motions = torch.multinomial(motion_probs, n, replacement=True)
+
+    # Build per-motion smoothed bin probabilities
+    # Add small uniform mass to each bin for numerical stability
+    bin_scores = self.motion_bin_failed_count + (
+      self.cfg.adaptive_uniform_ratio / float(self.bin_count)
+    )
+    # Convolve with kernel (batched across motions)
+    bs = bin_scores.unsqueeze(1)  # (num_motions, 1, bin_count)
+    pad = (0, max(0, self.cfg.adaptive_kernel_size - 1))
+    bs_pad = torch.nn.functional.pad(bs, pad, mode="replicate")
+    conv = torch.nn.functional.conv1d(bs_pad, self.kernel.view(1, 1, -1)).squeeze(1)
+    # Normalize per-motion
+    conv_sum = conv.sum(dim=1, keepdim=True)
+    eps = 1e-12
+    conv = conv / (conv_sum + eps)
+
+    # Gather per-env bin distributions and sample bins
+    probs_per_env = conv[sampled_motions]
+    # Ensure numerical stability
+    probs_per_env = torch.clamp(probs_per_env, min=0.0)
+    row_sums = probs_per_env.sum(dim=1, keepdim=True)
+    probs_per_env = probs_per_env / (row_sums + eps)
+    sampled_bins = torch.multinomial(
+      probs_per_env, num_samples=1, replacement=True
+    ).view(-1)
+
+    # Assign chosen motions and time steps inside each chosen motion
+    self.motion_indices[env_ids] = sampled_motions
+    motion_totals = self.motion_loader.time_step_totals[sampled_motions]
+    # compute times as (bin + uniform)/bin_count * (T-1)
+    offsets = (
+      sample_uniform(0.0, 1.0, (n,), device=device) + sampled_bins.float()
+    ) / float(self.bin_count)
+    self.time_steps[env_ids] = (
+      offsets * torch.clamp(motion_totals.float() - 1.0, min=0.0)
+    ).long()
+
+    # Metrics: entropy/top1 for motion sampling
+    H = -(motion_probs * (motion_probs + 1e-12).log()).sum()
+    H_norm = H / math.log(float(self.motion_loader.num_motions) + 1e-12)
+    pmax, _ = motion_probs.max(dim=0)
+    self.metrics["sampling_entropy"][env_ids] = H_norm
+    self.metrics["sampling_top1_prob"][env_ids] = pmax
+
   def _resample_command(self, env_ids: torch.Tensor):
     if self.cfg.play:
       # In interactive/play mode with a single environment, print the chosen
@@ -1852,8 +1960,11 @@ class MultiMotionCommand(CommandTerm):
       self._uniform_sampling(env_ids)
     else:
       assert self.cfg.sampling_mode == "adaptive"
-      # delegate to adaptive sampler (will perform clip-aware adaptive sampling when configured)
-      self._adaptive_sampling(env_ids)
+      # delegate to adaptive sampler (choose motion-bin adaptive if enabled)
+      if getattr(self.cfg, "adaptive_motion_bin_mode", False):
+        self._adaptive_motion_bin_sampling(env_ids)
+      else:
+        self._adaptive_sampling(env_ids)
 
     root_pos = self.body_pos_w[:, 0].clone()
     root_ori = self.body_quat_w[:, 0].clone()
@@ -2099,6 +2210,12 @@ class MultiMotionCommandCfg(CommandTermCfg):
   clip_ema_alpha: float = 0.01
   # Adaptive sampling sharpness (higher => prioritize high-error clips)
   adaptive_beta: float = 10.0
+  # Optional per-motion bin-based adaptive sampling (see docs)
+  adaptive_motion_bin_mode: bool = True
+  adaptive_kernel_size: int = 1
+  adaptive_lambda: float = 0.8
+  adaptive_uniform_ratio: float = 0.1
+  adaptive_alpha: float = 0.001
   # Optional: when `sampling_mode == "start"`, use this motion name as the
   # specific motion to start from for resampled envs. If `None`, behavior is
   # unchanged (time step 0 / clip start).

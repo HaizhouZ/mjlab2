@@ -193,7 +193,7 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
       },
     ),
     "foot_friction": EventTermCfg(
-      mode="reset",
+      mode="startup",
       func=mdp.randomize_field,
       domain_randomization=True,
       params={
