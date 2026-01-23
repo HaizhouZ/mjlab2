@@ -53,6 +53,7 @@ def unitree_g1_flat_multitracking_env_cfg(
       os.environ.get("MJLAB_MOTION_HORIZON", 1)
     ),  # Set horizon from environment variable or default to 1
     play=play,  # Pass play flag to command config
+    adaptive_uniform_ratio=float(os.environ.get("MJLAB_ADAPTIVE_UNIFORM_RATIO", 0.1)),  # type: ignore
   )
 
   ###
