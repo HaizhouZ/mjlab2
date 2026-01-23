@@ -2675,7 +2675,7 @@ wheels = [
 [[package]]
 name = "rsl-rl-lib"
 version = "3.3.0"
-source = { git = "https://github.com/HaizhouZ/rsl_rl.git?rev=dev%2Fhaizhou#8489e9c611c4c1501a44d1bb323ce529c90b520d" }
+source = { git = "https://github.com/HaizhouZ/rsl_rl.git?rev=dev%2Fhaizhou#3482a73df9cc737b310580695309c4e635afce8a" }
 dependencies = [
     { name = "gitpython" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },

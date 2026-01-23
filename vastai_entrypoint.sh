@@ -24,15 +24,17 @@ for dir in "${PERSISTENT_DIRS[@]}"; do
 done
 
 # sync github repo
-if [ -n "$GITHUB_TOKEN" ] && [ -n "$GIT_REPO_URL" ] && [ -n "$GIT_BRANCH" ]; then
-    echo "Syncing latest code from Git..."
-    cd /app
-    git remote set-url origin https://oauth2:${GITHUB_TOKEN}@${GIT_REPO_URL}
-    git fetch origin $GIT_BRANCH
-    git reset --hard origin/$GIT_BRANCH
-    # update dependencies
-    uv sync --locked --no-editable --no-dev
+BRANCH_TO_USE="dev/fbr"
+if [ -n "$GIT_BRANCH" ]; then
+    BRANCH_TO_USE=$GIT_BRANCH
 fi
+echo "Syncing latest code from Git..."
+cd /app
+git switch $BRANCH_TO_USE
+git fetch origin $BRANCH_TO_USE
+git reset --hard origin/$BRANCH_TO_USE
+# update dependencies
+uv sync --locked --no-editable --no-dev
 
 # mount Google Drive via Rclone if config is provided
 # not used for now
@@ -59,7 +61,7 @@ if [ -n "$DEBUG" ] && [ "$DEBUG" = "true" ]; then
     
     echo "✅ SSH is ready. Container will stay alive."
     tail -f /dev/null # keep container alive for debugging
-else
+elif [ -n "$TRAIN_ARGS" ]; then
     # use env variables to build training args
     echo "Starting training with args: $TRAIN_ARGS"
     echo "--- Current Directory Content ---"

@@ -48,6 +48,10 @@ RUN --mount=type=cache,target=/app/.cache/uv \
 
 ADD . /app
 
+
+RUN git config --global --add safe.directory /app && \
+    git remote set-url origin https://github.com/HaizhouZ/mjlab2.git
+
 RUN --mount=type=cache,target=/app/.cache/uv \
     uv sync --frozen --no-editable --no-dev --no-build-isolation
 

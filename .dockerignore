@@ -1,7 +1,4 @@
 .venv/
-.git/
-.github/
-.gitignore
 Dockerfile
 logs/
 artifacts/
