@@ -2076,7 +2076,9 @@ class MultiMotionCommand(CommandTerm):
       delta_ori_w, self.body_pos_w - anchor_pos_w_repeat
     )
 
-    if self.cfg.sampling_mode == "adaptive":
+    if self.cfg.sampling_mode == "adaptive" and getattr(
+      self.cfg, "adaptive_motion_bin_mode", False
+    ):
       self.motion_bin_failed_count = (
         self.cfg.adaptive_alpha * self._current_motion_bin_failed
         + (1 - self.cfg.adaptive_alpha) * self.motion_bin_failed_count
