@@ -1801,22 +1801,22 @@ class MultiMotionCommand(CommandTerm):
       )
 
     # Motion-level sampling probabilities (aggregate across bins)
-    motion_scores = self.motion_bin_failed_count.sum(dim=1)
-    motion_scores = motion_scores + self.cfg.adaptive_uniform_ratio / float(
+    # log1p to suppress large counts
+    motion_failed_total = self.motion_bin_failed_count.sum(dim=1)
+    motion_log_scores = torch.log1p(motion_failed_total)
+    motion_prob_adaptive = torch.softmax(motion_log_scores, dim=0)
+    motion_probs = (
+      1.0 - self.cfg.adaptive_uniform_ratio
+    ) * motion_prob_adaptive + self.cfg.adaptive_uniform_ratio / float(
       self.motion_loader.num_motions
     )
-    if not torch.isfinite(motion_scores.sum()):
-      motion_scores = motion_scores + 1e-12
-    motion_probs = motion_scores / motion_scores.sum()
 
     # Sample motions for each env
     sampled_motions = torch.multinomial(motion_probs, n, replacement=True)
 
     # Build per-motion smoothed bin probabilities
     # Add small uniform mass to each bin for numerical stability
-    bin_scores = self.motion_bin_failed_count + (
-      self.cfg.adaptive_uniform_ratio / float(self.bin_count)
-    )
+    bin_scores = self.motion_bin_failed_count
     # Convolve with kernel (batched across motions)
     bs = bin_scores.unsqueeze(1)  # (num_motions, 1, bin_count)
     pad = (0, max(0, self.cfg.adaptive_kernel_size - 1))
@@ -1832,7 +1832,9 @@ class MultiMotionCommand(CommandTerm):
     # Ensure numerical stability
     probs_per_env = torch.clamp(probs_per_env, min=0.0)
     row_sums = probs_per_env.sum(dim=1, keepdim=True)
-    probs_per_env = probs_per_env / (row_sums + eps)
+    probs_per_env = (1 - self.cfg.adaptive_uniform_ratio) * probs_per_env / (
+      row_sums + eps
+    ) + self.cfg.adaptive_uniform_ratio / float(self.bin_count)
     sampled_bins = torch.multinomial(
       probs_per_env, num_samples=1, replacement=True
     ).view(-1)
