@@ -2230,7 +2230,7 @@ class MultiMotionCommandCfg(CommandTermCfg):
   adaptive_lambda: float = 0.8
   adaptive_uniform_ratio: float = 0.1
   adaptive_alpha: float = 0.001
-  adaptive_temp: float = 10.0
+  adaptive_temp: float = 2.0
   # Optional: when `sampling_mode == "start"`, use this motion name as the
   # specific motion to start from for resampled envs. If `None`, behavior is
   # unchanged (time step 0 / clip start).
