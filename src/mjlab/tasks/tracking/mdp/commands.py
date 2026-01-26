@@ -1803,7 +1803,7 @@ class MultiMotionCommand(CommandTerm):
     # Motion-level sampling probabilities (aggregate across bins)
     # log1p to suppress large counts
     motion_failed_total = self.motion_bin_failed_count.sum(dim=1)
-    motion_log_scores = torch.log1p(motion_failed_total)
+    motion_log_scores = motion_failed_total  # torch.log1p(motion_failed_total)
     motion_prob_adaptive = torch.softmax(motion_log_scores, dim=0)
     motion_probs = (
       1.0 - self.cfg.adaptive_uniform_ratio
