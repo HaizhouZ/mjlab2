@@ -1,0 +1,44 @@
+# Example training configuration
+# Usage: python src/mjlab/scripts/train.py Mjlab-Tracking-Flat-Unitree-G1 --config-path conf/training_config_example.yaml
+
+device: cuda:0
+video: true
+video_length: 200
+video_interval: 2000
+
+# Environment configuration overrides
+# These override the base environment settings from the task registry
+env:
+  episode_length_s: 20.0  # Episode length in seconds
+  decimation: 4           # Physics steps per environment step
+  seed: 42               # Random seed
+
+  # Simulation settings
+  sim:
+    timestep: 0.005
+    iterations: 10
+
+# RL algorithm configuration overrides
+# These override the base runner settings from the task registry
+agent:
+  algorithm:
+    learning_rate: 0.001         # Main learning rate
+    entropy_coef: 0.005          # Entropy regularization
+    clip_param: 0.2              # PPO clip parameter
+    value_loss_coef: 1.0         # Value function loss weight
+    num_learning_epochs: 5       # Number of training epochs per rollout
+    num_mini_batches: 4          # Number of mini-batches
+    gamma: 0.99                  # Discount factor
+    lam: 0.95                    # GAE lambda
+    desired_kl: 0.01             # Target KL divergence
+
+  policy:
+    init_noise_std: 1.0          # Initial noise standard deviation
+    actor_hidden_dims: [512, 256, 128]  # Actor network architecture
+    critic_hidden_dims: [512, 256, 128] # Critic network architecture
+
+# Training script settings
+registry_name: null
+motion_file: null
+motion_dir: null
+enable_nan_guard: false

@@ -5,7 +5,7 @@ import os
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, Optional, cast
 
 import tyro
 
@@ -13,6 +13,7 @@ from mjlab.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
 from mjlab.rl import MjlabOnPolicyRunner, RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
 from mjlab.tasks.tracking.mdp import MotionCommandCfg, MultiMotionCommandCfg
+from mjlab.utils import apply_config_overrides
 from mjlab.utils.gpu import select_gpus
 from mjlab.utils.log_dir import get_log_dir
 from mjlab.utils.os import dump_yaml, get_checkpoint_path, get_wandb_checkpoint_path
@@ -42,6 +43,8 @@ class TrainConfig:
   torchrunx_log_dir: str | None = None
   wandb_run_path: str | None = None
   gpu_ids: list[int] | Literal["all"] | None = field(default_factory=lambda: [0])
+  config_path: Optional[str] = None
+  """Optional path to YAML config file to load defaults from."""
 
   @staticmethod
   def from_task(task_id: str) -> "TrainConfig":
@@ -373,16 +376,47 @@ def main():
     return_unknown_args=True,
   )
 
-  args = tyro.cli(
+  # Create base config from task registry
+  base_cfg = TrainConfig.from_task(chosen_task)
+  
+  # Check if a config file is specified in remaining args
+  # Parse with allow_ambiguous_unions to catch config_path
+  temp_cfg = tyro.cli(
     TrainConfig,
     args=remaining_args,
-    default=TrainConfig.from_task(chosen_task),
+    default=base_cfg,
     prog=sys.argv[0] + f" {chosen_task}",
     config=(
       tyro.conf.AvoidSubcommands,
       tyro.conf.FlagConversionOff,
     ),
   )
+  
+  # If a config file was specified, load it and re-parse to merge configs
+  if temp_cfg.config_path:
+    import yaml
+    with open(temp_cfg.config_path, 'r') as f:
+      config_dict = yaml.safe_load(f)
+    
+    if config_dict:
+      # Convert nested dicts to update env and agent configs
+      if 'env' in config_dict:
+        apply_config_overrides(base_cfg.env, config_dict['env'], recursive=True)
+      if 'agent' in config_dict:
+        apply_config_overrides(base_cfg.agent, config_dict['agent'], recursive=True)
+      
+      # Apply other top-level overrides
+      other_overrides = {
+        k: v for k, v in config_dict.items()
+        if k not in ['env', 'agent']
+      }
+      if other_overrides:
+        apply_config_overrides(temp_cfg, other_overrides, recursive=True)
+    
+    args = temp_cfg
+  else:
+    args = temp_cfg
+  
   del remaining_args
 
   launch_training(task_id=chosen_task, args=args)

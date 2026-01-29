@@ -1,0 +1,21 @@
+# Example play configuration
+# Usage: python src/mjlab/scripts/play.py Mjlab-Tracking-Flat-Unitree-G1 --config-path conf/play_config_example.yaml
+
+agent: trained
+device: cuda:0
+viewer: native
+video: true
+video_length: 500
+
+# Optional motion settings for tracking tasks
+registry_name: null    # W&B artifact path like "entity/project/motion:latest"
+motion_file: null      # Path to single motion file
+motion_dir: null       # Path to directory with motion files
+
+# Video recording settings
+video_height: 1080     # Video height in pixels
+video_width: 1920      # Video width in pixels
+
+# Checkpoint settings
+checkpoint_file: null  # Path to checkpoint file (optional)
+wandb_run_path: null   # W&B run path like "entity/project/run_id"

@@ -1,0 +1,36 @@
+# Example YAML configuration for ManagerBasedRlEnvCfg
+# This demonstrates how to override environment settings via YAML
+
+# Episode configuration
+episode_length_s: 10.0
+
+# Decimation factor for environment stepping
+decimation: 4
+
+# Enable finite horizon mode
+is_finite_horizon: false
+scale_rewards_by_dt: true
+is_play: false
+
+# Simulation settings
+sim:
+  nconmax: 45
+  njmax: 400
+  contact_sensor_maxmatch: 100
+  enable_nan_guard: false
+  mujoco:
+    timestep: 0.005
+    iterations: 10
+    ls_iterations: 20
+    ccd_iterations: 100
+
+# Viewer configuration
+viewer:
+  eye: [2.0, 2.0, 2.0]
+  lookat: [0.0, 0.0, 0.0]
+  cam_resolution:
+    width: 1920
+    height: 1440
+  
+# Seed configuration
+seed: 42

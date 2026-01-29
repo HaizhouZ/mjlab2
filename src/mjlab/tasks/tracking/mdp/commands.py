@@ -13,6 +13,7 @@ import numpy as np
 import torch
 
 from mjlab.managers import CommandTerm, CommandTermCfg
+from mjlab.utils import ConfigLoadable
 from mjlab.utils.lab_api.math import (
   matrix_from_quat,
   quat_apply,
@@ -1073,7 +1074,7 @@ class MotionCommand(CommandTerm):
 
 
 @dataclass(kw_only=True)
-class MotionCommandCfg(CommandTermCfg):
+class MotionCommandCfg(CommandTermCfg, ConfigLoadable):
   motion_file: str
   anchor_body_name: str
   body_names: tuple[str, ...]
@@ -2184,7 +2185,7 @@ class MultiMotionCommand(CommandTerm):
 
 
 @dataclass(kw_only=True)
-class MultiMotionCommandCfg(CommandTermCfg):
+class MultiMotionCommandCfg(CommandTermCfg, ConfigLoadable):
   motion_dir: str = "motions/output"
   motion_name_pattern: list[str] = field(default_factory=lambda: [".*"])
   anchor_body_name: str

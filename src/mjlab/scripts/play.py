@@ -4,7 +4,7 @@ import os
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
 import torch
 import tyro
@@ -23,6 +23,7 @@ from mjlab.tasks.tracking.rl.exporter import (
 from mjlab.tasks.velocity.rl.exporter import (
   attach_onnx_metadata as attach_velocity_onnx_metadata,
 )
+from mjlab.utils import apply_config_overrides
 from mjlab.utils.lab_api.rl.exporter import export_policy_as_onnx
 from mjlab.utils.os import get_wandb_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
@@ -46,6 +47,8 @@ class PlayConfig:
   video_width: int | None = None
   camera: int | str | None = None
   viewer: Literal["auto", "native", "viser"] = "auto"
+  config_path: Optional[str] = None
+  """Optional path to YAML config file to load defaults from."""
 
   # Internal flag used by demo script.
   _demo_mode: tyro.conf.Suppress[bool] = False
@@ -296,16 +299,33 @@ def main():
   # Parse the rest of the arguments + allow overriding env_cfg and agent_cfg.
   agent_cfg = load_rl_cfg(chosen_task)
 
-  args = tyro.cli(
+  base_cfg = PlayConfig()
+  
+  # First parse to check for config_path
+  temp_cfg = tyro.cli(
     PlayConfig,
     args=remaining_args,
-    default=PlayConfig(),
+    default=base_cfg,
     prog=sys.argv[0] + f" {chosen_task}",
     config=(
       tyro.conf.AvoidSubcommands,
       tyro.conf.FlagConversionOff,
     ),
   )
+  
+  # If a config file was specified, load it and re-parse to merge configs
+  if temp_cfg.config_path:
+    import yaml
+    with open(temp_cfg.config_path, 'r') as f:
+      config_dict = yaml.safe_load(f)
+    
+    if config_dict:
+      apply_config_overrides(temp_cfg, config_dict, recursive=True)
+    
+    args = temp_cfg
+  else:
+    args = temp_cfg
+  
   del remaining_args, agent_cfg
 
   run_play(chosen_task, args)
