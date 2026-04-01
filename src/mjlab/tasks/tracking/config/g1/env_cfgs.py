@@ -81,7 +81,7 @@ def unitree_g1_flat_tracking_env_cfg(
   cfg.events["base_com"].params["asset_cfg"].body_names = ("torso_link",)
 
   # Create default motion command config from function parameters
-  motion_cmd = cfg.commands["motions"]
+  motion_cmd = cfg.commands["motion"]
   assert isinstance(motion_cmd, MotionCommandCfg)
 
   motion_cmd.anchor_body_name = anchor_body_name
