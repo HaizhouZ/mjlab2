@@ -27,6 +27,22 @@ class RslRlPpoActorCriticCfg:
 
 
 @dataclass
+class RslRlReppoActorCriticCfg(RslRlPpoActorCriticCfg):
+  """Config for the REPPO actor and critic networks."""
+
+  ent_start: float = 0.001
+  """Initial entropy temperature."""
+  kl_start: float = 0.01
+  """Initial KL lagrangian temperature."""
+  actor_min_std: float = 0.1
+  """Minimum action standard deviation added on top of the learned std."""
+  class_name: str = "ReppoPolicy"
+  """REPPO policy class name."""
+  critic_class_name: str = "ReppoCritic"
+  """REPPO critic class name."""
+
+
+@dataclass
 class RslRlPpoAlgorithmCfg:
   """Config for the PPO algorithm."""
 
@@ -63,6 +79,29 @@ class RslRlPpoAlgorithmCfg:
   """
   class_name: str = "PPO"
   """Ignore, required by RSL-RL."""
+
+
+@dataclass
+class RslRlReppoAlgorithmCfg(RslRlPpoAlgorithmCfg):
+  """Config for the REPPO algorithm."""
+
+  num_learning_epochs: int = 4
+  num_mini_batches: int = 32
+  learning_rate: float = 3e-4
+  schedule: Literal["adaptive", "fixed"] = "fixed"
+  gamma: float = 0.99
+  lam: float = 0.95
+  max_grad_norm: float = 0.5
+  num_atoms: int = 151
+  vmin: float = 0.0
+  vmax: float = 150.0
+  aux_loss_mult: float = 0.0
+  kl_bound: float = 0.1
+  actor_kl_clip_mode: Literal["full", "clipped", "value"] = "full"
+  ent_target_mult: float = 0.5
+  num_action_samples: int = 64
+  class_name: str = "Reppo"
+  """Ignore, required by REPPO runner configuration."""
 
 
 @dataclass
@@ -110,3 +149,13 @@ class RslRlOnPolicyRunnerCfg(RslRlBaseRunnerCfg):
   """The policy configuration."""
   algorithm: RslRlPpoAlgorithmCfg = field(default_factory=RslRlPpoAlgorithmCfg)
   """The algorithm configuration."""
+
+
+@dataclass
+class RslRlReppoRunnerCfg(RslRlOnPolicyRunnerCfg):
+  class_name: str = "ReppoRunner"
+  """The runner class name. Default is ReppoRunner."""
+  policy: RslRlReppoActorCriticCfg = field(default_factory=RslRlReppoActorCriticCfg)
+  """The REPPO policy configuration."""
+  algorithm: RslRlReppoAlgorithmCfg = field(default_factory=RslRlReppoAlgorithmCfg)
+  """The REPPO algorithm configuration."""
