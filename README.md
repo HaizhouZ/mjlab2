@@ -148,6 +148,50 @@ uv run play Mjlab-Your-Task-Id --agent random  # Sends uniform random actions.
 
 ---
 
+## Training with a YAML Config File
+
+If you prefer scheduling runs from a YAML file, use either:
+
+- `--config-path` for local YAML files
+- `--config-source` for local path, HTTP(S), or W&B artifact URI
+
+```bash
+uv run train Mjlab-Velocity-Flat-Unitree-G1 --config-path conf/train.yaml
+```
+
+Example `conf/train.yaml`:
+
+```yaml
+env:
+  scene:
+    num_envs: 4096
+agent:
+  max_iterations: 30000
+video: false
+enable_nan_guard: true
+```
+
+`--config-path` supports partial overrides:
+
+- Fields present in YAML override defaults loaded from task registry.
+- Missing fields keep task defaults.
+
+Remote YAML via HTTP(S):
+
+```bash
+uv run train Mjlab-Velocity-Flat-Unitree-G1 \
+  --config-source https://example.com/configs/train.yaml
+```
+
+YAML from W&B artifact:
+
+```bash
+uv run train Mjlab-Velocity-Flat-Unitree-G1 \
+  --config-source wandb://your-entity/your-project/train-configs:latest/config.yaml
+```
+
+---
+
 ## Documentation
 
 Full documentation is available at **[mujocolab.github.io/mjlab](https://mujocolab.github.io/mjlab/)**.

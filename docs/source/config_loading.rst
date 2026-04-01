@@ -274,6 +274,69 @@ Then load specific sections:
     env_overrides = data["env"]
     runner_overrides = data["runner"]
 
+Train CLI Integration (`train`) and Tyro Compatibility
+------------------------------------------------------
+
+The training entrypoint (``src/mjlab/scripts/train.py``) supports two YAML
+inputs:
+
+- ``--config-path``: local YAML file path
+- ``--config-source``: local path, ``http(s)`` URL, or
+  ``wandb://<entity>/<project>/<artifact[:alias]>/<config_path>``
+
+The script uses Tyro to parse CLI values first, then applies YAML overrides
+using ``apply_config_overrides``.
+
+Precedence and merge behavior
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Current resolution order:
+
+1. Task defaults loaded from task registry
+2. Tyro CLI parse into ``TrainConfig``
+3. YAML load from ``--config-path`` (if set) else ``--config-source``
+4. YAML override merge into ``env`` / ``agent`` and then top-level fields
+
+Important: in the current implementation, YAML values are applied *after* Tyro
+parsing, so YAML may override CLI values if the same field is present in both.
+If you want CLI to win, remove overlapping keys from the YAML or adjust the
+merge order in the script.
+
+Tyro compatibility notes and common conflicts
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+1. **Unknown keys raise errors**
+
+   ``apply_config_overrides`` validates field names and raises
+   ``AttributeError`` if a key does not exist in the target dataclass.
+
+2. **Type mismatches from YAML**
+
+   YAML coercion may produce unexpected types (for example strings where numbers
+   are expected). Tyro validation occurs before YAML merge, so type issues from
+   YAML surface at override time or downstream runtime usage.
+
+3. **Nested field structure must match dataclass layout**
+
+   For nested configs (such as ``env`` and ``agent``), YAML key shape must
+   mirror the dataclass hierarchy.
+
+4. **Mutual exclusivity by convention**
+
+   ``--config-path`` currently has priority over ``--config-source`` when both
+   are provided. Prefer passing only one source to avoid ambiguity.
+
+Recommended patterns
+~~~~~~~~~~~~~~~~~~~~
+
+- Use YAML for stable experiment templates and only override truly dynamic
+  values via CLI.
+- Keep YAML strictly scoped to valid dataclass fields.
+- For shared remote configs, prefer W&B artifact URIs with explicit aliases
+  (for example ``:v5``) to improve reproducibility.
+- Validate with a fast command first (for example short iteration count) before
+  launching long training runs.
+
 API Reference
 -------------
 
