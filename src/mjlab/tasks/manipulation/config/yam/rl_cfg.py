@@ -6,7 +6,7 @@ from mjlab.rl import (
 
 
 def yam_lift_cube_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
-  return RslRlOnPolicyRunnerCfg(
+  cfg = RslRlOnPolicyRunnerCfg(
     policy=RslRlPpoActorCriticCfg(
       init_noise_std=1.0,
       actor_obs_normalization=True,
@@ -34,3 +34,5 @@ def yam_lift_cube_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
     num_steps_per_env=24,
     max_iterations=5_000,
   )
+  cfg.policy.class_name = "ReppoPolicy"
+  return cfg
