@@ -2,8 +2,12 @@ from mjlab.rl.config import RslRlBaseRunnerCfg as RslRlBaseRunnerCfg
 from mjlab.rl.config import RslRlOnPolicyRunnerCfg as RslRlOnPolicyRunnerCfg
 from mjlab.rl.config import RslRlPpoActorCriticCfg as RslRlPpoActorCriticCfg
 from mjlab.rl.config import RslRlPpoAlgorithmCfg as RslRlPpoAlgorithmCfg
+from mjlab.rl.config import RslRlFastTd3ActorCriticCfg as RslRlFastTd3ActorCriticCfg
+from mjlab.rl.config import RslRlFastTd3AlgorithmCfg as RslRlFastTd3AlgorithmCfg
+from mjlab.rl.config import RslRlFastTd3RunnerCfg as RslRlFastTd3RunnerCfg
 from mjlab.rl.config import RslRlReppoActorCriticCfg as RslRlReppoActorCriticCfg
 from mjlab.rl.config import RslRlReppoAlgorithmCfg as RslRlReppoAlgorithmCfg
 from mjlab.rl.config import RslRlReppoRunnerCfg as RslRlReppoRunnerCfg
 from mjlab.rl.runner import MjlabOnPolicyRunner as MjlabOnPolicyRunner
+from mjlab.rl.runner import MjlabFastTD3Runner as MjlabFastTD3Runner
 from mjlab.rl.vecenv_wrapper import RslRlVecEnvWrapper as RslRlVecEnvWrapper

@@ -22,6 +22,7 @@ def test_yam_reppo_config_matches_mjplayground_settings() -> None:
 
   fake_rl = types.ModuleType("mjlab.rl")
   fake_rl.RslRlReppoRunnerCfg = rl_config.RslRlReppoRunnerCfg
+  fake_rl.RslRlFastTd3RunnerCfg = rl_config.RslRlFastTd3RunnerCfg
   sys.modules["mjlab.rl"] = fake_rl
 
   yam_rl_cfg = _load_module(

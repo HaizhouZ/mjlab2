@@ -159,3 +159,87 @@ class RslRlReppoRunnerCfg(RslRlOnPolicyRunnerCfg):
   """The REPPO policy configuration."""
   algorithm: RslRlReppoAlgorithmCfg = field(default_factory=RslRlReppoAlgorithmCfg)
   """The REPPO algorithm configuration."""
+
+
+@dataclass
+class RslRlFastTd3ActorCriticCfg(RslRlPpoActorCriticCfg):
+  """Config for the FastTD3 actor and critic networks."""
+
+  actor_hidden_dims: Tuple[int, ...] = (512, 256, 128)
+  """The hidden dimensions of the actor network."""
+  critic_hidden_dims: Tuple[int, ...] = (1024, 512, 256)
+  """The hidden dimensions of the critic network."""
+  actor_obs_normalization: bool = True
+  """Whether to normalize actor observations."""
+  critic_obs_normalization: bool = True
+  """Whether to normalize critic observations."""
+  init_scale: float = 0.01
+  """Initialization scale for the actor head."""
+  std_min: float = 0.05
+  """Minimum exploration noise scale."""
+  std_max: float = 0.8
+  """Maximum exploration noise scale."""
+  activation: str = "relu"
+  """Activation function used by the actor/critic MLPs."""
+  class_name: str = "FastTD3Actor"
+  """FastTD3 actor class name."""
+  critic_class_name: str = "FastTD3Critic"
+  """FastTD3 critic class name."""
+
+
+@dataclass
+class RslRlFastTd3AlgorithmCfg(RslRlPpoAlgorithmCfg):
+  """Config for the FastTD3 algorithm."""
+
+  replay_size: int = 100_000
+  """Replay buffer capacity."""
+  batch_size: int = 256
+  """Batch size sampled from replay."""
+  learning_starts: int = 1_000
+  """Number of environment steps before updates begin."""
+  num_updates: int = 1
+  """Number of gradient updates per iteration."""
+  tau: float = 0.005
+  """Target-network update coefficient."""
+  target_noise: float = 0.2
+  """Noise added to target actions during critic updates."""
+  noise_clip: float = 0.5
+  """Maximum absolute target noise."""
+  policy_frequency: int = 2
+  """Number of critic updates per actor update."""
+  actor_learning_rate: float = 3e-4
+  """Learning rate for the actor."""
+  actor_learning_rate_end: float = 3e-4
+  """Final cosine-annealed learning rate for the actor."""
+  critic_learning_rate: float = 3e-4
+  """Learning rate for the critic."""
+  critic_learning_rate_end: float = 3e-4
+  """Final cosine-annealed learning rate for the critic."""
+  weight_decay: float = 0.1
+  """Weight decay used by AdamW."""
+  n_steps: int = 1
+  """Number of replay steps to aggregate when sampling."""
+  num_atoms: int = 101
+  """Number of atoms in the critic support."""
+  v_min: float = -250.0
+  """Minimum critic support value."""
+  v_max: float = 250.0
+  """Maximum critic support value."""
+  use_cdq: bool = True
+  """Whether to use clipped double Q selection for actor and target updates."""
+  reward_normalization: bool = False
+  """Whether to normalize rewards with the running return scale."""
+  optimizer: str = "adamw"
+  """Optimizer used for actor and critic updates."""
+  class_name: str = "FastTD3"
+  """FastTD3 algorithm class name."""
+
+
+@dataclass
+class RslRlFastTd3RunnerCfg(RslRlOnPolicyRunnerCfg):
+  class_name: str = "FastTD3Runner"
+  """The runner class name. Default is FastTD3Runner."""
+  policy: RslRlFastTd3ActorCriticCfg = field(default_factory=RslRlFastTd3ActorCriticCfg)
+  """The FastTD3 policy configuration."""
+  algorithm: RslRlFastTd3AlgorithmCfg = field(default_factory=RslRlFastTd3AlgorithmCfg)
+  """The FastTD3 algorithm configuration."""

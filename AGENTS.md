@@ -22,6 +22,11 @@ REPPO integration note:
 - `rsl_rl` stays REPPO-only.
 - Any compatibility with older `rsl_rl` calling conventions, checkpoint shapes, or runner expectations belongs in `src/mjlab/rl/runner.py` and task config wrappers here in `mjlab2`.
 - Keep the `rsl_rl` checkout clean; do not patch it for `mjlab2`-specific legacy behavior.
+- FastTD3 follows the same boundary: the Yam FastTD3 task is registered in `src/mjlab/tasks/manipulation/config/yam/` and uses `MjlabFastTD3Runner` for all compatibility translation.
+- FastTD3 checkpoints are native only; do not maintain a legacy `model_state_dict` resume path in this repository.
+- The Yam FastTD3 config mirrors the reference distributional-critic path, including per-env exploration noise and clipped double Q selection.
+- The current parity pass also aligns the Yam FastTD3 hidden-layer defaults with the reference architecture and keeps reward-normalization support configurable from the mjlab2 side.
+- REPPO defaults in `rsl_rl` were checked against the reference TorchRL config; keep task-specific overrides in `mjlab2` rather than broadening the core library.
 
 ---
 
