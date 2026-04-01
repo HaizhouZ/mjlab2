@@ -18,6 +18,11 @@ Important constraints:
 - Training is GPU-first (MuJoCo Warp + CUDA stack).
 - CPU or macOS usage is mostly for lightweight evaluation/dev, not high-throughput training.
 
+REPPO integration note:
+- `rsl_rl` stays REPPO-only.
+- Any compatibility with older `rsl_rl` calling conventions, checkpoint shapes, or runner expectations belongs in `src/mjlab/rl/runner.py` and task config wrappers here in `mjlab2`.
+- Keep the `rsl_rl` checkout clean; do not patch it for `mjlab2`-specific legacy behavior.
+
 ---
 
 ## 2) Repository Map (High Signal)
