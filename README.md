@@ -65,6 +65,41 @@ For full setup instructions, see the [Installation Guide](https://mujocolab.gith
 
 ---
 
+## Slurm / Read-Only Overlay
+
+If you run `mjlab` inside a read-only container or Slurm overlay, source
+[`scripts/slurm_overlay_env.sh`](./scripts/slurm_overlay_env.sh) before
+launching training. It redirects writable state such as `HOME`, `TMPDIR`,
+`UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR`, `WARP_CACHE_PATH`, `TORCH_HOME`,
+`WANDB_*`, `XDG_*`, and `MJLAB_WANDB_CACHE_DIR` into a writable runtime tree.
+
+```bash
+source scripts/slurm_overlay_env.sh /scratch/$USER/mjlab "$SLURM_JOB_ID"
+uv run train Mjlab-Velocity-Flat-Unitree-G1
+```
+
+This creates a per-run layout like:
+
+```text
+/scratch/$USER/mjlab/$SLURM_JOB_ID/
+  home/
+  cache/
+  tmp/
+  outputs/
+```
+
+`train.py` will automatically use `MJLAB_OUTPUT_DIR` for logs when it is set, so
+checkpoints and run outputs land under the writable `outputs/` directory by
+default.
+
+You can also use a manual suffix outside Slurm:
+
+```bash
+source scripts/slurm_overlay_env.sh /scratch/$USER/mjlab exp_yam_td3
+```
+
+---
+
 ## Training Examples
 
 ### 1. Velocity Tracking
