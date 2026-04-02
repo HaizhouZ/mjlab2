@@ -7,10 +7,14 @@ def get_log_dir(
   experiment_name: str, run_name: str | None = None, parent_dir: str = "rsl_rl"
 ) -> Path:
   env_log_dir: str | None = os.environ.get("MJLAB_LOG_PATH", None)
+  env_output_dir: str | None = os.environ.get("MJLAB_OUTPUT_DIR", None)
   log_root_path: Path
   if env_log_dir is not None:
     print(f"Using log directory from MJLAB_LOG_PATH: {env_log_dir}")
     log_root_path = Path(env_log_dir)
+  elif env_output_dir is not None:
+    print(f"Using log directory from MJLAB_OUTPUT_DIR: {env_output_dir}")
+    log_root_path = Path(env_output_dir) / parent_dir
   else:
     print("[INFO] MJLAB_LOG_PATH not set, using default log directory.")
     log_root_path = Path("logs") / parent_dir

@@ -9,6 +9,17 @@ import wandb
 from tqdm import tqdm
 
 
+def _get_default_wandb_motion_cache_root() -> Path:
+  """Resolve the writable base directory for mjlab motion cache files."""
+  if env_path := os.environ.get("MJLAB_WANDB_CACHE_DIR"):
+    return Path(env_path)
+  if env_path := os.environ.get("MJLAB_CACHE_DIR"):
+    return Path(env_path) / "wandb_motions"
+  if env_path := os.environ.get("XDG_CACHE_HOME"):
+    return Path(env_path) / "mjlab" / "wandb_motions"
+  return Path.home() / ".cache" / "mjlab" / "wandb_motions"
+
+
 def download_motions_from_wandb(
   wandb_entity: str,
   wandb_project: str,
@@ -32,7 +43,7 @@ def download_motions_from_wandb(
   """
   # Set up cache directory
   if cache_dir is None:
-    cache_dir = Path.home() / ".cache" / "mjlab" / "wandb_motions"
+    cache_dir = _get_default_wandb_motion_cache_root()
   else:
     cache_dir = Path(cache_dir)
 
@@ -362,7 +373,7 @@ def get_wandb_motion_cache_dir(
       Path to the motions directory in cache (may not exist yet)
   """
   if cache_dir is None:
-    cache_dir = Path.home() / ".cache" / "mjlab" / "wandb_motions"
+    cache_dir = _get_default_wandb_motion_cache_root()
   else:
     cache_dir = Path(cache_dir)
 

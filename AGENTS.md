@@ -27,6 +27,7 @@ REPPO integration note:
 - The Yam FastTD3 config mirrors the reference distributional-critic path, including per-env exploration noise and clipped double Q selection.
 - The current parity pass also aligns the Yam FastTD3 hidden-layer defaults with the reference architecture and keeps reward-normalization support configurable from the mjlab2 side.
 - REPPO defaults in `rsl_rl` were checked against the reference TorchRL config; keep task-specific overrides in `mjlab2` rather than broadening the core library.
+- For read-only Slurm overlay runs, prefer `scripts/slurm_overlay_env.sh` and keep writable cache/checkpoint paths outside the overlay. `mjlab.utils.wandb` now honors `MJLAB_WANDB_CACHE_DIR`, then `MJLAB_CACHE_DIR`, then `XDG_CACHE_HOME` before falling back to `~/.cache`.
 
 ---
 
