@@ -3,19 +3,15 @@
 import logging
 import os
 import sys
-import urllib.request
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Literal, Optional, cast
-
-import tyro
-import yaml
 
 from mjlab.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
 from mjlab.rl import MjlabOnPolicyRunner, RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
 from mjlab.tasks.tracking.mdp import MotionCommandCfg, MultiMotionCommandCfg
-from mjlab.utils import apply_config_overrides
+from mjlab.utils import parse_choice_and_dataclass
 from mjlab.utils.gpu import select_gpus
 from mjlab.utils.log_dir import get_log_dir
 from mjlab.utils.os import dump_yaml, get_checkpoint_path, get_wandb_checkpoint_path
@@ -56,63 +52,6 @@ class TrainConfig:
     agent_cfg = load_rl_cfg(task_id)
     assert isinstance(agent_cfg, RslRlOnPolicyRunnerCfg)
     return TrainConfig(env=env_cfg, agent=agent_cfg)
-
-
-def _load_yaml_config(path: str) -> dict:
-  with open(path, "r", encoding="utf-8") as f:
-    data = yaml.safe_load(f)
-  if data is None:
-    return {}
-  if not isinstance(data, dict):
-    raise ValueError(f"YAML config must be a mapping, got {type(data)}")
-  return data
-
-
-def _load_yaml_config_source(source: str) -> dict:
-  if source.startswith(("http://", "https://")):
-    with urllib.request.urlopen(source) as response:
-      payload = response.read().decode("utf-8")
-    data = yaml.safe_load(payload)
-  elif source.startswith("wandb://"):
-    # Format:
-    #   wandb://<entity>/<project>/<artifact[:alias]>/<config_path>
-    # Example:
-    #   wandb://my-org/mjlab/train-configs:latest/config.yaml
-    try:
-      import wandb
-    except ImportError as e:
-      raise ImportError("wandb is required for wandb:// config sources") from e
-
-    raw = source[len("wandb://") :]
-    parts = raw.split("/", 3)
-    if len(parts) < 3:
-      raise ValueError(
-        "Invalid wandb config source. Expected "
-        "wandb://<entity>/<project>/<artifact[:alias]>/<config_path>"
-      )
-    entity, project, artifact_ref = parts[0], parts[1], parts[2]
-    config_rel_path = parts[3] if len(parts) == 4 and parts[3] else "config.yaml"
-
-    if ":" not in artifact_ref:
-      artifact_ref += ":latest"
-
-    api = wandb.Api()
-    artifact = api.artifact(f"{entity}/{project}/{artifact_ref}")
-    config_file = Path(artifact.download()) / config_rel_path
-    if not config_file.exists():
-      raise FileNotFoundError(
-        f"Config file '{config_rel_path}' not found in W&B artifact '{artifact_ref}'."
-      )
-    with open(config_file, "r", encoding="utf-8") as f:
-      data = yaml.safe_load(f)
-  else:
-    return _load_yaml_config(source)
-
-  if data is None:
-    return {}
-  if not isinstance(data, dict):
-    raise ValueError(f"YAML config must be a mapping, got {type(data)}")
-  return data
 
 
 def run_train(
@@ -431,55 +370,13 @@ def main():
   import mjlab.tasks  # noqa: F401
 
   all_tasks = list_tasks()
-  chosen_task, remaining_args = tyro.cli(
-    tyro.extras.literal_type_from_choices(all_tasks),
-    add_help=False,
-    return_unknown_args=True,
-  )
-
-  # Create base config from task registry
-  base_cfg = TrainConfig.from_task(chosen_task)
-  
-  # Check if a config file is specified in remaining args
-  # Parse with allow_ambiguous_unions to catch config_path
-  temp_cfg = tyro.cli(
+  chosen_task, args = parse_choice_and_dataclass(
+    all_tasks,
     TrainConfig,
-    args=remaining_args,
-    default=base_cfg,
-    prog=sys.argv[0] + f" {chosen_task}",
-    config=(
-      tyro.conf.AvoidSubcommands,
-      tyro.conf.FlagConversionOff,
-    ),
+    default_factory=TrainConfig.from_task,
+    prog=sys.argv[0],
+    description=__doc__,
   )
-  
-  # If a config file was specified, load it and re-parse to merge configs
-  if temp_cfg.config_path:
-    config_dict = _load_yaml_config(temp_cfg.config_path)
-  elif temp_cfg.config_source:
-    config_dict = _load_yaml_config_source(temp_cfg.config_source)
-  else:
-    config_dict = {}
-
-  if config_dict:
-    # Convert nested dicts to update env and agent configs
-    if "env" in config_dict:
-      apply_config_overrides(temp_cfg.env, config_dict["env"], recursive=True)
-    if "agent" in config_dict:
-      apply_config_overrides(temp_cfg.agent, config_dict["agent"], recursive=True)
-
-    # Apply other top-level overrides
-    other_overrides = {
-      k: v
-      for k, v in config_dict.items()
-      if k not in ["env", "agent"]
-    }
-    if other_overrides:
-      apply_config_overrides(temp_cfg, other_overrides, recursive=True)
-
-  args = temp_cfg
-
-  del remaining_args
 
   launch_training(task_id=chosen_task, args=args)
 

@@ -4,10 +4,9 @@ This demo downloads a pretrained checkpoint and motion file from cloud storage
 and launches an interactive viewer with a humanoid robot performing a cartwheel.
 """
 
-import tyro
-
 from mjlab.scripts.gcs import ensure_default_checkpoint, ensure_default_motion
 from mjlab.scripts.play import PlayConfig, run_play
+from mjlab.utils import parse_dataclass_cli
 
 
 def main() -> None:
@@ -22,7 +21,7 @@ def main() -> None:
     print("Please check your internet connection and try again.")
     return
 
-  args = tyro.cli(
+  args = parse_dataclass_cli(
     PlayConfig,
     default=PlayConfig(
       checkpoint_file=checkpoint_path,
@@ -31,6 +30,7 @@ def main() -> None:
       viewer="viser",
       _demo_mode=True,
     ),
+    description=__doc__,
   )
   run_play("Mjlab-Tracking-Flat-Unitree-G1", args)
 

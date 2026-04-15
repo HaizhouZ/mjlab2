@@ -4,7 +4,6 @@ from typing import Any
 import mujoco
 import numpy as np
 import torch
-import tyro
 from tqdm import tqdm
 
 from mjlab.entity import Entity
@@ -12,6 +11,7 @@ from mjlab.scene import Scene
 from mjlab.sensor.contact_sensor import ContactSensor, ContactSensorCfg
 from mjlab.sim.sim import Simulation, SimulationCfg
 from mjlab.tasks.registry import load_env_cfg
+from mjlab.utils import run_cli_function
 from mjlab.utils.lab_api.math import (
   axis_angle_from_quat,
   quat_apply,
@@ -1139,4 +1139,4 @@ def main(
 
 
 if __name__ == "__main__":
-  tyro.cli(main)
+  run_cli_function(main)

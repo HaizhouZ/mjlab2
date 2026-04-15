@@ -6,7 +6,6 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import tyro
 from rsl_rl.runners import OnPolicyRunner
 
 from mjlab.envs import ManagerBasedRlEnv
@@ -18,6 +17,7 @@ from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg
 from mjlab.tasks.tracking.mdp import MotionCommandCfg, MultiMotionCommandCfg
 from mjlab.tasks.tracking.mdp.commands import MotionCommand
 from mjlab.tasks.tracking.rl import MotionTrackingOnPolicyRunner
+from mjlab.utils import parse_choice_and_dataclass
 from mjlab.utils.os import get_wandb_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
 
@@ -310,31 +310,16 @@ def main():
   import mjlab.tasks  # noqa: F401
 
   all_tasks = list_tasks()
-  chosen_task, remaining_args = tyro.cli(
-    tyro.extras.literal_type_from_choices(all_tasks),
-    add_help=False,
-    return_unknown_args=True,
-  )
-
-  # Parse the rest of the arguments + allow overriding env_cfg and agent_cfg.
-  agent_cfg = load_rl_cfg(chosen_task)
-
-  # Add output_file parameter
   @dataclass(frozen=True)
   class LogConfig(PlayConfig):
     output_file: str | None = None
 
-  args = tyro.cli(
+  chosen_task, args = parse_choice_and_dataclass(
+    all_tasks,
     LogConfig,
-    args=remaining_args,
-    default=LogConfig(),
-    prog=sys.argv[0] + f" {chosen_task}",
-    config=(
-      tyro.conf.AvoidSubcommands,
-      tyro.conf.FlagConversionOff,
-    ),
+    prog=sys.argv[0],
+    description=__doc__,
   )
-  del remaining_args, agent_cfg
 
   run_log_qpos_qvel(chosen_task, args, args.output_file)
 

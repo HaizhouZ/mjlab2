@@ -50,8 +50,13 @@ Launch the demo directly in your browser with an interactive Viser viewer.
 ```bash
 git clone https://github.com/mujocolab/mjlab.git
 cd mjlab
+uv sync --all-extras --all-packages --group dev
 uv run demo
 ```
+
+`uv` manages the project environment in `.venv`. Ensure any required system
+runtime libraries for CUDA, MuJoCo, or Warp are available on the host before
+running `uv sync` or `uv run`.
 
 **From PyPI:**
 
@@ -72,6 +77,9 @@ If you run `mjlab` inside a read-only container or Slurm overlay, source
 launching training. It redirects writable state such as `HOME`, `TMPDIR`,
 `UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR`, `WARP_CACHE_PATH`, `TORCH_HOME`,
 `WANDB_*`, `XDG_*`, and `MJLAB_WANDB_CACHE_DIR` into a writable runtime tree.
+You can override the top-level writable roots directly with
+`MJLAB_HOME_DIR`, `MJLAB_CACHE_DIR`, `MJLAB_TMP_DIR`, and `MJLAB_OUTPUT_DIR`
+before sourcing the script.
 
 ```bash
 source scripts/slurm_overlay_env.sh /scratch/$USER/mjlab "$SLURM_JOB_ID"
@@ -92,10 +100,38 @@ This creates a per-run layout like:
 checkpoints and run outputs land under the writable `outputs/` directory by
 default.
 
+If you want the same runtime layout but a different cache location, set
+`MJLAB_CACHE_DIR` before sourcing the script.
+
 You can also use a manual suffix outside Slurm:
 
 ```bash
 source scripts/slurm_overlay_env.sh /scratch/$USER/mjlab exp_yam_td3
+```
+
+For batch jobs, [`scripts/slurm_exec.sh`](./scripts/slurm_exec.sh) is the more
+convenient entrypoint. It will:
+
+- source `scripts/slurm_overlay_env.sh`
+- export `PYTHONPATH=$REPO_ROOT/src`
+- optionally run `uv sync --frozen --group dev` when `MJLAB_UV_SYNC=1`
+- execute the command you pass after `--`
+
+Example `sbatch` payload:
+
+```bash
+#!/usr/bin/env bash
+#SBATCH --job-name=mjlab-train
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
+#SBATCH --time=24:00:00
+
+set -euo pipefail
+cd /path/to/mjlab2
+
+scripts/slurm_exec.sh /scratch/$USER/mjlab "$SLURM_JOB_ID" -- \
+  uv run train Mjlab-Velocity-Flat-Unitree-G1 env.scene.num_envs=4096
 ```
 
 ---
@@ -107,15 +143,15 @@ source scripts/slurm_overlay_env.sh /scratch/$USER/mjlab exp_yam_td3
 Train a Unitree G1 humanoid to follow velocity commands on flat terrain:
 
 ```bash
-uv run train Mjlab-Velocity-Flat-Unitree-G1 --env.scene.num-envs 4096
+uv run train Mjlab-Velocity-Flat-Unitree-G1 env.scene.num_envs=4096
 ```
 
-**Multi-GPU Training:** Scale to multiple GPUs using `--gpu-ids`:
+**Multi-GPU Training:** Scale to multiple GPUs using `gpu_ids=[...]`:
 
 ```bash
 uv run train Mjlab-Velocity-Flat-Unitree-G1 \
-  --gpu-ids 0 1 \
-  --env.scene.num-envs 4096
+  gpu_ids=[0,1] \
+  env.scene.num_envs=4096
 ```
 
 See the [Distributed Training guide](https://mujocolab.github.io/mjlab/source/distributed_training.html) for details.
@@ -123,7 +159,7 @@ See the [Distributed Training guide](https://mujocolab.github.io/mjlab/source/di
 Evaluate a policy while training (fetches latest checkpoint from Weights & Biases):
 
 ```bash
-uv run play Mjlab-Velocity-Flat-Unitree-G1 --wandb-run-path your-org/mjlab/run-id
+uv run play Mjlab-Velocity-Flat-Unitree-G1 wandb_run_path=your-org/mjlab/run-id
 ```
 
 ---
@@ -157,14 +193,16 @@ Train a Unitree G1 to mimic reference motions. mjlab uses
 
 #### Train and Play
 ```bash
-uv run train Mjlab-Tracking-Flat-Unitree-G1 --registry-name your-org/motions/motion-name --env.scene.num-envs 4096
+uv run train Mjlab-Tracking-Flat-Unitree-G1 \
+  registry_name=your-org/motions/motion-name \
+  env.scene.num_envs=4096
 
 MJLAB_MOTION_HORIZON=1 uv run train Mjlab-MultiTracking-Flat-Unitree-G1 \
-  --agent.wandb-project multitrack \
-  --agent.run-name H_1_10s_bro \
-  --registry-name wandb-registry-motions/lafan_dataset \
-  --agent.max-iterations 30000 \
-  --env.scene.num-envs 4096
+  agent.wandb_project=multitrack \
+  agent.run_name=H_1_10s_bro \
+  registry_name=wandb-registry-motions/lafan_dataset \
+  agent.max_iterations=30000 \
+  env.scene.num_envs=4096
 ```
 ---
 
@@ -173,25 +211,45 @@ MJLAB_MOTION_HORIZON=1 uv run train Mjlab-MultiTracking-Flat-Unitree-G1 \
 Use built-in agents to sanity check your MDP **before** training.
 
 ```bash
-uv run play Mjlab-Your-Task-Id --agent zero  # Sends zero actions.
-uv run play Mjlab-Your-Task-Id --agent random  # Sends uniform random actions.
+uv run play Mjlab-Your-Task-Id agent=zero  # Sends zero actions.
+uv run play Mjlab-Your-Task-Id agent=random  # Sends uniform random actions.
 ```
 
 > [!NOTE]
 > When running motion-tracking tasks, add
-> `--registry-name your-org/motions/motion-name` to the command.
+> `registry_name=your-org/motions/motion-name` to the command.
 
 ---
 
 ## Training with a YAML Config File
 
-If you prefer scheduling runs from a YAML file, use either:
+The train and play CLIs use:
 
-- `--config-path` for local YAML files
-- `--config-source` for local path, HTTP(S), or W&B artifact URI
+- `tyro` for CLI parsing and `--help`
+- `OmegaConf` for config-file loading and merge behavior
+
+The merge order is:
+
+1. task defaults
+2. `config_path` or `config_source`
+3. CLI overrides
+
+CLI help is available from both top-level commands and task-specific commands:
 
 ```bash
-uv run train Mjlab-Velocity-Flat-Unitree-G1 --config-path conf/train.yaml
+uv run train --help
+uv run train Mjlab-Velocity-Flat-Unitree-G1 --help
+uv run play --help
+uv run play Mjlab-Velocity-Flat-Unitree-G1 --help
+```
+
+If you prefer scheduling runs from a YAML file, use either:
+
+- `config_path=...` for local YAML files
+- `config_source=...` for local path, HTTP(S), or W&B artifact URI
+
+```bash
+uv run train Mjlab-Velocity-Flat-Unitree-G1 config_path=conf/train.yaml
 ```
 
 Example `conf/train.yaml`:
@@ -206,23 +264,45 @@ video: false
 enable_nan_guard: true
 ```
 
-`--config-path` supports partial overrides:
+`config_path=...` supports partial overrides:
 
 - Fields present in YAML override defaults loaded from task registry.
 - Missing fields keep task defaults.
+
+CLI overrides can be passed either as dotlist assignments or standard flags:
+
+```bash
+uv run train Mjlab-Velocity-Flat-Unitree-G1 \
+  config_path=conf/train.yaml \
+  env.scene.num_envs=8192
+```
+
+```bash
+uv run train Mjlab-Velocity-Flat-Unitree-G1 \
+  --config-path conf/train.yaml \
+  --env.scene.num-envs 8192
+```
+
+CLI overrides still win over YAML:
+
+```bash
+uv run train Mjlab-Velocity-Flat-Unitree-G1 \
+  config_path=conf/train.yaml \
+  env.scene.num_envs=8192
+```
 
 Remote YAML via HTTP(S):
 
 ```bash
 uv run train Mjlab-Velocity-Flat-Unitree-G1 \
-  --config-source https://example.com/configs/train.yaml
+  config_source=https://example.com/configs/train.yaml
 ```
 
 YAML from W&B artifact:
 
 ```bash
 uv run train Mjlab-Velocity-Flat-Unitree-G1 \
-  --config-source wandb://your-entity/your-project/train-configs:latest/config.yaml
+  config_source=wandb://your-entity/your-project/train-configs:latest/config.yaml
 ```
 
 ---

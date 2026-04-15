@@ -16,12 +16,12 @@ import mujoco
 import mujoco.viewer
 import numpy as np
 import torch
-import tyro
 import warp as wp
 
 from mjlab.scene import Scene
 from mjlab.sim.sim import Simulation, SimulationCfg
 from mjlab.tasks.registry import load_env_cfg
+from mjlab.utils import run_cli_function
 
 # Suppress Warp kernel loading messages for cleaner output
 wp.config.quiet = True
@@ -625,4 +625,4 @@ def main(
 
 
 if __name__ == "__main__":
-  tyro.cli(main)
+  run_cli_function(main, description=__doc__)

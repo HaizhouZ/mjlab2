@@ -1,337 +1,310 @@
-"""Unified configuration loader for parsing configs from YAML, W&B, and other sources.
+"""OmegaConf-backed helpers for runtime configuration loading and overrides."""
 
-This module provides a flexible framework for loading dataclass configurations from
-external sources like YAML files and Weights & Biases. It uses a flag-based system
-to mark which dataclasses are readable from external config files.
-
-Example:
-    Mark a dataclass as config-loadable:
-    
-    >>> from mjlab.utils.config_loader import ConfigLoadable
-    >>> from dataclasses import dataclass
-    >>> 
-    >>> @dataclass(kw_only=True)
-    >>> class MyConfig(ConfigLoadable):
-    ...     param1: int = 10
-    ...     param2: str = "test"
-    
-    Load from YAML file:
-    
-    >>> cfg = MyConfig.load_from_yaml("config.yaml")
-    
-    Load from W&B:
-    
-    >>> cfg = MyConfig.load_from_wandb(
-    ...     wandb_entity="my_entity",
-    ...     wandb_project="my_project",
-    ...     config_path="path/to/config.yaml",
-    ... )
-"""
+from __future__ import annotations
 
 import dataclasses
 import json
+import types
+import urllib.request
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, TypeVar, Union
+from typing import Any, TypeVar, get_args, get_origin
 
 import yaml
+from omegaconf import DictConfig, ListConfig, OmegaConf
 
-T = TypeVar("T", bound="ConfigLoadable")
+T = TypeVar("T")
 
 
-class ConfigLoadable:
-    """Mixin class to mark a dataclass as loadable from external configs.
-    
-    Any dataclass inheriting from this class can be loaded from YAML, W&B,
-    and other external sources using the provided class methods.
-    
-    The dataclass should use @dataclass(kw_only=True) decorator for best
-    compatibility with partial config loading.
-    """
+def _config_to_data(value: Any, *, resolve: bool = False) -> Any:
+    """Convert dataclasses and OmegaConf containers into plain Python data."""
+    if isinstance(value, (DictConfig, ListConfig)):
+        return OmegaConf.to_container(value, resolve=resolve)
+    if dataclasses.is_dataclass(value):
+        result = {}
+        for field in dataclasses.fields(value):
+            result[field.name] = _config_to_data(
+                getattr(value, field.name), resolve=resolve
+            )
+        return result
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {
+            key: _config_to_data(item, resolve=resolve) for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_config_to_data(item, resolve=resolve) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_config_to_data(item, resolve=resolve) for item in value)
+    return value
 
-    @classmethod
-    def load_from_yaml(cls: type[T], filepath: Union[str, Path]) -> T:
-        """Load configuration from a YAML file.
 
-        Args:
-            filepath: Path to the YAML configuration file.
+def _ensure_mapping(data: Any, source_name: str) -> dict[str, Any]:
+    if data is None:
+        return {}
+    if isinstance(data, (DictConfig, ListConfig)):
+        data = OmegaConf.to_container(data, resolve=True)
+    if not isinstance(data, dict):
+        raise ValueError(f"{source_name} must contain a mapping, got {type(data)}")
+    return data
 
-        Returns:
-            Instance of the dataclass with values populated from YAML.
 
-        Raises:
-            FileNotFoundError: If the YAML file does not exist.
-            ValueError: If the YAML content cannot be converted to the dataclass type.
-        """
-        filepath = Path(filepath)
-        if not filepath.exists():
-            raise FileNotFoundError(f"Config file not found: {filepath}")
+def _set_attr(obj: Any, key: str, value: Any) -> None:
+    try:
+        setattr(obj, key, value)
+    except (AttributeError, dataclasses.FrozenInstanceError):
+        object.__setattr__(obj, key, value)
 
-        with open(filepath, "r") as f:
-            data = yaml.safe_load(f)
 
-        if data is None:
-            data = {}
+def _coerce_like(current_value: Any, value: Any) -> Any:
+    if isinstance(current_value, Path) and isinstance(value, str):
+        return Path(value)
+    if isinstance(current_value, tuple) and isinstance(value, list):
+        return tuple(value)
+    if isinstance(current_value, list) and isinstance(value, tuple):
+        return list(value)
+    return value
 
-        return cls.load_from_dict(data)
 
-    @classmethod
-    def load_from_dict(cls: type[T], data: dict[str, Any]) -> T:
-        """Load configuration from a dictionary.
+def load_config_path(filepath: str | Path) -> dict[str, Any]:
+    """Load a local YAML or JSON config file into a mapping."""
+    filepath = Path(filepath)
+    if not filepath.exists():
+        raise FileNotFoundError(f"Config file not found: {filepath}")
 
-        Args:
-            data: Dictionary containing configuration values.
+    if filepath.suffix in {".yaml", ".yml"}:
+        data = OmegaConf.to_container(OmegaConf.load(filepath), resolve=True)
+    elif filepath.suffix == ".json":
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    else:
+        raise ValueError(f"Unsupported config file format: {filepath.suffix}")
 
-        Returns:
-            Instance of the dataclass with values populated from the dictionary.
+    return _ensure_mapping(data, str(filepath))
 
-        Raises:
-            ValueError: If required fields are missing or types don't match.
-        """
-        # Get all fields from the dataclass
-        fields = {f.name: f for f in dataclasses.fields(cls)}  # type: ignore[arg-type]
 
-        # Separate provided values from defaults
-        kwargs = {}
-        for field_name, field in fields.items():
-            if field_name in data:
-                value = data[field_name]
-                # Recursively load nested ConfigLoadable objects
-                if dataclasses.is_dataclass(field.type) and hasattr(
-                    field.type, "load_from_dict"
-                ):
-                    kwargs[field_name] = field.type.load_from_dict(value)  # type: ignore[attr-defined]
-                else:
-                    kwargs[field_name] = value
+def load_config_source(source: str) -> dict[str, Any]:
+    """Load config data from a local path, HTTP(S) URL, or W&B artifact URI."""
+    if source.startswith(("http://", "https://")):
+        with urllib.request.urlopen(source) as response:
+            payload = response.read().decode("utf-8")
+        data = yaml.safe_load(payload)
+        return _ensure_mapping(data, source)
 
-        try:
-            return cls(**kwargs)
-        except TypeError as e:
-            raise ValueError(
-                f"Failed to instantiate {cls.__name__} with provided values: {e}"
-            ) from e
-
-    @classmethod
-    def load_from_wandb(
-        cls: type[T],
-        wandb_entity: str,
-        wandb_project: str,
-        config_path: str = "config.yaml",
-        run_name: str | None = None,
-        artifact_type: str = "config",
-    ) -> T:
-        """Load configuration from Weights & Biases.
-
-        Downloads a configuration artifact from W&B and loads it into the dataclass.
-
-        Args:
-            wandb_entity: Weights & Biases entity/username.
-            wandb_project: Weights & Biases project name.
-            config_path: Path within the artifact to the config file (default: "config.yaml").
-            run_name: Specific run name to download from. If None, uses the latest run.
-            artifact_type: Type of artifact to download (default: "config").
-
-        Returns:
-            Instance of the dataclass with values from W&B config.
-
-        Raises:
-            ImportError: If wandb is not installed.
-            FileNotFoundError: If the artifact or config file is not found.
-            ValueError: If the config cannot be loaded.
-        """
+    if source.startswith("wandb://"):
         try:
             import wandb
         except ImportError as e:
-            raise ImportError("wandb is required to load configs from W&B") from e
+            raise ImportError("wandb is required for wandb:// config sources") from e
+
+        raw = source[len("wandb://") :]
+        parts = raw.split("/", 3)
+        if len(parts) < 3:
+            raise ValueError(
+                "Invalid wandb config source. Expected "
+                "wandb://<entity>/<project>/<artifact[:alias]>/<config_path>"
+            )
+
+        entity, project, artifact_ref = parts[0], parts[1], parts[2]
+        config_rel_path = parts[3] if len(parts) == 4 and parts[3] else "config.yaml"
+        if ":" not in artifact_ref:
+            artifact_ref += ":latest"
 
         api = wandb.Api()
-
-        # Find the artifact
-        if run_name:
-            # Download from a specific run
-            run = api.run(f"{wandb_entity}/{wandb_project}/{run_name}")
-            artifacts = list(run.logged_artifacts())
-        else:
-            # Get latest artifact from the project
-            artifacts = []
-            for run in api.runs(f"{wandb_entity}/{wandb_project}"):
-                artifacts.extend(run.logged_artifacts())
-
-        # Filter artifacts by type and find the latest one
-        config_artifacts = [
-            a for a in artifacts if a.type == artifact_type
-        ]
-        if not config_artifacts:
-            raise FileNotFoundError(
-                f"No artifacts of type '{artifact_type}' found in "
-                f"{wandb_entity}/{wandb_project}"
-            )
-
-        # Use the most recent one
-        artifact = sorted(config_artifacts, key=lambda a: a.created_at)[-1]
-
-        # Download and load the config
-        artifact_dir = artifact.download()
-        config_file = Path(artifact_dir) / config_path
-
+        artifact = api.artifact(f"{entity}/{project}/{artifact_ref}")
+        config_file = Path(artifact.download()) / config_rel_path
         if not config_file.exists():
             raise FileNotFoundError(
-                f"Config file '{config_path}' not found in artifact"
+                f"Config file '{config_rel_path}' not found in W&B artifact '{artifact_ref}'."
             )
+        return load_config_path(config_file)
 
-        return cls.load_from_yaml(config_file)
-
-    @classmethod
-    def load_from_json(cls: type[T], filepath: Union[str, Path]) -> T:
-        """Load configuration from a JSON file.
-
-        Args:
-            filepath: Path to the JSON configuration file.
-
-        Returns:
-            Instance of the dataclass with values populated from JSON.
-
-        Raises:
-            FileNotFoundError: If the JSON file does not exist.
-            ValueError: If the JSON content cannot be converted to the dataclass type.
-        """
-        filepath = Path(filepath)
-        if not filepath.exists():
-            raise FileNotFoundError(f"Config file not found: {filepath}")
-
-        with open(filepath, "r") as f:
-            data = json.load(f)
-
-        return cls.load_from_dict(data)
-
-    def save_to_yaml(self, filepath: Union[str, Path], sort_keys: bool = False) -> None:
-        """Save configuration to a YAML file.
-
-        Args:
-            filepath: Path where to save the YAML configuration.
-            sort_keys: Whether to sort keys in the output.
-        """
-        filepath = Path(filepath)
-        filepath.parent.mkdir(parents=True, exist_ok=True)
-
-        data = self._to_dict()
-        with open(filepath, "w") as f:
-            yaml.dump(data, f, sort_keys=sort_keys, default_flow_style=False)
-
-    def save_to_json(self, filepath: Union[str, Path], indent: int = 2) -> None:
-        """Save configuration to a JSON file.
-
-        Args:
-            filepath: Path where to save the JSON configuration.
-            indent: Number of spaces for indentation.
-        """
-        filepath = Path(filepath)
-        filepath.parent.mkdir(parents=True, exist_ok=True)
-
-        data = self._to_dict()
-        with open(filepath, "w") as f:
-            json.dump(data, f, indent=indent)
-
-    def _to_dict(self) -> dict[str, Any]:
-        """Convert dataclass instance to dictionary, handling nested dataclasses."""
-        result = {}
-        for field in dataclasses.fields(self):  # type: ignore[arg-type]
-            value = getattr(self, field.name)
-            if dataclasses.is_dataclass(value) and hasattr(value, "_to_dict"):
-                result[field.name] = value._to_dict()  # type: ignore[attr-defined]
-            else:
-                result[field.name] = value
-        return result
-
-    def override_from_config(self, config_path: Union[str, Path]) -> None:
-        """Override this config's fields from a YAML/JSON file.
-        
-        Only fields present in the config file override this config's values.
-        Missing fields retain their current values.
-        
-        Args:
-            config_path: Path to YAML or JSON config file
-        """
-        config_path = Path(config_path)
-        if config_path.suffix in ['.yaml', '.yml']:
-            loaded_cfg = self.load_from_yaml(config_path)
-        elif config_path.suffix == '.json':
-            loaded_cfg = self.load_from_json(config_path)
-        else:
-            raise ValueError(f"Unsupported config file format: {config_path.suffix}")
-        
-        # Override fields that were loaded from the config file
-        config_data = loaded_cfg._to_dict()
-        for key, value in config_data.items():
-            if hasattr(self, key):
-                setattr(self, key, value)
+    return load_config_path(source)
 
 
 def apply_config_overrides(
-    cfg: T,
-    overrides: dict[str, Any],
-    recursive: bool = True,
+    cfg: T, overrides: dict[str, Any] | DictConfig, recursive: bool = True
 ) -> T:
-    """Apply configuration overrides to a dataclass instance.
-
-    Args:
-        cfg: The configuration object to override.
-        overrides: Dictionary of field names to new values.
-        recursive: If True, recursively apply overrides to nested dataclasses.
-
-    Returns:
-        Modified configuration object (same instance).
-
-    Raises:
-        AttributeError: If attempting to set a non-existent field.
-    """
-    for key, value in overrides.items():
-        if not hasattr(cfg, key):
+    """Apply mapping-style overrides to an object graph in place."""
+    overrides_data = _ensure_mapping(overrides, "overrides")
+    for key, value in overrides_data.items():
+        if dataclasses.is_dataclass(cfg):
+            valid_fields = {field.name for field in dataclasses.fields(cfg)}
+            if key not in valid_fields:
+                raise AttributeError(
+                    f"Configuration {type(cfg).__name__} has no field '{key}'"
+                )
+        elif not hasattr(cfg, key):
             raise AttributeError(
                 f"Configuration {type(cfg).__name__} has no field '{key}'"
             )
 
         current_value = getattr(cfg, key)
-        if (
-            recursive
-            and dataclasses.is_dataclass(current_value)
-            and isinstance(value, dict)
+        if recursive and dataclasses.is_dataclass(current_value) and isinstance(
+            value, Mapping
         ):
-            # Recursively apply overrides to nested dataclass
-            apply_config_overrides(current_value, value, recursive=True)  # type: ignore[arg-type]
-        else:
-            setattr(cfg, key, value)
-
+            apply_config_overrides(current_value, dict(value), recursive=True)
+            continue
+        if recursive and isinstance(current_value, dict) and isinstance(value, Mapping):
+            for subkey, subvalue in value.items():
+                if (
+                    subkey in current_value
+                    and dataclasses.is_dataclass(current_value[subkey])
+                    and isinstance(subvalue, Mapping)
+                ):
+                    apply_config_overrides(
+                        current_value[subkey], dict(subvalue), recursive=True
+                    )
+                elif (
+                    subkey in current_value
+                    and isinstance(current_value[subkey], dict)
+                    and isinstance(subvalue, Mapping)
+                ):
+                    current_value[subkey].update(dict(subvalue))
+                else:
+                    current_value[subkey] = subvalue
+            continue
+        _set_attr(cfg, key, _coerce_like(current_value, value))
     return cfg
 
 
-def merge_configs(
-    base_cfg: T,
-    override_cfg: T,
-    recursive: bool = True,
-) -> T:
-    """Merge two configuration objects.
+def _extract_nondefault_overrides(value: Any, default_value: Any) -> Any:
+    if isinstance(value, dict) and isinstance(default_value, dict):
+        result = {}
+        for key, item in value.items():
+            nested_default = default_value.get(key)
+            nested = _extract_nondefault_overrides(item, nested_default)
+            if nested not in ({}, None):
+                result[key] = nested
+        return result
+    if value != default_value:
+        return value
+    return None
 
-    Args:
-        base_cfg: The base configuration.
-        override_cfg: Configuration with values to override.
-        recursive: If True, recursively merge nested dataclasses.
 
-    Returns:
-        Modified base configuration (same instance).
-    """
-    overrides = {}
-    for field in dataclasses.fields(override_cfg):  # type: ignore[arg-type]
-        override_value = getattr(override_cfg, field.name)
-        base_value = getattr(base_cfg, field.name)
+def merge_configs(base_cfg: T, override_cfg: T, recursive: bool = True) -> T:
+    """Merge non-default values from one config object onto another."""
+    override_data = _config_to_data(override_cfg, resolve=True)
+    try:
+        default_cfg = type(override_cfg)()
+        default_data = _config_to_data(default_cfg, resolve=True)
+        overrides = _extract_nondefault_overrides(override_data, default_data) or {}
+    except TypeError:
+        overrides = override_data
 
-        if (
-            recursive
-            and dataclasses.is_dataclass(override_value)
-            and dataclasses.is_dataclass(base_value)
-        ):
-            # Recursively merge nested dataclasses
-            merge_configs(base_value, override_value, recursive=True)  # type: ignore[arg-type]
-        elif override_value != field.default and override_value != field.default_factory:
-            overrides[field.name] = override_value
+    return apply_config_overrides(base_cfg, overrides, recursive=recursive)
 
-    return apply_config_overrides(base_cfg, overrides, recursive=False)
+
+def _coerce_scalar(annotation: Any, value: Any) -> Any:
+    if annotation is Any:
+        return value
+    if annotation is bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.lower()
+            if lowered in {"true", "1", "yes", "on"}:
+                return True
+            if lowered in {"false", "0", "no", "off"}:
+                return False
+        raise ValueError(f"Cannot coerce {value!r} to bool")
+    if annotation in {int, float, str}:
+        return annotation(value)
+    if annotation is Path:
+        return Path(value)
+    return value
+
+
+def _construct_value(annotation: Any, value: Any) -> Any:
+    if value is None:
+        return None
+    if annotation is Any:
+        return value
+
+    origin = get_origin(annotation)
+    if origin is None and isinstance(annotation, types.UnionType):
+        origin = types.UnionType
+
+    if origin is not None:
+        if str(origin) == "typing.Union" or origin is types.UnionType:
+            args = [arg for arg in get_args(annotation) if arg is not type(None)]
+            for arg in args:
+                try:
+                    return _construct_value(arg, value)
+                except Exception:
+                    continue
+            return value
+        if str(origin).endswith("Literal"):
+            return value
+        if origin is list:
+            elem_type = get_args(annotation)[0] if get_args(annotation) else Any
+            return [_construct_value(elem_type, item) for item in value]
+        if origin is tuple:
+            args = get_args(annotation)
+            if len(args) == 2 and args[1] is Ellipsis:
+                return tuple(_construct_value(args[0], item) for item in value)
+            return tuple(
+                _construct_value(arg, item)
+                for arg, item in zip(args, value, strict=False)
+            )
+        if origin is dict:
+            key_type, value_type = (
+                get_args(annotation) if get_args(annotation) else (Any, Any)
+            )
+            return {
+                _construct_value(key_type, key): _construct_value(value_type, item)
+                for key, item in value.items()
+            }
+
+    if (
+        isinstance(annotation, type)
+        and dataclasses.is_dataclass(annotation)
+        and isinstance(value, Mapping)
+    ):
+        return load_dataclass_from_dict(annotation, dict(value))
+
+    if isinstance(annotation, type):
+        return _coerce_scalar(annotation, value)
+
+    return value
+
+
+def load_dataclass_from_dict(cls: type[T], data: dict[str, Any]) -> T:
+    """Instantiate a dataclass from a plain mapping."""
+    if not dataclasses.is_dataclass(cls):
+        raise TypeError(f"{cls!r} is not a dataclass type")
+
+    kwargs = {}
+    for field in dataclasses.fields(cls):
+        if field.name not in data:
+            continue
+        kwargs[field.name] = _construct_value(field.type, data[field.name])
+    return cls(**kwargs)
+
+
+def load_dataclass_from_yaml(cls: type[T], filepath: str | Path) -> T:
+    return load_dataclass_from_dict(cls, load_config_path(filepath))
+
+
+def load_dataclass_from_json(cls: type[T], filepath: str | Path) -> T:
+    return load_dataclass_from_dict(cls, load_config_path(filepath))
+
+
+def save_dataclass_to_yaml(cfg: Any, filepath: str | Path, sort_keys: bool = False) -> None:
+    filepath = Path(filepath)
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    with open(filepath, "w", encoding="utf-8") as f:
+        yaml.safe_dump(_config_to_data(cfg, resolve=True), f, sort_keys=sort_keys)
+
+
+def save_dataclass_to_json(cfg: Any, filepath: str | Path, indent: int = 2) -> None:
+    filepath = Path(filepath)
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(_config_to_data(cfg, resolve=True), f, indent=indent)
+
+
+def override_dataclass_from_source(cfg: T, source: str | Path) -> T:
+    """Load a config source and apply only the provided fields onto cfg."""
+    return apply_config_overrides(cfg, load_config_source(str(source)), recursive=True)

@@ -2,13 +2,18 @@ import os
 from importlib.metadata import entry_points
 from pathlib import Path
 
-import warp as wp
+try:
+  import warp as wp
+except ImportError:
+  wp = None  # type: ignore[assignment]
 
 MJLAB_SRC_PATH: Path = Path(__file__).parent
 
 
 def _configure_warp() -> None:
   """Configure Warp globally for mjlab."""
+  if wp is None:
+    return
   wp.config.enable_backward = False
 
   # Keep warp verbose by default to show kernel compilation progress.

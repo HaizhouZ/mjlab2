@@ -158,7 +158,8 @@ make docs
 ### 6.4 Touch configuration loading
 1. Preserve backward compatibility where practical.
 2. Fail with clear error messages for invalid config.
-3. Add tests for missing/invalid/override cases.
+3. Keep precedence explicit: task defaults -> `config_path` / `config_source` -> CLI.
+4. Add tests for missing/invalid/override cases.
 
 ---
 
@@ -268,50 +269,61 @@ If repository conventions evolve (new tooling, new task layout, CI policy change
 
 This repository has two different "config" concepts. Do not mix them:
 
-1. **Runtime/training dataclass configs** via `ConfigLoadable` in `src/mjlab/utils/config_loader.py`.
+1. **Runtime/training dataclass configs** via the OmegaConf-backed helpers in `src/mjlab/utils/config_loader.py` and `src/mjlab/utils/omegaconf_cli.py`.
 2. **MuJoCo spec editing configs** via `SpecCfg` subclasses in `src/mjlab/utils/spec_config.py`.
 
-### 13.1 `ConfigLoadable` (external file -> dataclass)
+### 13.1 Runtime config helpers (external source -> dataclass)
 
-Use this for experiment/training/task dataclasses loaded from YAML/JSON/W&B artifacts.
+Use this stack for experiment/training/task dataclasses loaded from YAML/JSON/local paths/HTTP(S)/W&B artifact URIs, then overridden from the CLI.
 
-Core APIs:
-- `load_from_yaml(path)`
-- `load_from_json(path)`
-- `load_from_dict(data)`
-- `load_from_wandb(entity, project, ...)`
-- `save_to_yaml(path)` / `save_to_json(path)`
-- `override_from_config(path)`
+Core load/save APIs:
+- `load_dataclass_from_yaml(cls, path)`
+- `load_dataclass_from_json(cls, path)`
+- `load_dataclass_from_dict(cls, data)`
+- `load_config_path(path)`
+- `load_config_source(source)`
+- `save_dataclass_to_yaml(cfg, path)`
+- `save_dataclass_to_json(cfg, path)`
+- `override_dataclass_from_source(cfg, source)`
 
 Companion helpers:
 - `apply_config_overrides(cfg, overrides, recursive=True)`
 - `merge_configs(base_cfg, override_cfg, recursive=True)`
 
+CLI helpers:
+- `parse_dataclass_cli(config_type, args=None, config_path_arg="config_path", config_source_arg="config_source")`
+- `parse_choice_and_dataclass(...)`
+- `run_cli_function(...)`
+
 Recommended usage pattern:
 ```python
 from dataclasses import dataclass, field
-from mjlab.utils import ConfigLoadable, apply_config_overrides
+from mjlab.utils import (
+  apply_config_overrides,
+  load_dataclass_from_yaml,
+)
 
 @dataclass(kw_only=True)
-class OptimCfg(ConfigLoadable):
+class OptimCfg:
   lr: float = 3e-4
   epochs: int = 100
 
 @dataclass(kw_only=True)
-class TrainCfg(ConfigLoadable):
+class TrainCfg:
   seed: int = 0
   optim: OptimCfg = field(default_factory=OptimCfg)
 
-cfg = TrainCfg.load_from_yaml("conf/train.yaml")
+cfg = load_dataclass_from_yaml(TrainCfg, "conf/train.yaml")
 apply_config_overrides(cfg, {"optim": {"lr": 1e-4}}, recursive=True)
 ```
 
-Agent rules for `ConfigLoadable`:
-- Always use `@dataclass(kw_only=True)` for loadable config objects.
+Agent rules for runtime config helpers:
+- Always use plain `@dataclass(kw_only=True)` config objects.
 - Keep defaults meaningful; partial YAML should still instantiate safely.
-- Validate external paths early and fail loudly with clear error messages.
-- Prefer `apply_config_overrides` for patch-style overrides in scripts.
+- Validate external paths and sources early and fail loudly with clear error messages.
+- Prefer `apply_config_overrides` for patch-style overrides inside scripts.
 - Keep nested override dictionaries shape-compatible with target dataclasses.
+- Preserve the documented precedence order: task defaults -> `config_path` / `config_source` -> CLI overrides.
 
 Known caveat:
 - `merge_configs(...)` uses field-default comparison heuristics; if defaults are dynamic or mutable, verify expected merge behavior with a focused test.
@@ -333,7 +345,7 @@ Agent rules for `SpecCfg` edits:
 
 ### 13.3 Which config tool should I use?
 
-- Need to load/save trainer/env/task options from files or W&B? -> **`ConfigLoadable` stack**.
+- Need to load/save trainer/env/task options from files, URLs, or W&B? -> **runtime config helper stack**.
 - Need to modify MuJoCo model/spec internals programmatically? -> **`SpecCfg` stack**.
 - Need both? -> Load dataclass config first, then transform into `SpecCfg` instances explicitly.
 
@@ -344,4 +356,4 @@ When a PR touches config tooling, include:
 - [ ] Error behavior for invalid fields/types.
 - [ ] Nested config behavior (if recursive overrides/merges are involved).
 - [ ] At least one targeted test for the modified path.
-- [ ] Note whether the change affects `ConfigLoadable`, `SpecCfg`, or both.
+- [ ] Note whether the change affects runtime config helpers, `SpecCfg`, or both.

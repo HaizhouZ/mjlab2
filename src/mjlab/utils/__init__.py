@@ -1,21 +1,35 @@
 """Utilities for mjlab."""
 
 from mjlab.utils.config_loader import (
-    ConfigLoadable,
     apply_config_overrides,
+    load_config_path,
+    load_config_source,
+    load_dataclass_from_dict,
+    load_dataclass_from_json,
+    load_dataclass_from_yaml,
     merge_configs,
+    override_dataclass_from_source,
+    save_dataclass_to_json,
+    save_dataclass_to_yaml,
 )
-from mjlab.utils.tyro_integration import (
-    load_config_with_cli_overrides,
-    create_config_loader_wrapper,
-    add_config_path_to_dataclass,
+from mjlab.utils.omegaconf_cli import (
+    parse_choice_and_dataclass,
+    parse_dataclass_cli,
+    run_cli_function,
 )
 
 __all__ = [
-    "ConfigLoadable",
     "apply_config_overrides",
+    "load_config_path",
+    "load_config_source",
+    "load_dataclass_from_dict",
+    "load_dataclass_from_json",
+    "load_dataclass_from_yaml",
     "merge_configs",
-    "load_config_with_cli_overrides",
-    "create_config_loader_wrapper",
-    "add_config_path_to_dataclass",
+    "override_dataclass_from_source",
+    "save_dataclass_to_json",
+    "save_dataclass_to_yaml",
+    "parse_choice_and_dataclass",
+    "parse_dataclass_cli",
+    "run_cli_function",
 ]

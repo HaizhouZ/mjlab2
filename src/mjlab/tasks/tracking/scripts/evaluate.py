@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import cast
 
 import torch
-import tyro
 import wandb
 from rsl_rl.runners import OnPolicyRunner
 
@@ -25,6 +24,7 @@ from mjlab.tasks.tracking.mdp.metrics import (
   compute_mpkpe,
   compute_root_relative_mpkpe,
 )
+from mjlab.utils import parse_choice_and_dataclass
 from mjlab.utils.os import get_wandb_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
 
@@ -184,17 +184,11 @@ def main():
     print("No tracking tasks found.")
     sys.exit(1)
 
-  chosen_task, remaining_args = tyro.cli(
-    tyro.extras.literal_type_from_choices(tracking_tasks),
-    add_help=False,
-    return_unknown_args=True,
-  )
-
-  args = tyro.cli(
+  chosen_task, args = parse_choice_and_dataclass(
+    tracking_tasks,
     EvaluateConfig,
-    args=remaining_args,
-    prog=sys.argv[0] + f" {chosen_task}",
-    config=(tyro.conf.AvoidSubcommands, tyro.conf.FlagConversionOff),
+    prog=sys.argv[0],
+    description=__doc__,
   )
 
   run_evaluate(chosen_task, args)

@@ -1,10 +1,10 @@
 """Script to list mjlab environments."""
 
-import tyro
 from prettytable import PrettyTable
 
 import mjlab.tasks  # noqa: F401
 from mjlab.tasks.registry import list_tasks
+from mjlab.utils import run_cli_function
 
 
 def list_environments(keyword: str | None = None):
@@ -40,7 +40,7 @@ def list_environments(keyword: str | None = None):
 
 
 def main():
-  return tyro.cli(list_environments)
+  return run_cli_function(list_environments, description=__doc__)
 
 
 if __name__ == "__main__":

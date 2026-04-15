@@ -1,9 +1,12 @@
 """Regression tests for the Yam task REPPO config."""
 
+from dataclasses import asdict
 from importlib import util
 from pathlib import Path
 import sys
 import types
+
+import yaml
 
 
 def _load_module(module_name: str, path: Path):
@@ -51,3 +54,61 @@ def test_yam_reppo_config_matches_mjplayground_settings() -> None:
   assert cfg.algorithm.vmax == 150.0
   assert cfg.algorithm.kl_bound == 0.1
   assert cfg.algorithm.num_action_samples == 64
+
+
+def test_g1_velocity_reppo_config_uses_estimated_value_support() -> None:
+  repo_root = Path(__file__).resolve().parents[1]
+  rl_config = _load_module(
+    "mjlab_test_rl_config_velocity_reppo",
+    repo_root / "src" / "mjlab" / "rl" / "config.py",
+  )
+
+  fake_rl = types.ModuleType("mjlab.rl")
+  fake_rl.RslRlOnPolicyRunnerCfg = rl_config.RslRlOnPolicyRunnerCfg
+  fake_rl.RslRlPpoActorCriticCfg = rl_config.RslRlPpoActorCriticCfg
+  fake_rl.RslRlPpoAlgorithmCfg = rl_config.RslRlPpoAlgorithmCfg
+  fake_rl.RslRlReppoActorCriticCfg = rl_config.RslRlReppoActorCriticCfg
+  fake_rl.RslRlReppoAlgorithmCfg = rl_config.RslRlReppoAlgorithmCfg
+  fake_rl.RslRlReppoRunnerCfg = rl_config.RslRlReppoRunnerCfg
+  sys.modules["mjlab.rl"] = fake_rl
+
+  velocity_rl_cfg = _load_module(
+    "mjlab_test_velocity_g1_rl_cfg",
+    repo_root / "src" / "mjlab" / "tasks" / "velocity" / "config" / "g1" / "rl_cfg.py",
+  )
+
+  cfg = velocity_rl_cfg.unitree_g1_reppo_runner_cfg()
+
+  assert cfg.class_name == "ReppoRunner"
+  assert cfg.experiment_name == "g1_velocity_reppo"
+  assert cfg.policy.class_name == "ReppoPolicy"
+  assert cfg.policy.critic_class_name == "ReppoCritic"
+  assert cfg.algorithm.class_name == "Reppo"
+  assert cfg.algorithm.num_atoms == 151
+  assert cfg.algorithm.vmin == -20.0
+  assert cfg.algorithm.vmax == 15.0
+  assert cfg.algorithm.gamma == 0.99
+
+
+def test_velocity_reppo_yaml_matches_runtime_config() -> None:
+  repo_root = Path(__file__).resolve().parents[1]
+  velocity_rl_cfg = _load_module(
+    "mjlab_test_velocity_g1_rl_cfg_yaml",
+    repo_root / "src" / "mjlab" / "tasks" / "velocity" / "config" / "g1" / "rl_cfg.py",
+  )
+
+  cfg = velocity_rl_cfg.unitree_g1_reppo_runner_cfg()
+  yaml_path = repo_root / "conf" / "g1_velocity_reppo_runtime.yaml"
+
+  with open(yaml_path, "r", encoding="utf-8") as f:
+    overrides = yaml.safe_load(f)
+
+  from mjlab.utils.config_loader import apply_config_overrides
+
+  apply_config_overrides(cfg, overrides["agent"], recursive=True)
+  cfg_dict = asdict(cfg)
+
+  assert cfg_dict["policy"]["class_name"] == "ReppoPolicy"
+  assert cfg_dict["algorithm"]["class_name"] == "Reppo"
+  assert cfg_dict["algorithm"]["vmin"] == -20.0
+  assert cfg_dict["algorithm"]["vmax"] == 15.0

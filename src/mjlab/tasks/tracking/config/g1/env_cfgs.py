@@ -13,6 +13,7 @@ from mjlab.managers.observation_manager import ObservationGroupCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
 from mjlab.tasks.tracking.mdp import MotionCommandCfg
 from mjlab.tasks.tracking.tracking_env_cfg import make_tracking_env_cfg
+from mjlab.utils import override_dataclass_from_source
 
 
 def unitree_g1_flat_tracking_env_cfg(
@@ -89,7 +90,7 @@ def unitree_g1_flat_tracking_env_cfg(
 
   # Override from config file if provided
   if config_path:
-    motion_cmd.override_from_config(config_path)
+    override_dataclass_from_source(motion_cmd, config_path)
 
   cfg.commands["motion"] = motion_cmd
 

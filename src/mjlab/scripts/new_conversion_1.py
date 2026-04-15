@@ -5,8 +5,9 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import tyro
 from scipy.spatial.transform import Rotation, Slerp
+
+from mjlab.utils import run_cli_function
 
 
 def quat_mul_wxyz(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
@@ -1182,4 +1183,4 @@ def main(
 
 
 if __name__ == "__main__":
-  tyro.cli(main)
+  run_cli_function(main, description=__doc__)

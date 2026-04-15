@@ -7,3 +7,6 @@ from mjlab.tasks.velocity.rl.exporter import (
 from mjlab.tasks.velocity.rl.runner import (
   VelocityOnPolicyRunner as VelocityOnPolicyRunner,
 )
+from mjlab.tasks.velocity.rl.runner import (
+  VelocityReppoRunner as VelocityReppoRunner,
+)

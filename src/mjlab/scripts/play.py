@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Literal, Optional
 
 import torch
-import tyro
 from rsl_rl.runners import OnPolicyRunner
 
 from mjlab.envs import ManagerBasedRlEnv
@@ -23,7 +22,7 @@ from mjlab.tasks.tracking.rl.exporter import (
 from mjlab.tasks.velocity.rl.exporter import (
   attach_onnx_metadata as attach_velocity_onnx_metadata,
 )
-from mjlab.utils import apply_config_overrides
+from mjlab.utils import parse_choice_and_dataclass
 from mjlab.utils.lab_api.rl.exporter import export_policy_as_onnx
 from mjlab.utils.os import get_wandb_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
@@ -51,7 +50,7 @@ class PlayConfig:
   """Optional path to YAML config file to load defaults from."""
 
   # Internal flag used by demo script.
-  _demo_mode: tyro.conf.Suppress[bool] = False
+  _demo_mode: bool = False
 
 
 def run_play(task_id: str, cfg: PlayConfig):
@@ -290,43 +289,12 @@ def main():
   import mjlab.tasks  # noqa: F401
 
   all_tasks = list_tasks()
-  chosen_task, remaining_args = tyro.cli(
-    tyro.extras.literal_type_from_choices(all_tasks),
-    add_help=False,
-    return_unknown_args=True,
-  )
-
-  # Parse the rest of the arguments + allow overriding env_cfg and agent_cfg.
-  agent_cfg = load_rl_cfg(chosen_task)
-
-  base_cfg = PlayConfig()
-  
-  # First parse to check for config_path
-  temp_cfg = tyro.cli(
+  chosen_task, args = parse_choice_and_dataclass(
+    all_tasks,
     PlayConfig,
-    args=remaining_args,
-    default=base_cfg,
-    prog=sys.argv[0] + f" {chosen_task}",
-    config=(
-      tyro.conf.AvoidSubcommands,
-      tyro.conf.FlagConversionOff,
-    ),
+    prog=sys.argv[0],
+    description=__doc__,
   )
-  
-  # If a config file was specified, load it and re-parse to merge configs
-  if temp_cfg.config_path:
-    import yaml
-    with open(temp_cfg.config_path, 'r') as f:
-      config_dict = yaml.safe_load(f)
-    
-    if config_dict:
-      apply_config_overrides(temp_cfg, config_dict, recursive=True)
-    
-    args = temp_cfg
-  else:
-    args = temp_cfg
-  
-  del remaining_args, agent_cfg
 
   run_play(chosen_task, args)
 

@@ -13,9 +13,9 @@ from pathlib import Path
 
 import mujoco
 import numpy as np
-import tyro
 import viser
 
+from mjlab.utils import run_cli_function
 from mjlab.viewer.viser import ViserMujocoScene
 
 
@@ -154,7 +154,7 @@ class NanDumpViewer:
       self.server.stop()
 
 
-def run_viewer(dump_path: tyro.conf.Positional[str]):
+def run_viewer(dump_path: str):
   """View NaN dump states in Viser.
 
   Args:
@@ -167,7 +167,7 @@ def run_viewer(dump_path: tyro.conf.Positional[str]):
 
 def main():
   """CLI entry point for viz-nan command."""
-  tyro.cli(run_viewer, description=__doc__)
+  run_cli_function(run_viewer, description=__doc__)
 
 
 if __name__ == "__main__":
