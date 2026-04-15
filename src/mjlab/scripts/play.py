@@ -4,6 +4,7 @@ import os
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Literal, Optional
 
 import torch
@@ -28,6 +29,19 @@ from mjlab.utils.os import get_wandb_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
 from mjlab.utils.wrappers import VideoRecorder
 from mjlab.viewer import NativeMujocoViewer, ViserPlayViewer
+
+
+def _get_exportable_policy(policy):
+  if hasattr(policy, "as_onnx"):
+    return SimpleNamespace(actor=policy.as_onnx(False), is_recurrent=False)
+  if hasattr(policy, "actor") or hasattr(policy, "student"):
+    return policy
+  return SimpleNamespace(
+    actor=policy,
+    is_recurrent=getattr(policy, "is_recurrent", False),
+    memory_a=getattr(policy, "memory_a", None),
+    memory_s=getattr(policy, "memory_s", None),
+  )
 
 
 @dataclass(frozen=True)
@@ -228,8 +242,10 @@ def run_play(task_id: str, cfg: PlayConfig):
     onnx_filename = "policy.onnx"
 
     # Get normalizer if it exists
-    if runner.alg.policy.actor_obs_normalization:
-      normalizer = runner.alg.policy.actor_obs_normalizer
+    if getattr(runner.alg.policy, "actor_obs_normalization", False):
+      normalizer = getattr(runner.alg.policy, "actor_obs_normalizer", None)
+    elif getattr(runner.alg.policy, "obs_normalization", False):
+      normalizer = getattr(runner.alg.policy, "obs_normalizer", None)
     else:
       normalizer = None
 
@@ -237,7 +253,7 @@ def run_play(task_id: str, cfg: PlayConfig):
     if is_tracking_task:
       export_motion_policy_as_onnx(
         env.unwrapped,
-        runner.alg.policy,
+        _get_exportable_policy(runner.alg.policy),
         normalizer=normalizer,
         path=onnx_path,
         filename=onnx_filename,

@@ -28,6 +28,15 @@ def export_motion_policy_as_onnx(
 
 
 def get_input_dim(model: nn.Module) -> int:
+  if hasattr(model, "input_size"):
+    return model.input_size  # type: ignore
+
+  if hasattr(model, "obs_dim"):
+    return model.obs_dim  # type: ignore
+
+  if hasattr(model, "mlp"):
+    return get_input_dim(model.mlp)  # type: ignore
+
   # Get the very first module in the Sequential
   first = model[0] if isinstance(model, nn.Sequential) else model
   # 1. Check for Linear
@@ -57,22 +66,22 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
       # For MultiMotionCommand, use the first motion from the loader
       # Access the actual motion data (not padded) from the first motion
       first_motion = cmd.motion_loader.motions[0]
-      self.joint_pos = first_motion.joint_pos.to("cpu")
-      self.joint_vel = first_motion.joint_vel.to("cpu")
-      self.body_pos_w = first_motion.body_pos_w.to("cpu")
-      self.body_quat_w = first_motion.body_quat_w.to("cpu")
-      self.body_lin_vel_w = first_motion.body_lin_vel_w.to("cpu")
-      self.body_ang_vel_w = first_motion.body_ang_vel_w.to("cpu")
+      self.register_buffer("joint_pos", first_motion.joint_pos.to("cpu"))
+      self.register_buffer("joint_vel", first_motion.joint_vel.to("cpu"))
+      self.register_buffer("body_pos_w", first_motion.body_pos_w.to("cpu"))
+      self.register_buffer("body_quat_w", first_motion.body_quat_w.to("cpu"))
+      self.register_buffer("body_lin_vel_w", first_motion.body_lin_vel_w.to("cpu"))
+      self.register_buffer("body_ang_vel_w", first_motion.body_ang_vel_w.to("cpu"))
 
     else:
       # Original MotionCommand handling
       cmd = cast(MotionCommand, cmd)
-      self.joint_pos = cmd.motion.joint_pos.to("cpu")
-      self.joint_vel = cmd.motion.joint_vel.to("cpu")
-      self.body_pos_w = cmd.motion.body_pos_w.to("cpu")
-      self.body_quat_w = cmd.motion.body_quat_w.to("cpu")
-      self.body_lin_vel_w = cmd.motion.body_lin_vel_w.to("cpu")
-      self.body_ang_vel_w = cmd.motion.body_ang_vel_w.to("cpu")
+      self.register_buffer("joint_pos", cmd.motion.joint_pos.to("cpu"))
+      self.register_buffer("joint_vel", cmd.motion.joint_vel.to("cpu"))
+      self.register_buffer("body_pos_w", cmd.motion.body_pos_w.to("cpu"))
+      self.register_buffer("body_quat_w", cmd.motion.body_quat_w.to("cpu"))
+      self.register_buffer("body_lin_vel_w", cmd.motion.body_lin_vel_w.to("cpu"))
+      self.register_buffer("body_ang_vel_w", cmd.motion.body_ang_vel_w.to("cpu"))
 
     self.time_step_total: int = self.joint_pos.shape[0]
 
@@ -93,9 +102,10 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
     return outputs
 
   def export(self, path, filename):
-    self.to("cpu")
-    obs = torch.zeros(1, get_input_dim(self.actor[0]))
-    time_step = torch.zeros(1, 1)
+    export_device = next(self.actor.parameters()).device
+    self.to(export_device)
+    obs = torch.zeros(1, get_input_dim(self.actor), device=export_device)
+    time_step = torch.zeros(1, 1, device=export_device)
 
     # Base output names (always included)
     output_names = [

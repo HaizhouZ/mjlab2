@@ -233,7 +233,7 @@ def run_train(
     runner_cls = MjlabOnPolicyRunner
 
   runner_kwargs = {}
-  if is_tracking_task:
+  if motion_cmd is not None:
     runner_kwargs["registry_name"] = registry_name
 
   runner = runner_cls(env, agent_cfg, str(log_dir), device, **runner_kwargs)

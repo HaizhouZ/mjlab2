@@ -1,4 +1,5 @@
 import os
+from types import SimpleNamespace
 
 import wandb
 from rsl_rl.env.vec_env import VecEnv
@@ -9,6 +10,27 @@ from mjlab.tasks.tracking.rl.exporter import (
   attach_onnx_metadata,
   export_motion_policy_as_onnx,
 )
+
+
+def _get_policy_normalizer(policy):
+  if getattr(policy, "actor_obs_normalization", False):
+    return getattr(policy, "actor_obs_normalizer", None)
+  if getattr(policy, "obs_normalization", False):
+    return getattr(policy, "obs_normalizer", None)
+  return None
+
+
+def _get_exportable_policy(policy):
+  if hasattr(policy, "as_onnx"):
+    return SimpleNamespace(actor=policy.as_onnx(False), is_recurrent=False)
+  if hasattr(policy, "actor") or hasattr(policy, "student"):
+    return policy
+  return SimpleNamespace(
+    actor=policy,
+    is_recurrent=getattr(policy, "is_recurrent", False),
+    memory_a=getattr(policy, "memory_a", None),
+    memory_s=getattr(policy, "memory_s", None),
+  )
 
 
 class MotionTrackingOnPolicyRunner(MjlabOnPolicyRunner):
@@ -31,13 +53,11 @@ class MotionTrackingOnPolicyRunner(MjlabOnPolicyRunner):
 
     policy_path = path.split("model")[0]
     filename = policy_path.split("/")[-2] + ".onnx"
-    if self.alg.policy.actor_obs_normalization:
-      normalizer = self.alg.policy.actor_obs_normalizer
-    else:
-      normalizer = None
+    policy = self.alg.policy
+    normalizer = _get_policy_normalizer(policy)
     export_motion_policy_as_onnx(
       self.env.unwrapped,
-      self.alg.policy,
+      _get_exportable_policy(policy),
       normalizer=normalizer,
       path=policy_path,
       filename=filename,

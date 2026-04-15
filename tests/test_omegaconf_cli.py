@@ -35,6 +35,21 @@ class DynamicTrainCfg:
     name: str = "demo"
 
 
+@dataclass(kw_only=True)
+class CountCliCfg:
+    count: int = 4
+
+
+@dataclass(kw_only=True)
+class TupleInnerCliCfg:
+    value: int = 1
+
+
+@dataclass(kw_only=True)
+class TupleOuterCliCfg:
+    inner: tuple[TupleInnerCliCfg, ...] = (TupleInnerCliCfg(),)
+
+
 def test_parse_dataclass_cli_supports_current_override_style(tmp_path):
     yaml_path = tmp_path / "cfg.yaml"
     yaml_path.write_text("name: from_file\ninner:\n  count: 2\n")
@@ -47,6 +62,12 @@ def test_parse_dataclass_cli_supports_current_override_style(tmp_path):
     assert cfg.name == "from_file"
     assert cfg.inner.count == 9
     assert cfg.inner.enabled is False
+
+
+def test_parse_dataclass_cli_preserves_numeric_scalar_values():
+    cfg = parse_dataclass_cli(CountCliCfg, argv=["--count", "1"])
+
+    assert cfg.count == 1
 
 
 def test_parse_dataclass_cli_help_is_tyro_generated(capsys):
@@ -98,3 +119,17 @@ def test_parse_dataclass_cli_parses_concrete_nested_default_fields():
     assert isinstance(cfg.env, TrackingEnvCfg)
     assert cfg.env.motion_horizon == 7
     assert cfg.env.num_envs == 16
+
+
+def test_parse_dataclass_cli_preserves_nested_tuple_dataclasses_from_config_path(tmp_path):
+    yaml_path = tmp_path / "tuple_cfg.yaml"
+    yaml_path.write_text("inner:\n  - value: 7\n")
+
+    cfg = parse_dataclass_cli(
+        TupleOuterCliCfg,
+        argv=["config_path=" + str(yaml_path)],
+        default=TupleOuterCliCfg(),
+    )
+
+    assert isinstance(cfg.inner[0], TupleInnerCliCfg)
+    assert cfg.inner[0].value == 7

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import json
 import types
@@ -164,6 +165,36 @@ def apply_config_overrides(
                     current_value[subkey].update(dict(subvalue))
                 else:
                     current_value[subkey] = subvalue
+            continue
+        if recursive and isinstance(current_value, tuple) and isinstance(value, (list, tuple)):
+            updated_items = list(current_value)
+            for index, subvalue in enumerate(value):
+                if index >= len(updated_items):
+                    updated_items.append(subvalue)
+                    continue
+                current_item = updated_items[index]
+                if dataclasses.is_dataclass(current_item) and isinstance(subvalue, Mapping):
+                    apply_config_overrides(current_item, dict(subvalue), recursive=True)
+                elif isinstance(current_item, dict) and isinstance(subvalue, Mapping):
+                    current_item.update(dict(subvalue))
+                else:
+                    updated_items[index] = _coerce_like(current_item, subvalue)
+            _set_attr(cfg, key, tuple(updated_items))
+            continue
+        if recursive and isinstance(current_value, list) and isinstance(value, (list, tuple)):
+            updated_items = list(current_value)
+            for index, subvalue in enumerate(value):
+                if index >= len(updated_items):
+                    updated_items.append(subvalue)
+                    continue
+                current_item = updated_items[index]
+                if dataclasses.is_dataclass(current_item) and isinstance(subvalue, Mapping):
+                    apply_config_overrides(current_item, dict(subvalue), recursive=True)
+                elif isinstance(current_item, dict) and isinstance(subvalue, Mapping):
+                    current_item.update(dict(subvalue))
+                else:
+                    updated_items[index] = _coerce_like(current_item, subvalue)
+            _set_attr(cfg, key, updated_items)
             continue
         _set_attr(cfg, key, _coerce_like(current_value, value))
     return cfg

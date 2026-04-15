@@ -14,6 +14,7 @@ from omegaconf import OmegaConf
 import tyro
 
 from mjlab.utils.config_loader import (
+    _set_attr,
     apply_config_overrides,
     load_config_source,
     load_dataclass_from_dict,
@@ -62,9 +63,9 @@ def _negative_flag_name(name: str) -> str:
 
 def _parse_bool_token(value: str) -> bool | None:
     lowered = value.lower()
-    if lowered in {"true", "1", "yes", "on"}:
+    if lowered in {"true", "yes", "on"}:
         return True
-    if lowered in {"false", "0", "no", "off"}:
+    if lowered in {"false", "no", "off"}:
         return False
     return None
 
@@ -261,13 +262,15 @@ def parse_dataclass_cli(
     wrapper_type = _build_cli_type_with_defaults(config_type, result)
     normalized_args = _normalize_tyro_args(raw_args)
     parsed = tyro.cli(wrapper_type, args=normalized_args, default=wrapper_default)
-    parsed_data = dataclasses.asdict(parsed)
-    parsed_data.pop("config_path", None)
-    parsed_data.pop("config_source", None)
     if default is None:
+        parsed_data = dataclasses.asdict(parsed)
+        parsed_data.pop("config_path", None)
+        parsed_data.pop("config_source", None)
         return load_dataclass_from_dict(config_type, parsed_data)
-
-    apply_config_overrides(result, parsed_data, recursive=True)
+    for field in dataclasses.fields(parsed):
+        if field.name in {"config_path", "config_source"}:
+            continue
+        _set_attr(result, field.name, copy.deepcopy(getattr(parsed, field.name)))
     return result
 
 

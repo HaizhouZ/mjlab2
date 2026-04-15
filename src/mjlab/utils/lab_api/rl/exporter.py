@@ -13,6 +13,23 @@ import os
 import torch
 
 
+def _module_device(module: torch.nn.Module) -> torch.device:
+    for parameter in module.parameters():
+        return parameter.device
+    for buffer in module.buffers():
+        return buffer.device
+    return torch.device("cpu")
+
+
+def _clone_module_for_export(module: torch.nn.Module) -> tuple[torch.nn.Module, bool]:
+    try:
+        return copy.deepcopy(module), True
+    except RuntimeError as err:
+        if "deepcopy protocol" not in str(err):
+            raise
+        return module, False
+
+
 def export_policy_as_jit(policy: object, normalizer: object | None, path: str, filename="policy.pt"):
     """Export policy into a Torch JIT file.
 
@@ -57,15 +74,17 @@ class _TorchPolicyExporter(torch.nn.Module):
         self.is_recurrent = policy.is_recurrent
         # copy policy parameters
         if hasattr(policy, "actor"):
-            self.actor = copy.deepcopy(policy.actor)
+            self.actor, self._owns_actor = _clone_module_for_export(policy.actor)
             if self.is_recurrent:
-                self.rnn = copy.deepcopy(policy.memory_a.rnn)
+                self.rnn, self._owns_rnn = _clone_module_for_export(policy.memory_a.rnn)
         elif hasattr(policy, "student"):
-            self.actor = copy.deepcopy(policy.student)
+            self.actor, self._owns_actor = _clone_module_for_export(policy.student)
             if self.is_recurrent:
-                self.rnn = copy.deepcopy(policy.memory_s.rnn)
+                self.rnn, self._owns_rnn = _clone_module_for_export(policy.memory_s.rnn)
         else:
             raise ValueError("Policy does not have an actor/student module.")
+        if not self.is_recurrent:
+            self._owns_rnn = True
         # set up recurrent network
         if self.is_recurrent:
             self.rnn.cpu()
@@ -82,9 +101,10 @@ class _TorchPolicyExporter(torch.nn.Module):
                 raise NotImplementedError(f"Unsupported RNN type: {self.rnn_type}")
         # copy normalizer if exists
         if normalizer:
-            self.normalizer = copy.deepcopy(normalizer)
+            self.normalizer, self._owns_normalizer = _clone_module_for_export(normalizer)
         else:
             self.normalizer = torch.nn.Identity()
+            self._owns_normalizer = True
 
     def forward_lstm(self, x):
         x = self.normalizer(x)
@@ -116,7 +136,12 @@ class _TorchPolicyExporter(torch.nn.Module):
     def export(self, path, filename):
         os.makedirs(path, exist_ok=True)
         path = os.path.join(path, filename)
-        self.to("cpu")
+        export_device = (
+            torch.device("cpu")
+            if self._owns_actor and self._owns_rnn and self._owns_normalizer
+            else _module_device(self.actor)
+        )
+        self.to(export_device)
         traced_script_module = torch.jit.script(self)
         traced_script_module.save(path)
 
@@ -130,15 +155,17 @@ class _OnnxPolicyExporter(torch.nn.Module):
         self.is_recurrent = policy.is_recurrent
         # copy policy parameters
         if hasattr(policy, "actor"):
-            self.actor = copy.deepcopy(policy.actor)
+            self.actor, self._owns_actor = _clone_module_for_export(policy.actor)
             if self.is_recurrent:
-                self.rnn = copy.deepcopy(policy.memory_a.rnn)
+                self.rnn, self._owns_rnn = _clone_module_for_export(policy.memory_a.rnn)
         elif hasattr(policy, "student"):
-            self.actor = copy.deepcopy(policy.student)
+            self.actor, self._owns_actor = _clone_module_for_export(policy.student)
             if self.is_recurrent:
-                self.rnn = copy.deepcopy(policy.memory_s.rnn)
+                self.rnn, self._owns_rnn = _clone_module_for_export(policy.memory_s.rnn)
         else:
             raise ValueError("Policy does not have an actor/student module.")
+        if not self.is_recurrent:
+            self._owns_rnn = True
         # set up recurrent network
         if self.is_recurrent:
             self.rnn.cpu()
@@ -151,9 +178,10 @@ class _OnnxPolicyExporter(torch.nn.Module):
                 raise NotImplementedError(f"Unsupported RNN type: {self.rnn_type}")
         # copy normalizer if exists
         if normalizer:
-            self.normalizer = copy.deepcopy(normalizer)
+            self.normalizer, self._owns_normalizer = _clone_module_for_export(normalizer)
         else:
             self.normalizer = torch.nn.Identity()
+            self._owns_normalizer = True
 
     def forward_lstm(self, x_in, h_in, c_in):
         x_in = self.normalizer(x_in)
@@ -171,14 +199,23 @@ class _OnnxPolicyExporter(torch.nn.Module):
         return self.actor(self.normalizer(x))
 
     def export(self, path, filename):
-        self.to("cpu")
+        export_device = (
+            torch.device("cpu")
+            if self._owns_actor and self._owns_rnn and self._owns_normalizer
+            else _module_device(self.actor)
+        )
+        self.to(export_device)
         self.eval()
         if self.is_recurrent:
-            obs = torch.zeros(1, self.rnn.input_size)
-            h_in = torch.zeros(self.rnn.num_layers, 1, self.rnn.hidden_size)
+            obs = torch.zeros(1, self.rnn.input_size, device=export_device)
+            h_in = torch.zeros(
+                self.rnn.num_layers, 1, self.rnn.hidden_size, device=export_device
+            )
 
             if self.rnn_type == "lstm":
-                c_in = torch.zeros(self.rnn.num_layers, 1, self.rnn.hidden_size)
+                c_in = torch.zeros(
+                    self.rnn.num_layers, 1, self.rnn.hidden_size, device=export_device
+                )
                 torch.onnx.export(
                     self,
                     (obs, h_in, c_in),
@@ -207,7 +244,7 @@ class _OnnxPolicyExporter(torch.nn.Module):
             else:
                 raise NotImplementedError(f"Unsupported RNN type: {self.rnn_type}")
         else:
-            obs = torch.zeros(1, self.actor[0].in_features)
+            obs = torch.zeros(1, self.actor[0].in_features, device=export_device)
             torch.onnx.export(
                 self,
                 obs,
