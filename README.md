@@ -294,6 +294,7 @@ For tracking tasks, the default W&B project follows the task type:
 - multi-motion tracking tasks -> `multi_track`
 
 Override it explicitly with `agent.wandb_project=...` when you want a different project.
+This mapping was verified on `torch` with real single-track and multi-track W&B training runs.
 ---
 
 ### 3. Sanity-check with Dummy Agents
