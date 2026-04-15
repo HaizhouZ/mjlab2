@@ -29,6 +29,7 @@ REPPO integration note:
 - REPPO defaults in `rsl_rl` were checked against the reference TorchRL config; keep task-specific overrides in `mjlab2` rather than broadening the core library.
 - For read-only Slurm overlay runs, prefer `scripts/slurm_overlay_env.sh` and keep writable cache/checkpoint paths outside the overlay. `mjlab.utils.wandb` now honors `MJLAB_WANDB_CACHE_DIR`, then `MJLAB_CACHE_DIR`, then `XDG_CACHE_HOME` before falling back to `~/.cache`.
 - On the `torch` cluster, the canonical launch order is: `singularity exec --nv ...` -> `cd` into the repo -> `source scripts/slurm_overlay_env.sh ...` -> `uv run --no-sync --locked ...`. Do not rely on the deprecated `/ext3/env.sh` path for repo environment management.
+- On the `torch` cluster, node-allocation notification belongs in the home-layer Slurm helpers such as `get-cpu` / `get-gpu*`, not inside `mjlab2`.
 
 ---
 
@@ -270,12 +271,17 @@ If repository conventions evolve (new tooling, new task layout, CI policy change
 
 This repository has two different "config" concepts. Do not mix them:
 
-1. **Runtime/training dataclass configs** via the OmegaConf-backed helpers in `src/mjlab/utils/config_loader.py` and `src/mjlab/utils/omegaconf_cli.py`.
+1. **Runtime/training dataclass configs** via the `tyro + OmegaConf` helpers in `src/mjlab/utils/config_loader.py` and `src/mjlab/utils/omegaconf_cli.py`.
 2. **MuJoCo spec editing configs** via `SpecCfg` subclasses in `src/mjlab/utils/spec_config.py`.
 
 ### 13.1 Runtime config helpers (external source -> dataclass)
 
 Use this stack for experiment/training/task dataclasses loaded from YAML/JSON/local paths/HTTP(S)/W&B artifact URIs, then overridden from the CLI.
+
+Current boundary:
+- Dataclasses define schema and defaults.
+- `OmegaConf` handles source loading, merging, and nested override application.
+- `tyro` handles CLI parsing and help generation.
 
 Core load/save APIs:
 - `load_dataclass_from_yaml(cls, path)`
@@ -325,9 +331,11 @@ Agent rules for runtime config helpers:
 - Prefer `apply_config_overrides` for patch-style overrides inside scripts.
 - Keep nested override dictionaries shape-compatible with target dataclasses.
 - Preserve the documented precedence order: task defaults -> `config_path` / `config_source` -> CLI overrides.
+- When task-specific config is selected dynamically, verify whether a field is runtime-consumed or only used during task-factory construction before claiming it is safely overridable.
 
 Known caveat:
 - `merge_configs(...)` uses field-default comparison heuristics; if defaults are dynamic or mutable, verify expected merge behavior with a focused test.
+- Some tracking-task fields are structurally decided in the task factory before late CLI mutation. Help-visible fields are not automatically guaranteed to be late-overridable.
 
 ### 13.2 `SpecCfg` (dataclass -> mutate `mujoco.MjSpec`)
 
@@ -346,15 +354,15 @@ Agent rules for `SpecCfg` edits:
 
 ### 13.3 Which config tool should I use?
 
-- Need to load/save trainer/env/task options from files, URLs, or W&B? -> **runtime config helper stack**.
+- Need to load/save trainer/env/task options from files, URLs, W&B, or the CLI? -> **runtime config helper stack**.
 - Need to modify MuJoCo model/spec internals programmatically? -> **`SpecCfg` stack**.
 - Need both? -> Load dataclass config first, then transform into `SpecCfg` instances explicitly.
 
 ### 13.4 Config-change checklist for PRs
 
 When a PR touches config tooling, include:
-- [ ] A before/after example input config snippet.
+- [ ] A before/after example command or YAML snippet.
 - [ ] Error behavior for invalid fields/types.
-- [ ] Nested config behavior (if recursive overrides/merges are involved).
+- [ ] Precedence behavior: task defaults -> config source -> CLI.
 - [ ] At least one targeted test for the modified path.
 - [ ] Note whether the change affects runtime config helpers, `SpecCfg`, or both.
