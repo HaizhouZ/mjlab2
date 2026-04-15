@@ -3,25 +3,19 @@ set -euo pipefail
 
 BASE_RUNTIME_ROOT="${1:-${MJLAB_BASE_RUNTIME_ROOT:-${MJLAB_RUNTIME_ROOT:-${SLURM_TMPDIR:-${TMPDIR:-/tmp/${USER:-user}/mjlab-runtime}}}}}"
 RUNTIME_SUFFIX="${2:-${MJLAB_RUNTIME_SUFFIX:-}}"
-if [[ -n "$RUNTIME_SUFFIX" ]]; then
-  RUNTIME_ROOT="$BASE_RUNTIME_ROOT/$RUNTIME_SUFFIX"
-else
-  RUNTIME_ROOT="$BASE_RUNTIME_ROOT"
-fi
 
-HOME_ROOT="${MJLAB_HOME_DIR:-$RUNTIME_ROOT/home}"
-TMP_ROOT="${MJLAB_TMP_DIR:-$RUNTIME_ROOT/tmp}"
-OUTPUT_ROOT="${MJLAB_OUTPUT_DIR:-$RUNTIME_ROOT/outputs}"
+# Keep the cluster's existing HOME/TMPDIR by default. This script only redirects
+# shared cache/log/artifact paths unless MJLAB_HOME_DIR / MJLAB_TMP_DIR are
+# explicitly provided.
+HOME_ROOT="${MJLAB_HOME_DIR:-}"
+TMP_ROOT="${MJLAB_TMP_DIR:-}"
+LOG_ROOT="${MJLAB_OUTPUT_DIR:-$BASE_RUNTIME_ROOT/logs}"
 
-# Cache- and artifact-heavy directories should be shared across runs by default.
-# Use MJLAB_CACHE_DIR / MJLAB_WANDB_DIR / MJLAB_WANDB_ARTIFACT_DIR to override
-# this if a cluster wants a different layout.
 CACHE_ROOT="${MJLAB_CACHE_DIR:-$BASE_RUNTIME_ROOT/cache}"
 WANDB_ROOT="${MJLAB_WANDB_DIR:-$BASE_RUNTIME_ROOT/wandb}"
 WANDB_ARTIFACT_ROOT="${MJLAB_WANDB_ARTIFACT_DIR:-$WANDB_ROOT/artifacts}"
 
 mkdir -p \
-  "$HOME_ROOT" \
   "$CACHE_ROOT/xdg" \
   "$CACHE_ROOT/uv" \
   "$CACHE_ROOT/uv-python" \
@@ -31,23 +25,31 @@ mkdir -p \
   "$CACHE_ROOT/wandb" \
   "$CACHE_ROOT/wandb_cache" \
   "$CACHE_ROOT/wandb_config" \
-  "$CACHE_ROOT/wandb_artifacts" \
   "$CACHE_ROOT/wandb_data" \
   "$CACHE_ROOT/hf" \
   "$CACHE_ROOT/warp" \
   "$CACHE_ROOT/pycache" \
-  "$CACHE_ROOT/mjlab" \
   "$CACHE_ROOT/mjlab/wandb_motions" \
+  "$LOG_ROOT" \
   "$WANDB_ROOT" \
-  "$WANDB_ARTIFACT_ROOT" \
-  "$TMP_ROOT" \
-  "$OUTPUT_ROOT"
+  "$WANDB_ARTIFACT_ROOT"
 
-export HOME="$HOME_ROOT"
-export TMPDIR="$TMP_ROOT"
-export MJLAB_RUNTIME_ROOT="$RUNTIME_ROOT"
+if [[ -n "$HOME_ROOT" ]]; then
+  mkdir -p "$HOME_ROOT"
+  export HOME="$HOME_ROOT"
+fi
+
+if [[ -n "$TMP_ROOT" ]]; then
+  mkdir -p "$TMP_ROOT"
+  export TMPDIR="$TMP_ROOT"
+elif [[ -n "${SLURM_TMPDIR:-}" ]]; then
+  export TMPDIR="$SLURM_TMPDIR"
+fi
+
+export MJLAB_RUNTIME_ROOT="$BASE_RUNTIME_ROOT"
 export MJLAB_BASE_RUNTIME_ROOT="$BASE_RUNTIME_ROOT"
-export MJLAB_OUTPUT_DIR="$OUTPUT_ROOT"
+export MJLAB_RUNTIME_SUFFIX="$RUNTIME_SUFFIX"
+export MJLAB_OUTPUT_DIR="$LOG_ROOT"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$CACHE_ROOT/xdg}"
 export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$CACHE_ROOT/xdg}"
 export XDG_STATE_HOME="${XDG_STATE_HOME:-$CACHE_ROOT/xdg}"
@@ -68,9 +70,9 @@ export MJLAB_WANDB_CACHE_DIR="${MJLAB_WANDB_CACHE_DIR:-$CACHE_ROOT/mjlab/wandb_m
 export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-$CACHE_ROOT/pycache}"
 
 echo "Overlay base runtime root: $BASE_RUNTIME_ROOT"
-echo "Overlay runtime root: $RUNTIME_ROOT"
-echo "HOME=$HOME"
-echo "TMPDIR=$TMPDIR"
+echo "Overlay runtime suffix: ${RUNTIME_SUFFIX:-<none>}"
+echo "HOME=${HOME:-<unchanged>}"
+echo "TMPDIR=${TMPDIR:-<unchanged>}"
 echo "XDG_CACHE_HOME=$XDG_CACHE_HOME"
 echo "UV_PYTHON_INSTALL_DIR=$UV_PYTHON_INSTALL_DIR"
 echo "TORCH_HOME=$TORCH_HOME"
