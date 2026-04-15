@@ -3,8 +3,17 @@ from __future__ import annotations
 import copy
 
 import torch
-from rsl_rl.runners import OffPolicyRunner
 from rsl_rl.runners import OnPolicyRunner
+
+try:
+  from rsl_rl.runners import OffPolicyRunner
+except ImportError:
+
+  class OffPolicyRunner:  # type: ignore[no-redef]
+    def __init__(self, *args, **kwargs):
+      raise ImportError(
+        "OffPolicyRunner is not available in the installed rsl_rl package."
+      )
 
 from mjlab.rl.vecenv_wrapper import RslRlVecEnvWrapper
 
@@ -75,11 +84,12 @@ class MjlabOnPolicyRunner(OnPolicyRunner):
     cfg = copy.deepcopy(train_cfg)
     policy_cfg = dict(cfg.pop("policy", {}))
     algorithm_cfg = dict(cfg.get("algorithm", {}))
+    activation = policy_cfg.get("activation", "elu")
 
     actor_cfg = {
       "class_name": "MLPModel",
       "hidden_dims": policy_cfg.pop("actor_hidden_dims", (128, 128, 128)),
-      "activation": policy_cfg.pop("activation", "elu"),
+      "activation": activation,
       "obs_normalization": policy_cfg.pop("actor_obs_normalization", False),
       "distribution_cfg": {
         "class_name": "GaussianDistribution",
@@ -90,7 +100,7 @@ class MjlabOnPolicyRunner(OnPolicyRunner):
     critic_cfg = {
       "class_name": "MLPModel",
       "hidden_dims": policy_cfg.pop("critic_hidden_dims", (128, 128, 128)),
-      "activation": policy_cfg.pop("activation", "elu"),
+      "activation": activation,
       "obs_normalization": policy_cfg.pop("critic_obs_normalization", False),
     }
 
@@ -154,11 +164,12 @@ class MjlabFastTD3Runner(OffPolicyRunner):
     cfg = copy.deepcopy(train_cfg)
     policy_cfg = dict(cfg.pop("policy", {}))
     algorithm_cfg = dict(cfg.get("algorithm", {}))
+    activation = policy_cfg.get("activation", "relu")
 
     actor_cfg = {
       "class_name": policy_cfg.pop("class_name", "FastTD3Actor"),
       "hidden_dims": policy_cfg.pop("actor_hidden_dims", (512, 256, 128)),
-      "activation": policy_cfg.pop("activation", "relu"),
+      "activation": activation,
       "obs_normalization": policy_cfg.pop("actor_obs_normalization", True),
       "init_scale": policy_cfg.pop("init_scale", 0.01),
       "std_min": policy_cfg.pop("std_min", 0.05),
@@ -167,7 +178,7 @@ class MjlabFastTD3Runner(OffPolicyRunner):
     critic_cfg = {
       "class_name": policy_cfg.pop("critic_class_name", "FastTD3Critic"),
       "hidden_dims": policy_cfg.pop("critic_hidden_dims", (1024, 512, 256)),
-      "activation": policy_cfg.pop("activation", "relu"),
+      "activation": activation,
       "obs_normalization": policy_cfg.pop("critic_obs_normalization", True),
     }
 

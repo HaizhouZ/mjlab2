@@ -54,22 +54,103 @@ class TrainConfig:
     return TrainConfig(env=env_cfg, agent=agent_cfg)
 
 
+def _resolve_training_runtime(cfg: TrainConfig) -> tuple[str, int, int]:
+  cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+  if cuda_visible == "":
+    return "cpu", cfg.agent.seed, 0
+
+  local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+  rank = int(os.environ.get("RANK", "0"))
+  os.environ["MUJOCO_EGL_DEVICE_ID"] = str(local_rank)
+  return f"cuda:{local_rank}", cfg.agent.seed + local_rank, rank
+
+
+def _get_tracking_motion_cmd(
+  env_cfg: ManagerBasedRlEnvCfg,
+) -> MotionCommandCfg | MultiMotionCommandCfg | None:
+  if env_cfg.commands is None or "motion" not in env_cfg.commands:
+    return None
+
+  motion_cmd = env_cfg.commands["motion"]
+  if isinstance(motion_cmd, (MotionCommandCfg, MultiMotionCommandCfg)):
+    return motion_cmd
+  return None
+
+
+def _configure_tracking_motion_source(
+  cfg: TrainConfig,
+  motion_cmd: MotionCommandCfg | MultiMotionCommandCfg,
+) -> str | None:
+  registry_name: str | None = None
+  wandb_entity, wandb_project = get_wandb_entity_and_project(cfg.wandb_entity_project)
+
+  if isinstance(motion_cmd, MultiMotionCommandCfg) and wandb_entity and wandb_project:
+    print(f"[INFO] Loading motions from W&B: {wandb_entity}/{wandb_project}")
+    motions_dir = get_wandb_motion_cache_dir(
+      wandb_entity=wandb_entity, wandb_project=wandb_project
+    )
+    motion_cmd.motion_dir = str(motions_dir)
+    motion_cmd.motion_name_pattern = cfg.motion_name_pattern
+    print(f"[INFO] Using motions from: {motions_dir}")
+    return None
+
+  if cfg.registry_name:
+    registry_name = cast(str, cfg.registry_name)
+    if ":" not in registry_name:
+      registry_name = registry_name + ":latest"
+    import wandb
+
+    api = wandb.Api()
+    artifact = api.artifact(registry_name)
+    if isinstance(motion_cmd, MotionCommandCfg):
+      motion_cmd.motion_file = str(Path(artifact.download()) / "motion.npz")
+    else:
+      motion_cmd.motion_dir = str(artifact.download())
+      motion_cmd.motion_name_pattern = cfg.motion_name_pattern
+    return registry_name
+
+  if cfg.motion_file is not None:
+    print(f"[INFO] Using local motion file: {cfg.motion_file}")
+    if isinstance(motion_cmd, MotionCommandCfg):
+      motion_cmd.motion_file = cfg.motion_file
+    else:
+      motion_dir = cfg.motion_dir
+      if motion_dir is None:
+        raise ValueError("Must provide --motion-dir for multi-motion tracking tasks.")
+      motion_cmd.motion_dir = motion_dir
+      motion_cmd.motion_name_pattern = cfg.motion_name_pattern
+    return None
+
+  if cfg.motion_dir is not None:
+    print(f"[INFO] Using local motion directory: {cfg.motion_dir}")
+    if isinstance(motion_cmd, MotionCommandCfg):
+      raise ValueError(
+        "Cannot use --motion-dir with single motion command. Use --motion-file instead."
+      )
+    motion_cmd.motion_dir = cfg.motion_dir
+    motion_cmd.motion_name_pattern = cfg.motion_name_pattern
+    return None
+
+  if isinstance(motion_cmd, MultiMotionCommandCfg):
+    raise ValueError(
+      "Must provide --wandb-entity-project, or --registry-name, "
+      "or --motion-file or --motion-dir for multi-motion tracking tasks."
+    )
+  raise ValueError("Must provide --registry-name or --motion-file for tracking tasks.")
+
+
+def _configure_cuda_environment(selected_gpus: list[int] | None) -> None:
+  if selected_gpus is None:
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+  else:
+    os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, selected_gpus))
+  os.environ["MUJOCO_GL"] = "egl"
+
+
 def run_train(
   task_id: str, cfg: TrainConfig, log_dir: Path, motion_name: str | None = None
 ) -> None:
-  cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
-  if cuda_visible == "":
-    device = "cpu"
-    seed = cfg.agent.seed
-    rank = 0
-  else:
-    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-    rank = int(os.environ.get("RANK", "0"))
-    # Set EGL device to match the CUDA device.
-    os.environ["MUJOCO_EGL_DEVICE_ID"] = str(local_rank)
-    device = f"cuda:{local_rank}"
-    # Set seed to have diversity in different processes.
-    seed = cfg.agent.seed + local_rank
+  device, seed, rank = _resolve_training_runtime(cfg)
 
   configure_torch_backends()
 
@@ -78,79 +159,12 @@ def run_train(
 
   print(f"[INFO] Training with: device={device}, seed={seed}, rank={rank}")
 
-  registry_name: str | None = None
-
-  # Check if this is a tracking task by checking for motion command.
-  is_tracking_task = (
-    cfg.env.commands is not None
-    and "motion" in cfg.env.commands
-    and isinstance(
-      cfg.env.commands["motion"], (MotionCommandCfg, MultiMotionCommandCfg)
-    )
+  motion_cmd = _get_tracking_motion_cmd(cfg.env)
+  registry_name = (
+    _configure_tracking_motion_source(cfg, motion_cmd)
+    if motion_cmd is not None
+    else None
   )
-
-  if is_tracking_task:
-    assert cfg.env.commands is not None
-    motion_cmd = cfg.env.commands["motion"]
-    assert isinstance(motion_cmd, (MotionCommandCfg, MultiMotionCommandCfg))
-
-    wandb_entity, wandb_project = get_wandb_entity_and_project(cfg.wandb_entity_project)
-    if isinstance(motion_cmd, MultiMotionCommandCfg) and wandb_entity and wandb_project:
-      # Use wandb registry to download multiple motions
-      print(f"[INFO] Loading motions from W&B: {wandb_entity}/{wandb_project}")
-      motions_dir = get_wandb_motion_cache_dir(
-        wandb_entity=wandb_entity, wandb_project=wandb_project
-      )
-      motion_cmd.motion_dir = str(motions_dir)
-      motion_cmd.motion_name_pattern = cfg.motion_name_pattern
-      print(f"[INFO] Using motions from: {motions_dir}")
-    elif cfg.registry_name:
-      # Check if the registry name includes alias, if not, append ":latest".
-      registry_name = cast(str, cfg.registry_name)
-      if ":" not in registry_name:
-        registry_name = registry_name + ":latest"
-      import wandb
-
-      api = wandb.Api()
-      artifact = api.artifact(registry_name)
-      if isinstance(motion_cmd, MotionCommandCfg):
-        motion_cmd.motion_file = str(Path(artifact.download()) / "motion.npz")
-      elif isinstance(motion_cmd, MultiMotionCommandCfg):
-        # motion_dir = str(Path(artifact.download()) / "motions")
-        motion_dir = str(artifact.download())
-        motion_cmd.motion_dir = motion_dir
-        motion_cmd.motion_name_pattern = cfg.motion_name_pattern
-    elif cfg.motion_file is not None:
-      # motion_file provided via CLI: --motion-file /path/to/motion.npz
-      print(f"[INFO] Using local motion file: {cfg.motion_file}")
-      if isinstance(motion_cmd, MotionCommandCfg):
-        motion_cmd.motion_file = cfg.motion_file
-      elif isinstance(motion_cmd, MultiMotionCommandCfg):
-        motion_dir = cfg.motion_dir
-        if motion_dir is None:
-          raise ValueError("Must provide --motion-dir for multi-motion tracking tasks.")
-        motion_cmd.motion_dir = motion_dir
-        motion_cmd.motion_name_pattern = cfg.motion_name_pattern
-    elif cfg.motion_dir is not None:
-      # motion_dir provided via CLI: --motion-dir /path/to/motion/dir
-      print(f"[INFO] Using local motion directory: {cfg.motion_dir}")
-      if isinstance(motion_cmd, MotionCommandCfg):
-        raise ValueError(
-          "Cannot use --motion-dir with single motion command. Use --motion-file instead."
-        )
-      elif isinstance(motion_cmd, MultiMotionCommandCfg):
-        motion_cmd.motion_dir = cfg.motion_dir
-        motion_cmd.motion_name_pattern = cfg.motion_name_pattern
-    else:
-      if isinstance(motion_cmd, MultiMotionCommandCfg):
-        raise ValueError(
-          "Must provide --wandb-entity-project, or --registry-name, "
-          "or --motion-file or --motion-dir for multi-motion tracking tasks."
-        )
-      else:
-        raise ValueError(
-          "Must provide --registry-name or --motion-file for tracking tasks."
-        )
 
   # Enable NaN guard if requested.
   if cfg.enable_nan_guard:
@@ -329,11 +343,7 @@ def launch_training(task_id: str, args: TrainConfig | None = None):
   selected_gpus, num_gpus = select_gpus(args.gpu_ids)
 
   # Set environment variables for all modes.
-  if selected_gpus is None:
-    os.environ["CUDA_VISIBLE_DEVICES"] = ""
-  else:
-    os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, selected_gpus))
-  os.environ["MUJOCO_GL"] = "egl"
+  _configure_cuda_environment(selected_gpus)
 
   if num_gpus <= 1:
     # CPU or single GPU: run directly without torchrunx.

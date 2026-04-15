@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import copy
 import dataclasses
-import functools
 import inspect
 import sys
 import types
@@ -55,6 +54,21 @@ def _flag_name(name: str) -> str:
     return ".".join(part.replace("_", "-") for part in name.split("."))
 
 
+def _negative_flag_name(name: str) -> str:
+    parts = _flag_name(name).split(".")
+    parts[-1] = f"no-{parts[-1]}"
+    return ".".join(parts)
+
+
+def _parse_bool_token(value: str) -> bool | None:
+    lowered = value.lower()
+    if lowered in {"true", "1", "yes", "on"}:
+        return True
+    if lowered in {"false", "0", "no", "off"}:
+        return False
+    return None
+
+
 def _normalize_tyro_args(argv: list[str]) -> list[str]:
     normalized: list[str] = []
     idx = 0
@@ -68,14 +82,37 @@ def _normalize_tyro_args(argv: list[str]) -> list[str]:
             key = token[2:]
             if "=" in key:
                 name, raw_value = key.split("=", 1)
-                normalized.append(f"--{_flag_name(name)}={raw_value}")
+                bool_value = _parse_bool_token(raw_value)
+                if bool_value is None:
+                    normalized.append(f"--{_flag_name(name)}={raw_value}")
+                elif bool_value:
+                    normalized.append(f"--{_flag_name(name)}")
+                else:
+                    normalized.append(f"--{_negative_flag_name(name)}")
+                idx += 1
+                continue
+            if idx + 1 < len(argv) and not argv[idx + 1].startswith("--"):
+                bool_value = _parse_bool_token(argv[idx + 1])
+                if bool_value is None:
+                    normalized.append(f"--{_flag_name(key)}={argv[idx + 1]}")
+                elif bool_value:
+                    normalized.append(f"--{_flag_name(key)}")
+                else:
+                    normalized.append(f"--{_negative_flag_name(key)}")
+                idx += 2
             else:
                 normalized.append(f"--{_flag_name(key)}")
-            idx += 1
+                idx += 1
             continue
         if "=" in token:
             name, raw_value = token.split("=", 1)
-            normalized.append(f"--{_flag_name(name)}={raw_value}")
+            bool_value = _parse_bool_token(raw_value)
+            if bool_value is None:
+                normalized.append(f"--{_flag_name(name)}={raw_value}")
+            elif bool_value:
+                normalized.append(f"--{_flag_name(name)}")
+            else:
+                normalized.append(f"--{_negative_flag_name(name)}")
             idx += 1
             continue
         normalized.append(token)
@@ -131,17 +168,36 @@ def _extract_config_source(argv: list[str]) -> str | None:
     source = cli_data.get("config_source") or cli_data.get("config_path")
     return source if isinstance(source, str) and source else None
 
+def _copy_factory(value: Any) -> Callable[[], Any]:
+    return lambda value=value: copy.deepcopy(value)
 
-@functools.lru_cache(maxsize=None)
-def _build_cli_type(config_type: type[Any]) -> type[Any]:
+
+def _build_cli_type_with_defaults(
+    config_type: type[Any],
+    default: Any | None = None,
+) -> type[Any]:
     resolved_hints = get_type_hints(config_type)
     fields: list[tuple[Any, ...]] = [
         ("config_path", str | None, dataclasses.field(default=None)),
         ("config_source", str | None, dataclasses.field(default=None)),
     ]
     for field in dataclasses.fields(config_type):
+        if field.name in {"config_path", "config_source"} or field.name.startswith("_"):
+            continue
+
+        default_value = getattr(default, field.name) if default is not None else dataclasses.MISSING
         annotation = resolved_hints.get(field.name, field.type)
-        if field.default_factory is not dataclasses.MISSING:
+        if default is not None:
+            if dataclasses.is_dataclass(default_value):
+                annotation = type(default_value)
+            fields.append(
+                (
+                    field.name,
+                    annotation,
+                    dataclasses.field(default_factory=_copy_factory(default_value)),
+                )
+            )
+        elif field.default_factory is not dataclasses.MISSING:
             fields.append(
                 (
                     field.name,
@@ -166,13 +222,18 @@ def _build_cli_type(config_type: type[Any]) -> type[Any]:
     )
 
 
-def _build_wrapper_default(config_type: type[T], default: T) -> Any:
-    wrapper_type = _build_cli_type(config_type)
+def _build_wrapper_default(
+    config_type: type[T],
+    default: T,
+) -> Any:
+    wrapper_type = _build_cli_type_with_defaults(config_type, default)
     values: dict[str, Any] = {
         "config_path": None,
         "config_source": None,
     }
     for field in dataclasses.fields(config_type):
+        if field.name in {"config_path", "config_source"} or field.name.startswith("_"):
+            continue
         values[field.name] = copy.deepcopy(getattr(default, field.name))
     return wrapper_type(**values)
 
@@ -197,16 +258,17 @@ def parse_dataclass_cli(
         apply_config_overrides(result, load_config_source(config_source), recursive=True)
 
     wrapper_default = _build_wrapper_default(config_type, result)
-    wrapper_type = _build_cli_type(config_type)
-    parsed = tyro.cli(
-        wrapper_type,
-        args=_normalize_tyro_args(raw_args),
-        default=wrapper_default,
-    )
+    wrapper_type = _build_cli_type_with_defaults(config_type, result)
+    normalized_args = _normalize_tyro_args(raw_args)
+    parsed = tyro.cli(wrapper_type, args=normalized_args, default=wrapper_default)
     parsed_data = dataclasses.asdict(parsed)
     parsed_data.pop("config_path", None)
     parsed_data.pop("config_source", None)
-    return load_dataclass_from_dict(config_type, parsed_data)
+    if default is None:
+        return load_dataclass_from_dict(config_type, parsed_data)
+
+    apply_config_overrides(result, parsed_data, recursive=True)
+    return result
 
 
 def parse_choice_and_dataclass(

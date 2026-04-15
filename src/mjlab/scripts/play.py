@@ -9,8 +9,8 @@ from typing import Literal, Optional
 import torch
 from rsl_rl.runners import OnPolicyRunner
 
-from mjlab.envs import ManagerBasedRlEnv
-from mjlab.rl import RslRlVecEnvWrapper
+from mjlab.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
+from mjlab.rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
 from mjlab.tasks.tracking.mdp import MotionCommandCfg, MultiMotionCommandCfg
 from mjlab.tasks.tracking.rl.exporter import (
@@ -32,6 +32,8 @@ from mjlab.viewer import NativeMujocoViewer, ViserPlayViewer
 
 @dataclass(frozen=True)
 class PlayConfig:
+  env: ManagerBasedRlEnvCfg
+  agent_cfg: RslRlOnPolicyRunnerCfg
   agent: Literal["zero", "random", "trained"] = "trained"
   registry_name: str | None = None
   wandb_run_path: str | None = None
@@ -48,9 +50,18 @@ class PlayConfig:
   viewer: Literal["auto", "native", "viser"] = "auto"
   config_path: Optional[str] = None
   """Optional path to YAML config file to load defaults from."""
+  config_source: Optional[str] = None
+  """Optional config source: local path, http(s) URL, or wandb:// URI."""
 
   # Internal flag used by demo script.
   _demo_mode: bool = False
+
+  @staticmethod
+  def from_task(task_id: str) -> "PlayConfig":
+    env_cfg = load_env_cfg(task_id, play=True)
+    agent_cfg = load_rl_cfg(task_id)
+    assert isinstance(agent_cfg, RslRlOnPolicyRunnerCfg)
+    return PlayConfig(env=env_cfg, agent_cfg=agent_cfg)
 
 
 def run_play(task_id: str, cfg: PlayConfig):
@@ -58,8 +69,8 @@ def run_play(task_id: str, cfg: PlayConfig):
 
   device = cfg.device or ("cuda:0" if torch.cuda.is_available() else "cpu")
 
-  env_cfg = load_env_cfg(task_id, play=True)
-  agent_cfg = load_rl_cfg(task_id)
+  env_cfg = cfg.env
+  agent_cfg = cfg.agent_cfg
 
   DUMMY_MODE = cfg.agent in {"zero", "random"}
   TRAINED_MODE = not DUMMY_MODE
@@ -292,6 +303,7 @@ def main():
   chosen_task, args = parse_choice_and_dataclass(
     all_tasks,
     PlayConfig,
+    default_factory=PlayConfig.from_task,
     prog=sys.argv[0],
     description=__doc__,
   )

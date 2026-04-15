@@ -45,7 +45,7 @@ def motion_anchor_pos_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tens
       f"Expected MotionCommand or MultiMotionCommand, got {type(command)}"
     )
 
-  horizon = 1
+  horizon = _get_horizon(command)
   robot_anchor_pos = command.robot_anchor_pos_w  # (num_envs, 3) - actual robot state
   robot_anchor_quat = command.robot_anchor_quat_w  # (num_envs, 4) - actual robot state
 
@@ -80,7 +80,7 @@ def motion_anchor_ori_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tens
       f"Expected MotionCommand or MultiMotionCommand, got {type(command)}"
     )
 
-  horizon = 1
+  horizon = _get_horizon(command)
   robot_anchor_pos = command.robot_anchor_pos_w  # (num_envs, 3) - actual robot state
   robot_anchor_quat = command.robot_anchor_quat_w  # (num_envs, 4) - actual robot state
 
@@ -117,7 +117,7 @@ def robot_body_pos_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
       f"Expected MotionCommand or MultiMotionCommand, got {type(command)}"
     )
 
-  horizon = 1
+  horizon = _get_horizon(command)
   num_bodies = len(command.cfg.body_names)
   robot_anchor_pos = command.robot_anchor_pos_w  # (num_envs, 3) - actual robot state
   robot_anchor_quat = command.robot_anchor_quat_w  # (num_envs, 4) - actual robot state
@@ -166,7 +166,7 @@ def robot_body_ori_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
       f"Expected MotionCommand or MultiMotionCommand, got {type(command)}"
     )
 
-  horizon = 1
+  horizon = _get_horizon(command)
   num_bodies = len(command.cfg.body_names)
   robot_anchor_pos = command.robot_anchor_pos_w  # (num_envs, 3) - actual robot state
   robot_anchor_quat = command.robot_anchor_quat_w  # (num_envs, 4) - actual robot state

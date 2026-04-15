@@ -1,7 +1,4 @@
-"""Unitree G1 flat tracking environment configurations with YAML support."""
-
-from dataclasses import dataclass, field
-from typing import Optional
+"""Unitree G1 flat tracking environment configurations."""
 
 from mjlab.asset_zoo.robots import (
   G1_ACTION_SCALE,
@@ -13,7 +10,6 @@ from mjlab.managers.observation_manager import ObservationGroupCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
 from mjlab.tasks.tracking.mdp import MotionCommandCfg
 from mjlab.tasks.tracking.tracking_env_cfg import make_tracking_env_cfg
-from mjlab.utils import override_dataclass_from_source
 
 
 def unitree_g1_flat_tracking_env_cfg(
@@ -36,26 +32,23 @@ def unitree_g1_flat_tracking_env_cfg(
   ),
   has_state_estimation: bool = True,
   play: bool = False,
-  config_path: Optional[str] = None,
 ) -> ManagerBasedRlEnvCfg:
   """Create Unitree G1 flat terrain tracking configuration.
 
   Args:
-    motion_file: Path to motion capture data file (.npz).
     anchor_body_name: Reference body for motion tracking (default: "torso_link").
     body_names: G1 skeleton bodies to track (14 bodies by default).
-    eef_body_names: End effector bodies for termination (4 by default).
-    entity_name: Robot entity name (default: "robot").
-    has_state_estimation: Include state estimation in observations (default: True).
-    play: Play mode - infinite episodes, no randomization (default: False).
-    config_path: Optional YAML/JSON config file path. Only fields in the file
-      override defaults; missing fields use parameter defaults.
+    has_state_estimation:
+      Structural selector for the registered task variant. This changes which
+      observation terms exist and is not intended to be overridden after the
+      task config object has been created.
+    play:
+      Structural selector for play-mode task construction. This changes event
+      and observation setup at factory time and is not intended to be
+      overridden after the task config object has been created.
 
   Returns:
     ManagerBasedRlEnvCfg: Complete environment configuration.
-
-  Example:
-    cfg = unitree_g1_flat_tracking_env_cfg(config_path="config.yaml")
   """
   # Create base environment config
   cfg = make_tracking_env_cfg()
@@ -87,10 +80,6 @@ def unitree_g1_flat_tracking_env_cfg(
 
   motion_cmd.anchor_body_name = anchor_body_name
   motion_cmd.body_names = body_names
-
-  # Override from config file if provided
-  if config_path:
-    override_dataclass_from_source(motion_cmd, config_path)
 
   cfg.commands["motion"] = motion_cmd
 

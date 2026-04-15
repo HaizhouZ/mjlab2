@@ -1,7 +1,5 @@
 """Unitree G1 flat tracking environment configurations."""
 
-import os
-
 import mjlab.tasks.tracking.mdp as mdp
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.managers.observation_manager import ObservationTermCfg
@@ -13,7 +11,12 @@ def unitree_g1_flat_multitracking_env_cfg(
   has_state_estimation: bool = True,
   play: bool = False,
 ) -> ManagerBasedRlEnvCfg:
-  """Create Unitree G1 flat terrain multi-tracking configuration with multiple motion trajectories."""
+  """Create Unitree G1 flat terrain multi-tracking configuration.
+
+  `has_state_estimation` and `play` are structural task selectors. They affect
+  factory-time observation and play-mode wiring and are not intended to be
+  overridden after the task config object has been created.
+  """
   cfg = unitree_g1_flat_tracking_env_cfg(
     has_state_estimation=has_state_estimation, play=play
   )
@@ -49,19 +52,19 @@ def unitree_g1_flat_multitracking_env_cfg(
     wandb_entity="mim-atari",
     wandb_project="g1-multitracking",
     resampling_time_range=(1e9, 1e9),
-    horizon=int(
-      os.environ.get("MJLAB_MOTION_HORIZON", 1)
-    ),  # Set horizon from environment variable or default to 1
+    horizon=1,
     play=play,  # Pass play flag to command config
-    adaptive_uniform_ratio=float(os.environ.get("MJLAB_ADAPTIVE_UNIFORM_RATIO", 0.1)),  # type: ignore
-    adaptive_motion_bin_mode=bool(
-      int(os.environ.get("MJLAB_ADAPTIVE_MOTION_BIN_MODE", 0))
-    ),  # type: ignore
+    adaptive_uniform_ratio=0.1,
+    adaptive_motion_bin_mode=False,
   )
 
   ###
   # Trajectory Encoding Observation Terms
   ###
+  # `future_traj` is wired at factory time for the multitracking task variant.
+  # Late CLI/YAML overrides can change runtime fields on `cfg.commands["motion"]`
+  # such as `horizon`, but they do not decide whether this observation term
+  # exists in the graph.
   cfg.observations["policy"].terms["future_traj"] = ObservationTermCfg(
     func=mdp.trajectory_encoding,
     params={"command_name": "motion"},

@@ -1,11 +1,15 @@
 """Tests specific to motion tracking tasks."""
 
+from types import SimpleNamespace
+
 import pytest
+import torch
 
 from mjlab.asset_zoo.robots import G1_ACTION_SCALE
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.tasks.registry import list_tasks, load_env_cfg
 from mjlab.tasks.tracking.mdp import MotionCommandCfg, MultiMotionCommandCfg
+from mjlab.tasks.tracking.mdp import observations as tracking_observations
 
 
 @pytest.fixture(scope="module")
@@ -132,3 +136,42 @@ def test_g1_tracking_has_correct_action_scale(g1_tracking_task_ids: list[str]) -
     assert joint_pos_action.scale == G1_ACTION_SCALE, (
       f"Task {task_id} action scale mismatch, expected G1_ACTION_SCALE"
     )
+
+
+def test_motion_anchor_pos_b_uses_multimotion_horizon(monkeypatch: pytest.MonkeyPatch) -> None:
+  """Multi-motion observation helpers should honor cfg.horizon."""
+
+  class FakeMultiMotionCommand:
+    def __init__(self) -> None:
+      self.cfg = SimpleNamespace(horizon=3)
+      self.robot_anchor_pos_w = torch.zeros((2, 3), dtype=torch.float32)
+      self.robot_anchor_quat_w = torch.tensor(
+        [[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]], dtype=torch.float32
+      )
+      self.anchor_pos_w = torch.zeros((2, 3), dtype=torch.float32)
+      self.anchor_quat_w = self.robot_anchor_quat_w
+      self.called_horizon: int | None = None
+
+    def get_anchor_pos_w_horizon(self, horizon: int) -> torch.Tensor:
+      self.called_horizon = horizon
+      return torch.zeros((2, horizon, 3), dtype=torch.float32)
+
+    def get_anchor_quat_w_horizon(self, horizon: int) -> torch.Tensor:
+      return torch.tensor(
+        [[[1.0, 0.0, 0.0, 0.0]] * horizon] * 2,
+        dtype=torch.float32,
+      )
+
+  fake_command = FakeMultiMotionCommand()
+  fake_env = SimpleNamespace(
+    command_manager=SimpleNamespace(get_term=lambda _name: fake_command)
+  )
+
+  monkeypatch.setattr(
+    tracking_observations, "MultiMotionCommand", FakeMultiMotionCommand
+  )
+
+  obs = tracking_observations.motion_anchor_pos_b(fake_env, "motion")
+
+  assert fake_command.called_horizon == 3
+  assert obs.shape == (2, 9)

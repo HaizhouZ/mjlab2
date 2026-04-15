@@ -1,7 +1,5 @@
 """RL configuration for Unitree G1 tracking task."""
 
-import os
-
 from mjlab.rl import (
   RslRlOnPolicyRunnerCfg,
   RslRlPpoActorCriticCfg,
@@ -45,17 +43,9 @@ def unitree_g1_multitracking_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
   """Create RL runner configuration for Unitree G1 multi-tracking task."""
 
   cfg = unitree_g1_tracking_ppo_runner_cfg()
-  activation = os.getenv("MJLAB_MULTIRACK_ACTIVATION", "elu")  # type: ignore  # noqa: F841
-  use_layer_norm = os.getenv("MJLAB_MULTIRACK_LN", "false").lower() == "true"  # type: ignore  # noqa: F841
-  cfg.policy.activation = activation
-  if use_layer_norm:
-    cfg.policy.class_name = "mjlab.rl.actor_critic_with_ln:ActorCriticLayerNorm"
-    cfg.policy.actor_hidden_dims = (1024,) * 1
-    cfg.policy.critic_hidden_dims = (1024,) * 2
-  else:
-    # mlp only
-    cfg.policy.actor_hidden_dims = (1024, 512, 512)
-    cfg.policy.critic_hidden_dims = (1024, 512, 512)
+  cfg.policy.activation = "elu"
+  cfg.policy.actor_hidden_dims = (1024, 512, 512)
+  cfg.policy.critic_hidden_dims = (1024, 512, 512)
 
   cfg.experiment_name = "g1_multitracking"
 
