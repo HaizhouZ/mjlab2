@@ -72,7 +72,9 @@ def yam_lift_cube_fasttd3_runner_cfg() -> RslRlFastTd3RunnerCfg:
   cfg.algorithm.weight_decay = 0.1
   cfg.algorithm.n_steps = 1
   cfg.algorithm.num_atoms = 101
-  cfg.algorithm.v_min = -250.0
-  cfg.algorithm.v_max = 250.0
+  # FastTD3 uses a categorical critic, so the value support must be task-tuned.
+  # Match the lift-cube reference range from the upstream FastTD3 config.
+  cfg.algorithm.v_min = -50.0
+  cfg.algorithm.v_max = 50.0
   cfg.algorithm.use_cdq = True
   return cfg

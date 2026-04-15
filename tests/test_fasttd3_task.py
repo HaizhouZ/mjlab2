@@ -16,42 +16,24 @@ def _load_module(module_name: str, path: Path):
   return module
 
 
-def test_yam_fasttd3_config_matches_lightweight_settings() -> None:
+def test_yam_fasttd3_config_matches_reference_support_settings() -> None:
   repo_root = Path(__file__).resolve().parents[1]
   rl_config = _load_module(
     "mjlab_test_rl_config_fasttd3",
     repo_root / "src" / "mjlab" / "rl" / "config.py",
   )
 
-  cfg = rl_config.RslRlFastTd3RunnerCfg(
-    experiment_name="yam_lift_cube_fasttd3",
-    save_interval=100,
-    num_steps_per_env=24,
-    max_iterations=5_000,
+  fake_rl = types.ModuleType("mjlab.rl")
+  fake_rl.RslRlFastTd3RunnerCfg = rl_config.RslRlFastTd3RunnerCfg
+  fake_rl.RslRlReppoRunnerCfg = rl_config.RslRlReppoRunnerCfg
+  sys.modules["mjlab.rl"] = fake_rl
+
+  yam_rl_cfg = _load_module(
+    "mjlab_test_fasttd3_yam_rl_cfg",
+    repo_root / "src" / "mjlab" / "tasks" / "manipulation" / "config" / "yam" / "rl_cfg.py",
   )
-  cfg.policy.actor_obs_normalization = True
-  cfg.policy.critic_obs_normalization = True
-  cfg.policy.actor_hidden_dims = (512, 256, 128)
-  cfg.policy.critic_hidden_dims = (1024, 512, 256)
-  cfg.algorithm.replay_size = 50_000
-  cfg.algorithm.batch_size = 128
-  cfg.algorithm.learning_starts = 1_000
-  cfg.algorithm.num_updates = 1
-  cfg.algorithm.max_grad_norm = 0.5
-  cfg.algorithm.tau = 0.005
-  cfg.algorithm.actor_learning_rate = 3.0e-4
-  cfg.algorithm.actor_learning_rate_end = 3.0e-4
-  cfg.algorithm.critic_learning_rate = 3.0e-4
-  cfg.algorithm.critic_learning_rate_end = 3.0e-4
-  cfg.algorithm.weight_decay = 0.1
-  cfg.algorithm.n_steps = 1
-  cfg.algorithm.policy_frequency = 2
-  cfg.algorithm.target_noise = 0.2
-  cfg.algorithm.noise_clip = 0.5
-  cfg.algorithm.num_atoms = 101
-  cfg.algorithm.v_min = -250.0
-  cfg.algorithm.v_max = 250.0
-  cfg.algorithm.use_cdq = True
+
+  cfg = yam_rl_cfg.yam_lift_cube_fasttd3_runner_cfg()
 
   assert cfg.class_name == "FastTD3Runner"
   assert cfg.policy.class_name == "FastTD3Actor"
@@ -71,8 +53,8 @@ def test_yam_fasttd3_config_matches_lightweight_settings() -> None:
   assert cfg.algorithm.critic_learning_rate == 3.0e-4
   assert cfg.algorithm.weight_decay == 0.1
   assert cfg.algorithm.num_atoms == 101
-  assert cfg.algorithm.v_min == -250.0
-  assert cfg.algorithm.v_max == 250.0
+  assert cfg.algorithm.v_min == -50.0
+  assert cfg.algorithm.v_max == 50.0
   assert cfg.algorithm.use_cdq is True
 
 
@@ -89,7 +71,6 @@ def test_fasttd3_adapter_strips_ppo_only_fields(monkeypatch) -> None:
   fake_mjlab_rl.__path__ = []  # type: ignore[attr-defined]
   fake_vecenv = types.ModuleType("mjlab.rl.vecenv_wrapper")
   fake_vecenv.RslRlVecEnvWrapper = object
-
   fake_rsl_rl = types.ModuleType("rsl_rl")
   fake_rsl_rl.__path__ = []  # type: ignore[attr-defined]
   fake_rsl_rl_runners = types.ModuleType("rsl_rl.runners")
