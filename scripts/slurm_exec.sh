@@ -21,7 +21,7 @@ fi
 
 if [[ $# -eq 0 ]]; then
   echo "Usage: $0 [runtime_root] [runtime_suffix] -- <command...>" >&2
-  echo "Example: $0 /scratch/\$USER/mjlab \"\$SLURM_JOB_ID\" -- uv run train Mjlab-Velocity-Flat-Unitree-G1" >&2
+  echo "Example: $0 /scratch/\$USER/mjlab \"\$SLURM_JOB_ID\" -- uv run --no-sync --locked train Mjlab-Velocity-Flat-Unitree-G1" >&2
   exit 2
 fi
 

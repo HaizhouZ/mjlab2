@@ -72,18 +72,26 @@ For full setup instructions, see the [Installation Guide](https://mujocolab.gith
 
 ## Slurm / Read-Only Overlay
 
-If you run `mjlab` inside a read-only container or Slurm overlay, source
-[`scripts/slurm_overlay_env.sh`](./scripts/slurm_overlay_env.sh) before
-launching training. It redirects writable state such as `HOME`, `TMPDIR`,
-`UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR`, `WARP_CACHE_PATH`, `TORCH_HOME`,
-`WANDB_*`, `XDG_*`, and `MJLAB_WANDB_CACHE_DIR` into a writable runtime tree.
-You can override the top-level writable roots directly with
-`MJLAB_HOME_DIR`, `MJLAB_CACHE_DIR`, `MJLAB_TMP_DIR`, and `MJLAB_OUTPUT_DIR`
-before sourcing the script.
+On the `torch` cluster, use the repo-owned environment/bootstrap only.
+
+1. Enter the container with `singularity exec --nv ...`
+2. `cd` into the repo
+3. Source [`scripts/slurm_overlay_env.sh`](./scripts/slurm_overlay_env.sh)
+4. Run `uv run --no-sync --locked ...`
+
+Use only the `mjlab2` environment management in jobs. Do not rely on the old
+`/ext3/env.sh` path.
+
+[`scripts/slurm_overlay_env.sh`](./scripts/slurm_overlay_env.sh) redirects
+writable state such as `HOME`, `TMPDIR`, `UV_CACHE_DIR`,
+`UV_PYTHON_INSTALL_DIR`, `WARP_CACHE_PATH`, `TORCH_HOME`, `WANDB_*`, `XDG_*`,
+and `MJLAB_WANDB_CACHE_DIR` into a writable runtime tree. You can override the
+top-level writable roots directly with `MJLAB_HOME_DIR`, `MJLAB_CACHE_DIR`,
+`MJLAB_TMP_DIR`, and `MJLAB_OUTPUT_DIR` before sourcing the script.
 
 ```bash
 source scripts/slurm_overlay_env.sh /scratch/$USER/mjlab "$SLURM_JOB_ID"
-uv run train Mjlab-Velocity-Flat-Unitree-G1
+uv run --no-sync --locked train Mjlab-Velocity-Flat-Unitree-G1
 ```
 
 This creates a per-run layout like:
@@ -109,16 +117,7 @@ You can also use a manual suffix outside Slurm:
 source scripts/slurm_overlay_env.sh /scratch/$USER/mjlab exp_yam_td3
 ```
 
-For batch jobs, [`scripts/slurm_exec.sh`](./scripts/slurm_exec.sh) is the more
-convenient entrypoint. It will:
-
-- source `scripts/slurm_overlay_env.sh`
-- export `PYTHONPATH=$REPO_ROOT/src`
-- optionally run `uv sync --frozen --group dev` when `MJLAB_UV_SYNC=1`
-- optionally send an email when the job starts on a node when `MJLAB_SLURM_NOTIFY_TO` is set
-- execute the command you pass after `--`
-
-Example `sbatch` payload:
+Canonical `torch` batch workflow:
 
 ```bash
 #!/usr/bin/env bash
@@ -129,11 +128,74 @@ Example `sbatch` payload:
 #SBATCH --time=24:00:00
 
 set -euo pipefail
-cd /path/to/mjlab2
+cd /ext3/mjlab2
 
-scripts/slurm_exec.sh /scratch/$USER/mjlab "$SLURM_JOB_ID" -- \
-  uv run train Mjlab-Velocity-Flat-Unitree-G1 env.scene.num_envs=4096
+srun singularity exec --nv \
+  --overlay /scratch/$USER/workdir/overlay-15GB-500K.ext3:ro \
+  /share/apps/images/cuda13.0.1-cudnn9.13.0-ubuntu-24.04.3.sif \
+  /bin/bash -lc '
+    set -euo pipefail
+    cd /ext3/mjlab2
+    source scripts/slurm_overlay_env.sh /scratch/$USER/mjlab "ro-${SLURM_JOB_ID:-interactive}"
+    uv run --no-sync --locked train Mjlab-Velocity-Flat-Unitree-G1 env.scene.num_envs=4096
+  '
 ```
+
+Notes:
+
+- `--overlay` is mounted read-only as `:ro` for training.
+- `scripts/slurm_overlay_env.sh` is the runtime layout layer.
+- `uv run --no-sync --locked` avoids mutating the environment inside the job.
+- This keeps `HOME`, `TORCH_HOME`, `WANDB_CONFIG_DIR`, `XDG_*`, and `MJLAB_OUTPUT_DIR` under repo-controlled setup.
+
+Interactive debugging on `torch` should follow the same pattern. Enter the
+container first, apply the overlay env, then run a tiny command inside the live
+shell before touching `sbatch` scripts.
+
+Recommended helpers:
+
+```bash
+load_mjlab_env() {
+  singularity exec --nv --fakeroot \
+    --overlay /scratch/hz3862/workdir/overlay-15GB-500K.ext3:rw \
+    /share/apps/images/cuda13.0.1-cudnn9.13.0-ubuntu-24.04.3.sif \
+    /bin/bash -lc '
+      cd /ext3/mjlab2
+      source scripts/slurm_overlay_env.sh /scratch/$USER/mjlab "rw-${SLURM_JOB_ID:-interactive}"
+      exec bash -l
+    '
+}
+
+load_mjlab_train_env() {
+  singularity exec --nv \
+    --overlay /scratch/hz3862/workdir/overlay-15GB-500K.ext3:ro \
+    /share/apps/images/cuda13.0.1-cudnn9.13.0-ubuntu-24.04.3.sif \
+    /bin/bash -lc '
+      cd /ext3/mjlab2
+      source scripts/slurm_overlay_env.sh /scratch/$USER/mjlab "ro-${SLURM_JOB_ID:-interactive}"
+      exec bash -l
+    '
+}
+```
+
+Example interactive smoke test:
+
+```bash
+uv run --no-sync --locked train Mjlab-MultiTracking-Flat-Unitree-G1 \
+  --motion-dir artifacts \
+  --agent.max-iterations 1 \
+  --agent.num-steps-per-env 4 \
+  --env.scene.num-envs 1
+```
+
+Use [`scripts/slurm_exec.sh`](./scripts/slurm_exec.sh) only when you are
+already inside the container or when you are not using the `torch`
+Singularity-based launch path. It still provides:
+
+- `scripts/slurm_overlay_env.sh`
+- `PYTHONPATH=$REPO_ROOT/src`
+- optional `uv sync --frozen --group dev` when `MJLAB_UV_SYNC=1`
+- optional email notification when `MJLAB_SLURM_NOTIFY_TO` is set
 
 Optional email notification on allocation:
 
@@ -159,7 +221,7 @@ export MJLAB_SLURM_NOTIFY_FROM="mjlab@example.com"
 export MJLAB_SLURM_NOTIFY_DRY_RUN=1
 
 scripts/slurm_exec.sh /scratch/$USER/mjlab "$SLURM_JOB_ID" -- \
-  uv run train Mjlab-Velocity-Flat-Unitree-G1 env.scene.num_envs=4096
+  uv run --no-sync --locked train Mjlab-Velocity-Flat-Unitree-G1 env.scene.num_envs=4096
 ```
 
 In dry-run mode, the notifier prints the email subject and body to stdout and
@@ -191,6 +253,18 @@ Evaluate a policy while training (fetches latest checkpoint from Weights & Biase
 
 ```bash
 uv run play Mjlab-Velocity-Flat-Unitree-G1 wandb_run_path=your-org/mjlab/run-id
+```
+
+To refresh the locked `rsl-rl-lib` Git commit and resync the local environment:
+
+```bash
+scripts/update_rsl_rl_lib.sh
+```
+
+To update `uv.lock` only without syncing:
+
+```bash
+scripts/update_rsl_rl_lib.sh --no-sync
 ```
 
 ---
