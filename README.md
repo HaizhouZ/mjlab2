@@ -90,31 +90,37 @@ top-level writable roots directly with `MJLAB_HOME_DIR`, `MJLAB_CACHE_DIR`,
 `MJLAB_TMP_DIR`, and `MJLAB_OUTPUT_DIR` before sourcing the script.
 
 ```bash
-source scripts/slurm_overlay_env.sh /scratch/$USER/mjlab "$SLURM_JOB_ID"
+source scripts/slurm_overlay_env.sh /scratch/$USER/env_data/mjlab "$SLURM_JOB_ID"
 uv run --no-sync --locked train Mjlab-Velocity-Flat-Unitree-G1
 ```
 
-This creates a per-run layout like:
+By default this creates a shared base runtime root plus a per-run suffix:
 
 ```text
-/scratch/$USER/mjlab/$SLURM_JOB_ID/
-  home/
-  cache/
-  tmp/
-  outputs/
+/scratch/$USER/env_data/mjlab/
+  cache/                 # shared across runs
+  wandb/                 # shared across runs
+  ro-$SLURM_JOB_ID/
+    home/
+    tmp/
+    outputs/
 ```
+
+The default split is:
+- shared across runs: `cache/*`, `wandb/*`
+- per-run: `home`, `tmp`, `outputs`
 
 `train.py` will automatically use `MJLAB_OUTPUT_DIR` for logs when it is set, so
 checkpoints and run outputs land under the writable `outputs/` directory by
-default.
-
-If you want the same runtime layout but a different cache location, set
-`MJLAB_CACHE_DIR` before sourcing the script.
+default. Override `MJLAB_CACHE_DIR`, `MJLAB_WANDB_DIR`,
+`MJLAB_WANDB_ARTIFACT_DIR`, `MJLAB_HOME_DIR`, `MJLAB_TMP_DIR`, or
+`MJLAB_OUTPUT_DIR` before sourcing the script if your cluster needs a different
+layout.
 
 You can also use a manual suffix outside Slurm:
 
 ```bash
-source scripts/slurm_overlay_env.sh /scratch/$USER/mjlab exp_yam_td3
+source scripts/slurm_overlay_env.sh /scratch/$USER/env_data/mjlab exp_yam_td3
 ```
 
 Canonical `torch` batch workflow:
@@ -136,7 +142,7 @@ srun singularity exec --nv \
   /bin/bash -lc '
     set -euo pipefail
     cd /ext3/mjlab2
-    source scripts/slurm_overlay_env.sh /scratch/$USER/mjlab "ro-${SLURM_JOB_ID:-interactive}"
+    source scripts/slurm_overlay_env.sh /scratch/$USER/env_data/mjlab "ro-${SLURM_JOB_ID:-interactive}"
     uv run --no-sync --locked train Mjlab-Velocity-Flat-Unitree-G1 env.scene.num_envs=4096
   '
 ```
@@ -161,7 +167,7 @@ load_mjlab_env() {
     /share/apps/images/cuda13.0.1-cudnn9.13.0-ubuntu-24.04.3.sif \
     /bin/bash -lc '
       cd /ext3/mjlab2
-      source scripts/slurm_overlay_env.sh /scratch/$USER/mjlab "rw-${SLURM_JOB_ID:-interactive}"
+      source scripts/slurm_overlay_env.sh /scratch/$USER/env_data/mjlab "rw-${SLURM_JOB_ID:-interactive}"
       exec bash -l
     '
 }
@@ -172,7 +178,7 @@ load_mjlab_train_env() {
     /share/apps/images/cuda13.0.1-cudnn9.13.0-ubuntu-24.04.3.sif \
     /bin/bash -lc '
       cd /ext3/mjlab2
-      source scripts/slurm_overlay_env.sh /scratch/$USER/mjlab "ro-${SLURM_JOB_ID:-interactive}"
+      source scripts/slurm_overlay_env.sh /scratch/$USER/env_data/mjlab "ro-${SLURM_JOB_ID:-interactive}"
       exec bash -l
     '
 }

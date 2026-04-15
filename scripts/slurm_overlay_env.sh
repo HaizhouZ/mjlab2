@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_RUNTIME_ROOT="${1:-${MJLAB_RUNTIME_ROOT:-${SLURM_TMPDIR:-${TMPDIR:-/tmp/${USER:-user}/mjlab-runtime}}}}"
+BASE_RUNTIME_ROOT="${1:-${MJLAB_BASE_RUNTIME_ROOT:-${MJLAB_RUNTIME_ROOT:-${SLURM_TMPDIR:-${TMPDIR:-/tmp/${USER:-user}/mjlab-runtime}}}}}"
 RUNTIME_SUFFIX="${2:-${MJLAB_RUNTIME_SUFFIX:-}}"
 if [[ -n "$RUNTIME_SUFFIX" ]]; then
   RUNTIME_ROOT="$BASE_RUNTIME_ROOT/$RUNTIME_SUFFIX"
@@ -10,9 +10,15 @@ else
 fi
 
 HOME_ROOT="${MJLAB_HOME_DIR:-$RUNTIME_ROOT/home}"
-CACHE_ROOT="${MJLAB_CACHE_DIR:-$RUNTIME_ROOT/cache}"
 TMP_ROOT="${MJLAB_TMP_DIR:-$RUNTIME_ROOT/tmp}"
 OUTPUT_ROOT="${MJLAB_OUTPUT_DIR:-$RUNTIME_ROOT/outputs}"
+
+# Cache- and artifact-heavy directories should be shared across runs by default.
+# Use MJLAB_CACHE_DIR / MJLAB_WANDB_DIR / MJLAB_WANDB_ARTIFACT_DIR to override
+# this if a cluster wants a different layout.
+CACHE_ROOT="${MJLAB_CACHE_DIR:-$BASE_RUNTIME_ROOT/cache}"
+WANDB_ROOT="${MJLAB_WANDB_DIR:-$BASE_RUNTIME_ROOT/wandb}"
+WANDB_ARTIFACT_ROOT="${MJLAB_WANDB_ARTIFACT_DIR:-$WANDB_ROOT/artifacts}"
 
 mkdir -p \
   "$HOME_ROOT" \
@@ -31,12 +37,16 @@ mkdir -p \
   "$CACHE_ROOT/warp" \
   "$CACHE_ROOT/pycache" \
   "$CACHE_ROOT/mjlab" \
+  "$CACHE_ROOT/mjlab/wandb_motions" \
+  "$WANDB_ROOT" \
+  "$WANDB_ARTIFACT_ROOT" \
   "$TMP_ROOT" \
   "$OUTPUT_ROOT"
 
 export HOME="$HOME_ROOT"
 export TMPDIR="$TMP_ROOT"
 export MJLAB_RUNTIME_ROOT="$RUNTIME_ROOT"
+export MJLAB_BASE_RUNTIME_ROOT="$BASE_RUNTIME_ROOT"
 export MJLAB_OUTPUT_DIR="$OUTPUT_ROOT"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$CACHE_ROOT/xdg}"
 export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$CACHE_ROOT/xdg}"
@@ -49,14 +59,15 @@ export MPLCONFIGDIR="${MPLCONFIGDIR:-$CACHE_ROOT/mpl}"
 export HF_HOME="${HF_HOME:-$CACHE_ROOT/hf}"
 export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-$CACHE_ROOT/hf}"
 export WARP_CACHE_PATH="${WARP_CACHE_PATH:-$CACHE_ROOT/warp}"
-export WANDB_DIR="${WANDB_DIR:-$CACHE_ROOT/wandb}"
+export WANDB_DIR="${WANDB_DIR:-$WANDB_ROOT}"
 export WANDB_CACHE_DIR="${WANDB_CACHE_DIR:-$CACHE_ROOT/wandb_cache}"
 export WANDB_CONFIG_DIR="${WANDB_CONFIG_DIR:-$CACHE_ROOT/wandb_config}"
-export WANDB_ARTIFACT_DIR="${WANDB_ARTIFACT_DIR:-$CACHE_ROOT/wandb_artifacts}"
+export WANDB_ARTIFACT_DIR="${WANDB_ARTIFACT_DIR:-$WANDB_ARTIFACT_ROOT}"
 export WANDB_DATA_DIR="${WANDB_DATA_DIR:-$CACHE_ROOT/wandb_data}"
 export MJLAB_WANDB_CACHE_DIR="${MJLAB_WANDB_CACHE_DIR:-$CACHE_ROOT/mjlab/wandb_motions}"
 export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-$CACHE_ROOT/pycache}"
 
+echo "Overlay base runtime root: $BASE_RUNTIME_ROOT"
 echo "Overlay runtime root: $RUNTIME_ROOT"
 echo "HOME=$HOME"
 echo "TMPDIR=$TMPDIR"
