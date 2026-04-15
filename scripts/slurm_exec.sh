@@ -39,4 +39,12 @@ if [[ "${MJLAB_UV_SYNC:-0}" == "1" ]]; then
   uv sync --frozen --group dev
 fi
 
+if [[ -n "${SLURM_JOB_ID:-}" && -n "${MJLAB_SLURM_NOTIFY_TO:-}" ]]; then
+  export MJLAB_SLURM_NOTIFY_CWD="$PWD"
+  export MJLAB_SLURM_NOTIFY_COMMAND="$(printf '%q ' "$@")"
+  if ! python3 "$SCRIPT_DIR/slurm_email_notify.py"; then
+    echo "Warning: failed to send Slurm allocation email notification" >&2
+  fi
+fi
+
 exec "$@"

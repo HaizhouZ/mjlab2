@@ -115,6 +115,7 @@ convenient entrypoint. It will:
 - source `scripts/slurm_overlay_env.sh`
 - export `PYTHONPATH=$REPO_ROOT/src`
 - optionally run `uv sync --frozen --group dev` when `MJLAB_UV_SYNC=1`
+- optionally send an email when the job starts on a node when `MJLAB_SLURM_NOTIFY_TO` is set
 - execute the command you pass after `--`
 
 Example `sbatch` payload:
@@ -133,6 +134,36 @@ cd /path/to/mjlab2
 scripts/slurm_exec.sh /scratch/$USER/mjlab "$SLURM_JOB_ID" -- \
   uv run train Mjlab-Velocity-Flat-Unitree-G1 env.scene.num_envs=4096
 ```
+
+Optional email notification on allocation:
+
+```bash
+export MJLAB_SLURM_NOTIFY_TO="you@example.com"
+export MJLAB_SLURM_NOTIFY_FROM="mjlab@example.com"
+export MJLAB_SMTP_HOST="smtp.example.com"
+export MJLAB_SMTP_PORT=587
+export MJLAB_SMTP_USERNAME="smtp-user"
+export MJLAB_SMTP_PASSWORD="smtp-password"
+export MJLAB_SMTP_STARTTLS=1
+```
+
+When these are set, `scripts/slurm_exec.sh` sends one email after the Slurm job
+starts on a node and before the training command is executed. The message
+includes the job ID, job name, assigned node, runtime root, and full command.
+
+Dry-run preview without sending:
+
+```bash
+export MJLAB_SLURM_NOTIFY_TO="you@example.com"
+export MJLAB_SLURM_NOTIFY_FROM="mjlab@example.com"
+export MJLAB_SLURM_NOTIFY_DRY_RUN=1
+
+scripts/slurm_exec.sh /scratch/$USER/mjlab "$SLURM_JOB_ID" -- \
+  uv run train Mjlab-Velocity-Flat-Unitree-G1 env.scene.num_envs=4096
+```
+
+In dry-run mode, the notifier prints the email subject and body to stdout and
+does not require `MJLAB_SMTP_HOST`.
 
 ---
 
