@@ -107,6 +107,14 @@ Default split:
 - shared across runs: `cache/*`, `logs/*`, `wandb/*`
 - preserved from the host/container unless explicitly overridden: `HOME`, `TMPDIR`
 
+Within the shared W&B tree the defaults are unified under `/scratch/$USER/env_data/mjlab/wandb`:
+- `WANDB_DIR=/scratch/$USER/env_data/mjlab/wandb`
+- `WANDB_ARTIFACT_DIR=/scratch/$USER/env_data/mjlab/wandb/artifacts`
+- `WANDB_CACHE_DIR=/scratch/$USER/env_data/mjlab/wandb/cache`
+- `WANDB_CONFIG_DIR=/scratch/$USER/env_data/mjlab/wandb/config`
+- `WANDB_DATA_DIR=/scratch/$USER/env_data/mjlab/wandb/data`
+- `MJLAB_WANDB_CACHE_DIR=/scratch/$USER/env_data/mjlab/wandb/artifacts`
+
 `train.py` will automatically use `MJLAB_OUTPUT_DIR` for logs when it is set, and
 the script now defaults that to `/scratch/$USER/env_data/mjlab/logs`. Override
 `MJLAB_CACHE_DIR`, `MJLAB_WANDB_DIR`, `MJLAB_WANDB_ARTIFACT_DIR`,
