@@ -154,6 +154,21 @@ def _configure_cuda_environment(selected_gpus: list[int] | None) -> None:
   os.environ["MUJOCO_GL"] = "egl"
 
 
+def _set_default_tracking_wandb_project(
+  cfg: TrainConfig, motion_cmd: MotionCommandCfg | MultiMotionCommandCfg | None
+) -> None:
+  if cfg.agent.logger != "wandb" or motion_cmd is None:
+    return
+
+  if cfg.agent.wandb_project and cfg.agent.wandb_project != "mjlab":
+    return
+
+  if isinstance(motion_cmd, MotionCommandCfg):
+    cfg.agent.wandb_project = "single_track"
+  else:
+    cfg.agent.wandb_project = "multi_track"
+
+
 def run_train(
   task_id: str, cfg: TrainConfig, log_dir: Path, motion_name: str | None = None
 ) -> None:
@@ -331,6 +346,10 @@ def launch_training(task_id: str, args: TrainConfig | None = None):
           registry_name = registry_name + ":latest"
         motion_name = registry_name.split("/")[-1].split(":")[0]
         args.agent.run_name = motion_name
+
+  _set_default_tracking_wandb_project(
+    args, _get_tracking_motion_cmd(args.env) if is_tracking_task else None
+  )
 
   # Create log directory once before launching workers.
   # log_root_path = Path("logs") / "rsl_rl" / args.agent.experiment_name

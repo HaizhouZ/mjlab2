@@ -288,6 +288,12 @@ MJLAB_MOTION_HORIZON=1 uv run train Mjlab-MultiTracking-Flat-Unitree-G1 \
   agent.max_iterations=30000 \
   env.scene.num_envs=4096
 ```
+
+For tracking tasks, the default W&B project follows the task type:
+- single-motion tracking tasks -> `single_track`
+- multi-motion tracking tasks -> `multi_track`
+
+Override it explicitly with `agent.wandb_project=...` when you want a different project.
 ---
 
 ### 3. Sanity-check with Dummy Agents

@@ -30,6 +30,7 @@ REPPO integration note:
 - For read-only Slurm overlay runs, prefer `scripts/slurm_overlay_env.sh` and keep writable cache/checkpoint paths outside the overlay. `mjlab.utils.wandb` now honors `MJLAB_WANDB_CACHE_DIR`, then `MJLAB_CACHE_DIR`, then `XDG_CACHE_HOME` before falling back to `~/.cache`.
 - On the `torch` cluster, the canonical launch order is: `singularity exec --nv ...` -> `cd` into the repo -> `source scripts/slurm_overlay_env.sh ...` -> `uv run --no-sync --locked ...`. Do not rely on the deprecated `/ext3/env.sh` path for repo environment management.
 - On the `torch` cluster, node-allocation notification belongs in the home-layer Slurm helpers such as `get-cpu` / `get-gpu*`, not inside `mjlab2`.
+- For W&B tracking runs, keep the default project mapping stable: single-motion tracking logs to `single_track`, multi-motion tracking logs to `multi_track`. Only override `agent.wandb_project` when you intentionally want a different project.
 
 ---
 
