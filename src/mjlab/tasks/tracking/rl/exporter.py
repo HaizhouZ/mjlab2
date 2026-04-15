@@ -31,8 +31,17 @@ def get_input_dim(model: nn.Module) -> int:
   if hasattr(model, "input_size"):
     return model.input_size  # type: ignore
 
+  if hasattr(model, "actor_obs_dim"):
+    return model.actor_obs_dim  # type: ignore
+
   if hasattr(model, "obs_dim"):
     return model.obs_dim  # type: ignore
+
+  if hasattr(model, "actor_mean"):
+    return get_input_dim(model.actor_mean)  # type: ignore
+
+  if hasattr(model, "actor"):
+    return get_input_dim(model.actor)  # type: ignore
 
   if hasattr(model, "mlp"):
     return get_input_dim(model.mlp)  # type: ignore
@@ -59,6 +68,7 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
     self, env: ManagerBasedRlEnv, actor_critic, normalizer=None, verbose=False
   ):
     super().__init__(actor_critic, normalizer, verbose)
+    self.input_dim = get_input_dim(actor_critic)
     cmd = env.command_manager.get_term("motion")
 
     # Handle both MotionCommand and MultiMotionCommand
@@ -104,7 +114,7 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
   def export(self, path, filename):
     export_device = next(self.actor.parameters()).device
     self.to(export_device)
-    obs = torch.zeros(1, get_input_dim(self.actor), device=export_device)
+    obs = torch.zeros(1, self.input_dim, device=export_device)
     time_step = torch.zeros(1, 1, device=export_device)
 
     # Base output names (always included)
