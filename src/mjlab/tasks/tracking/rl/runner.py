@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import wandb
 from rsl_rl.env.vec_env import VecEnv
+from rsl_rl.runners import ReppoRunner
 
 from mjlab.rl import RslRlVecEnvWrapper
 from mjlab.rl.runner import MjlabOnPolicyRunner
@@ -33,6 +34,36 @@ def _get_exportable_policy(policy):
   )
 
 
+def _save_tracking_policy(runner, path: str) -> None:
+  policy_path = path.split("model")[0]
+  filename = policy_path.split("/")[-2] + ".onnx"
+  policy = runner.alg.policy
+  normalizer = _get_policy_normalizer(policy)
+  export_motion_policy_as_onnx(
+    runner.env.unwrapped,
+    _get_exportable_policy(policy),
+    normalizer=normalizer,
+    path=policy_path,
+    filename=filename,
+  )
+  run_name = (
+    wandb.run.name
+    if getattr(runner, "logger_type", None) == "wandb" and wandb.run
+    else "local"
+  )
+  attach_onnx_metadata(
+    runner.env.unwrapped,
+    run_name,  # type: ignore[arg-type]
+    path=policy_path,
+    filename=filename,
+  )
+  if getattr(runner, "logger_type", None) in ["wandb"]:
+    wandb.save(policy_path + filename, base_path=os.path.dirname(policy_path))
+    if getattr(runner, "registry_name", None) is not None and wandb.run is not None:
+      wandb.run.use_artifact(runner.registry_name)  # type: ignore[arg-type]
+      runner.registry_name = None
+
+
 class MotionTrackingOnPolicyRunner(MjlabOnPolicyRunner):
   env: RslRlVecEnvWrapper
 
@@ -50,31 +81,23 @@ class MotionTrackingOnPolicyRunner(MjlabOnPolicyRunner):
   def save(self, path: str, infos=None):
     """Save the model and training information."""
     super().save(path, infos)
+    _save_tracking_policy(self, path)
 
-    policy_path = path.split("model")[0]
-    filename = policy_path.split("/")[-2] + ".onnx"
-    policy = self.alg.policy
-    normalizer = _get_policy_normalizer(policy)
-    export_motion_policy_as_onnx(
-      self.env.unwrapped,
-      _get_exportable_policy(policy),
-      normalizer=normalizer,
-      path=policy_path,
-      filename=filename,
-    )
-    # Attach metadata (use "local" for run_path if not using wandb)
-    run_name = (
-      wandb.run.name if self.logger.logger_type == "wandb" and wandb.run else "local"
-    )
-    attach_onnx_metadata(
-      self.env.unwrapped,
-      run_name,  # type: ignore
-      path=policy_path,
-      filename=filename,
-    )
-    if self.logger.logger_type in ["wandb"]:
-      wandb.save(policy_path + filename, base_path=os.path.dirname(policy_path))
-      # link the artifact registry to this run
-      if self.registry_name is not None:
-        wandb.run.use_artifact(self.registry_name)  # type: ignore
-        self.registry_name = None
+
+class MotionTrackingReppoRunner(ReppoRunner):
+  env: RslRlVecEnvWrapper
+
+  def __init__(
+    self,
+    env: VecEnv,
+    train_cfg: dict,
+    log_dir: str | None = None,
+    device: str = "cpu",
+    registry_name: str | None = None,
+  ):
+    super().__init__(env, train_cfg, log_dir, device)
+    self.registry_name = registry_name
+
+  def save(self, path: str, infos=None):
+    super().save(path, infos)
+    _save_tracking_policy(self, path)
