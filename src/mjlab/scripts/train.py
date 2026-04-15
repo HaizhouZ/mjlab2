@@ -20,6 +20,7 @@ from mjlab.utils.wandb import (
   add_wandb_tags,
   get_wandb_entity_and_project,
   get_wandb_motion_cache_dir,
+  resolve_wandb_artifact_path,
 )
 from mjlab.utils.wrappers import VideoRecorder
 
@@ -110,11 +111,16 @@ def _configure_tracking_motion_source(
     return registry_name
 
   if cfg.motion_file is not None:
-    print(f"[INFO] Using local motion file: {cfg.motion_file}")
+    resolved_motion_file = str(resolve_wandb_artifact_path(cfg.motion_file))
+    print(f"[INFO] Using local motion file: {resolved_motion_file}")
     if isinstance(motion_cmd, MotionCommandCfg):
-      motion_cmd.motion_file = cfg.motion_file
+      motion_cmd.motion_file = resolved_motion_file
     else:
-      motion_dir = cfg.motion_dir
+      motion_dir = (
+        str(resolve_wandb_artifact_path(cfg.motion_dir))
+        if cfg.motion_dir is not None
+        else None
+      )
       if motion_dir is None:
         raise ValueError("Must provide --motion-dir for multi-motion tracking tasks.")
       motion_cmd.motion_dir = motion_dir
@@ -122,12 +128,13 @@ def _configure_tracking_motion_source(
     return None
 
   if cfg.motion_dir is not None:
-    print(f"[INFO] Using local motion directory: {cfg.motion_dir}")
+    resolved_motion_dir = str(resolve_wandb_artifact_path(cfg.motion_dir))
+    print(f"[INFO] Using local motion directory: {resolved_motion_dir}")
     if isinstance(motion_cmd, MotionCommandCfg):
       raise ValueError(
         "Cannot use --motion-dir with single motion command. Use --motion-file instead."
       )
-    motion_cmd.motion_dir = cfg.motion_dir
+    motion_cmd.motion_dir = resolved_motion_dir
     motion_cmd.motion_name_pattern = cfg.motion_name_pattern
     return None
 
@@ -288,7 +295,7 @@ def launch_training(task_id: str, args: TrainConfig | None = None):
         args.agent.run_name = motion_name
       elif args.motion_file:
         # Extract from file path (e.g., "/path/to/motion_name/motion.npz" -> "motion_name")
-        motion_file_path = Path(args.motion_file)
+        motion_file_path = resolve_wandb_artifact_path(args.motion_file)
         motion_name = (
           motion_file_path.parent.name
           if motion_file_path.parent.name
@@ -314,7 +321,7 @@ def launch_training(task_id: str, args: TrainConfig | None = None):
 
       elif args.motion_dir:
         # Extract from motion_dir path (e.g., "/path/to/motion_name" -> "motion_name")
-        motion_dir_path = Path(args.motion_dir)
+        motion_dir_path = resolve_wandb_artifact_path(args.motion_dir)
         motion_name = motion_dir_path.name
         args.agent.run_name = motion_name
       elif args.registry_name:

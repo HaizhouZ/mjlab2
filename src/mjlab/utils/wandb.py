@@ -9,6 +9,31 @@ import wandb
 from tqdm import tqdm
 
 
+def resolve_wandb_artifact_path(path: str | Path) -> Path:
+  """Resolve local artifact-style paths against the configured wandb artifact root.
+
+  Accepted forms:
+  - absolute paths: returned unchanged
+  - ``artifacts/...``: resolved against ``MJLAB_WANDB_CACHE_DIR`` or
+    ``WANDB_ARTIFACT_DIR`` when available
+  - other relative paths: resolved against the current working directory
+  """
+  raw_path = Path(path)
+  if raw_path.is_absolute():
+    return raw_path
+
+  artifact_prefix = Path("artifacts")
+  if raw_path == artifact_prefix or raw_path.parts[:1] == artifact_prefix.parts:
+    artifact_root = (
+      os.environ.get("MJLAB_WANDB_CACHE_DIR") or os.environ.get("WANDB_ARTIFACT_DIR")
+    )
+    if artifact_root:
+      relative_parts = raw_path.parts[1:]
+      return Path(artifact_root).joinpath(*relative_parts)
+
+  return (Path.cwd() / raw_path).resolve()
+
+
 def _get_default_wandb_motion_cache_root() -> Path:
   """Resolve the writable base directory for mjlab motion cache files."""
   if env_path := os.environ.get("MJLAB_WANDB_CACHE_DIR"):

@@ -27,6 +27,7 @@ from mjlab.utils import parse_choice_and_dataclass
 from mjlab.utils.lab_api.rl.exporter import export_policy_as_onnx
 from mjlab.utils.os import get_wandb_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
+from mjlab.utils.wandb import resolve_wandb_artifact_path
 from mjlab.utils.wrappers import VideoRecorder
 from mjlab.viewer import NativeMujocoViewer, ViserPlayViewer
 
@@ -129,11 +130,12 @@ def run_play(task_id: str, cfg: PlayConfig):
         motion_cmd.traj_name_patterns = [".*"]
     else:
       if isinstance(motion_cmd, MotionCommandCfg) and cfg.motion_file is not None:
-        print(f"[INFO]: Using motion file from CLI: {cfg.motion_file}")
-        motion_cmd.motion_file = cfg.motion_file
+        resolved_motion_file = str(resolve_wandb_artifact_path(cfg.motion_file))
+        print(f"[INFO]: Using motion file from CLI: {resolved_motion_file}")
+        motion_cmd.motion_file = resolved_motion_file
       elif isinstance(motion_cmd, MultiMotionCommandCfg) and cfg.motion_dir is not None:
-        print(f"[INFO]: Using motion directory from CLI: {cfg.motion_dir}")
-        motion_dir = cfg.motion_dir
+        motion_dir = str(resolve_wandb_artifact_path(cfg.motion_dir))
+        print(f"[INFO]: Using motion directory from CLI: {motion_dir}")
         motion_cmd.motion_dir = motion_dir
         motion_cmd.traj_name_patterns = [".*"]
       else:
