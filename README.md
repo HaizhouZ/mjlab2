@@ -282,12 +282,30 @@ uv run train Mjlab-Tracking-Flat-Unitree-G1 \
   env.scene.num_envs=4096
 
 MJLAB_MOTION_HORIZON=1 uv run train Mjlab-MultiTracking-Flat-Unitree-G1 \
-  agent.wandb_project=multitrack \
+  agent.wandb_project=multi_track \
   agent.run_name=H_1_10s_bro \
   registry_name=wandb-registry-motions/lafan_dataset \
   agent.max_iterations=30000 \
   env.scene.num_envs=4096
 ```
+
+To train multitracking with a trajectory encoder, point the motion command at the
+saved encoder checkpoint. The runtime infers the encoder horizon from the encoder
+artifact metadata, so you normally do not need to pass `env.commands.motion.horizon`
+manually:
+
+```bash
+uv run train Mjlab-MultiTracking-Flat-Unitree-G1 \
+  --motion-dir artifacts/lafan_dataset:v0 \
+  --env.commands.motion.encoder-dir \
+    wandb://mim-atari/traj_encoder/g1_future_traj_encoder_h16_l128:latest/best_model.pt \
+  --env.scene.num_envs 4096
+```
+
+W&B encoder artifacts are checkpoint-based by default and include `best_model.pt`,
+`last_model.pt`, `config.yaml`, and `normalizer.pt`. Local `best_encoder.jit`
+exports are still supported for ad-hoc deployment, but they are no longer the
+canonical artifact uploaded to W&B.
 
 For tracking tasks, the default W&B project follows the task type:
 - single-motion tracking tasks -> `single_track`

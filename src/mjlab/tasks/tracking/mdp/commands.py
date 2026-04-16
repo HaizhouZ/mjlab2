@@ -11,8 +11,27 @@ from typing import TYPE_CHECKING, Literal
 import mujoco
 import numpy as np
 import torch
+import torch.nn as nn
 
 from mjlab.managers import CommandTerm, CommandTermCfg
+from mjlab.models import (
+  TrajectoryAutoencoder2DCNN,
+  TrajectoryAutoencoder2DCNNCausal,
+  TrajectoryAutoencoderBase,
+  TrajectoryAutoencoderFSQ,
+  TrajectoryAutoencoderTCN,
+  TrajectoryAutoencoderTransformer,
+  TrajectoryAutoencoderUNet,
+  TrajectoryAutoencoderUNetResidual,
+  TrajectoryAutoencoderUNetSimple,
+  TrajectoryAutoencoderUNetSimpleResidual,
+  TrajectoryAutoencoderUNetSimpleTemporal,
+  TrajectoryNormalizer,
+)
+from mjlab.models.trajectory_autoencoder_2dcnn_transformer import (
+  TrajectoryAutoencoder2DCNNTransformer,
+)
+from mjlab.utils.config_loader import load_config_path
 from mjlab.utils.lab_api.math import (
   matrix_from_quat,
   quat_apply,
@@ -26,18 +45,424 @@ from mjlab.utils.lab_api.math import (
 from mjlab.viewer.debug_visualizer import DebugVisualizer
 
 try:
-  from mjlab.utils.wandb import get_wandb_motion_cache_dir
+  from mjlab.utils.wandb import (
+    get_wandb_motion_cache_dir,
+    resolve_wandb_file_path,
+  )
 
   WANDB_AVAILABLE = True
 except ImportError:
   WANDB_AVAILABLE = False
   get_wandb_motion_cache_dir = None  # type: ignore
+  resolve_wandb_file_path = None  # type: ignore
 
 if TYPE_CHECKING:
   from mjlab.entity import Entity
   from mjlab.envs import ManagerBasedRlEnv
 
 _DESIRED_FRAME_COLORS = ((1.0, 0.5, 0.5), (0.5, 1.0, 0.5), (0.5, 0.5, 1.0))
+_TRACKING_ENCODER_FEATURE_LAYOUT = "tracking"
+
+
+@dataclass(frozen=True)
+class TrajectoryEncoderLoadInfo:
+  path: Path
+  horizon: int
+  inferred_horizon: int | None = None
+  feature_layout: str | None = None
+  latent_dim: int | None = None
+  architecture: str | None = None
+  input_dim: int | None = None
+  model_config: dict[str, object] | None = None
+  checkpoint_path: Path | None = None
+  normalizer_path: Path | None = None
+
+
+class EncoderOnlyModule(nn.Module):
+  """Expose a trajectory autoencoder's encoder path as a plain module."""
+
+  def __init__(self, model: TrajectoryAutoencoderBase):
+    super().__init__()
+    self.model = model
+
+  def forward(self, x: torch.Tensor) -> torch.Tensor:
+    return self.model.encode(x)
+
+
+def _coerce_positive_int(value: object) -> int | None:
+  if isinstance(value, bool):
+    return None
+  if isinstance(value, int):
+    return value if value > 0 else None
+  return None
+
+
+def _load_trajectory_encoder_sidecar_metadata(
+  encoder_path: Path,
+) -> dict[str, object]:
+  metadata: dict[str, object] = {}
+
+  config_path = encoder_path.with_name("config.yaml")
+  if config_path.exists():
+    config_data = load_config_path(config_path)
+    horizon = _coerce_positive_int(config_data.get("horizon"))
+    if horizon is not None:
+      metadata["horizon"] = horizon
+    feature_layout = config_data.get("input_features")
+    if isinstance(feature_layout, str):
+      metadata["feature_layout"] = feature_layout
+    model_cfg = config_data.get("model")
+    if isinstance(model_cfg, dict):
+      metadata["model_config"] = dict(model_cfg)
+      latent_dim = _coerce_positive_int(model_cfg.get("latent_dim"))
+      if latent_dim is not None:
+        metadata["latent_dim"] = latent_dim
+    architecture = config_data.get("model", {}).get("architecture") if isinstance(config_data.get("model"), dict) else None
+    if isinstance(architecture, str):
+      metadata["architecture"] = architecture
+
+  checkpoint_keys = ("best_model.pt", "last_model.pt")
+  if (
+    "horizon" in metadata
+    and "feature_layout" in metadata
+    and "latent_dim" in metadata
+  ):
+    return metadata
+
+  for checkpoint_name in checkpoint_keys:
+    checkpoint_path = encoder_path.with_name(checkpoint_name)
+    if not checkpoint_path.exists():
+      continue
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    metadata.setdefault("checkpoint_path", checkpoint_path)
+    if "horizon" not in metadata:
+      horizon = _coerce_positive_int(checkpoint.get("horizon"))
+      if horizon is not None:
+        metadata["horizon"] = horizon
+    if "feature_layout" not in metadata:
+      feature_layout = checkpoint.get("feature_layout")
+      if isinstance(feature_layout, str):
+        metadata["feature_layout"] = feature_layout
+    if "latent_dim" not in metadata:
+      latent_dim = _coerce_positive_int(checkpoint.get("latent_dim"))
+      if latent_dim is not None:
+        metadata["latent_dim"] = latent_dim
+    if "architecture" not in metadata:
+      architecture = checkpoint.get("architecture")
+      if isinstance(architecture, str):
+        metadata["architecture"] = architecture
+    if "input_dim" not in metadata:
+      input_dim = _coerce_positive_int(checkpoint.get("input_dim"))
+      if input_dim is not None:
+        metadata["input_dim"] = input_dim
+    if "model_config" not in metadata:
+      config = checkpoint.get("config")
+      if isinstance(config, dict):
+        model_cfg = config.get("model")
+        if isinstance(model_cfg, dict):
+          metadata["model_config"] = dict(model_cfg)
+    if (
+      "horizon" in metadata
+      and "feature_layout" in metadata
+      and "latent_dim" in metadata
+    ):
+      break
+
+  normalizer_path = encoder_path.with_name("normalizer.pt")
+  if normalizer_path.exists():
+    metadata["normalizer_path"] = normalizer_path
+
+  return metadata
+
+
+def _build_trajectory_encoder_model(
+  architecture: str,
+  *,
+  horizon: int,
+  input_dim: int,
+  model_config: dict[str, object],
+  normalizer: TrajectoryNormalizer | None = None,
+) -> TrajectoryAutoencoderBase:
+  latent_dim = int(model_config["latent_dim"])
+  model: TrajectoryAutoencoderBase
+  if architecture == "unet":
+    model = TrajectoryAutoencoderUNet(
+      horizon=horizon,
+      input_dim=input_dim,
+      latent_dim=latent_dim,
+      encoder_channels=model_config.get("encoder_channels"),
+      decoder_channels=model_config.get("decoder_channels"),
+      use_batch_norm=bool(model_config.get("use_batch_norm", True)),
+    )
+  elif architecture == "unet_residual":
+    model = TrajectoryAutoencoderUNetResidual(
+      horizon=horizon,
+      input_dim=input_dim,
+      latent_dim=latent_dim,
+      encoder_channels=model_config.get("encoder_channels"),
+      decoder_channels=model_config.get("decoder_channels"),
+      use_batch_norm=bool(model_config.get("use_batch_norm", True)),
+    )
+  elif architecture == "unet_simple":
+    model = TrajectoryAutoencoderUNetSimple(
+      horizon=horizon,
+      input_dim=input_dim,
+      latent_dim=latent_dim,
+      encoder_hidden_dims=model_config.get("encoder_hidden_dims"),
+      decoder_hidden_dims=model_config.get("decoder_hidden_dims"),
+      use_batch_norm=bool(model_config.get("use_batch_norm", True)),
+      dropout=float(model_config.get("dropout", 0.0)),
+    )
+  elif architecture == "unet_simple_residual":
+    model = TrajectoryAutoencoderUNetSimpleResidual(
+      horizon=horizon,
+      input_dim=input_dim,
+      latent_dim=latent_dim,
+      encoder_hidden_dims=model_config.get("encoder_hidden_dims"),
+      decoder_hidden_dims=model_config.get("decoder_hidden_dims"),
+      use_batch_norm=bool(model_config.get("use_batch_norm", True)),
+      dropout=float(model_config.get("dropout", 0.0)),
+      use_residual=bool(model_config.get("use_residual", True)),
+    )
+  elif architecture == "unet_simple_temporal":
+    model = TrajectoryAutoencoderUNetSimpleTemporal(
+      horizon=horizon,
+      input_dim=input_dim,
+      latent_dim=latent_dim,
+      encoder_hidden_dims=model_config.get("encoder_hidden_dims"),
+      decoder_hidden_dims=model_config.get("decoder_hidden_dims"),
+      use_batch_norm=bool(model_config.get("use_batch_norm", True)),
+      dropout=float(model_config.get("dropout", 0.0)),
+      use_temporal_pos_encoding=bool(
+        model_config.get("use_temporal_pos_encoding", True)
+      ),
+      use_temporal_conv=bool(model_config.get("use_temporal_conv", False)),
+      temporal_conv_dim=model_config.get("temporal_conv_dim"),
+      temporal_conv_kernel_size=int(
+        model_config.get("temporal_conv_kernel_size", 3)
+      ),
+    )
+  elif architecture == "tcn":
+    model = TrajectoryAutoencoderTCN(
+      horizon=horizon,
+      input_dim=input_dim,
+      latent_dim=latent_dim,
+      num_channels=model_config.get("num_channels"),
+      kernel_size=int(model_config.get("kernel_size", 3)),
+      dropout=float(model_config.get("dropout", 0.0)),
+    )
+  elif architecture == "2dcnn":
+    model = TrajectoryAutoencoder2DCNN(
+      horizon=horizon,
+      input_dim=input_dim,
+      latent_dim=latent_dim,
+      encoder_channels=model_config.get("encoder_channels"),
+      decoder_channels=model_config.get("decoder_channels"),
+      kernel_size=int(model_config.get("kernel_size", 3)),
+      use_batch_norm=bool(model_config.get("use_batch_norm", True)),
+    )
+  elif architecture == "2dcnn_causal":
+    model = TrajectoryAutoencoder2DCNNCausal(
+      horizon=horizon,
+      input_dim=input_dim,
+      latent_dim=latent_dim,
+      encoder_channels=model_config.get("encoder_channels"),
+      decoder_channels=model_config.get("decoder_channels"),
+      kernel_size=int(model_config.get("kernel_size", 3)),
+      use_batch_norm=bool(model_config.get("use_batch_norm", True)),
+    )
+  elif architecture == "2dcnn_transformer":
+    model = TrajectoryAutoencoder2DCNNTransformer(
+      horizon=horizon,
+      feature_dim=input_dim,
+      latent_dim=latent_dim,
+      cnn_channels=model_config.get("cnn_channels"),
+      d_model=int(model_config.get("d_model", 256)),
+      nhead=int(model_config.get("nhead", 8)),
+      num_encoder_layers=int(model_config.get("num_encoder_layers", 4)),
+      num_decoder_layers=int(model_config.get("num_decoder_layers", 4)),
+      dim_feedforward=int(model_config.get("dim_feedforward", 1024)),
+      dropout=float(model_config.get("dropout", 0.0)),
+      activation=str(model_config.get("activation", "relu")),
+      use_residual_connection=bool(
+        model_config.get("use_residual_connection", True)
+      ),
+    )
+  elif architecture == "transformer":
+    model = TrajectoryAutoencoderTransformer(
+      horizon=horizon,
+      input_dim=input_dim,
+      latent_dim=latent_dim,
+      d_model=int(model_config.get("d_model", 256)),
+      nhead=int(model_config.get("nhead", 8)),
+      num_encoder_layers=int(model_config.get("num_encoder_layers", 4)),
+      num_decoder_layers=int(model_config.get("num_decoder_layers", 4)),
+      dim_feedforward=int(model_config.get("dim_feedforward", 1024)),
+      dropout=float(model_config.get("dropout", 0.0)),
+      activation=str(model_config.get("activation", "relu")),
+    )
+  elif architecture == "fsq":
+    model = TrajectoryAutoencoderFSQ(
+      horizon=horizon,
+      input_dim=input_dim,
+      latent_dim=latent_dim,
+      hidden_dim=int(model_config.get("hidden_dim", 256)),
+      fsq_dim=int(model_config.get("fsq_dim", 8)),
+      fsq_levels=model_config.get("fsq_levels"),
+      num_temporal_layers=int(model_config.get("num_temporal_layers", 2)),
+      use_batch_norm=bool(model_config.get("use_batch_norm", True)),
+      dropout=float(model_config.get("dropout", 0.0)),
+    )
+  else:
+    raise ValueError(f"Unsupported trajectory encoder architecture: {architecture}")
+
+  if normalizer is not None:
+    model.normalizer = normalizer
+  return model
+
+
+def _load_trajectory_encoder_checkpoint(
+  load_info: TrajectoryEncoderLoadInfo,
+  *,
+  device: torch.device,
+) -> nn.Module:
+  checkpoint_path = load_info.checkpoint_path or load_info.path
+  checkpoint = torch.load(checkpoint_path, map_location="cpu")
+  model_config = dict(load_info.model_config or {})
+  if "latent_dim" not in model_config and load_info.latent_dim is not None:
+    model_config["latent_dim"] = load_info.latent_dim
+  architecture = load_info.architecture or checkpoint.get("architecture")
+  if not isinstance(architecture, str):
+    raise ValueError(
+      f"Unable to determine trajectory encoder architecture from {checkpoint_path}."
+    )
+
+  input_dim = load_info.input_dim or _coerce_positive_int(checkpoint.get("input_dim"))
+  if input_dim is None:
+    raise ValueError(
+      f"Unable to determine trajectory encoder input_dim from {checkpoint_path}."
+    )
+
+  normalizer = None
+  normalizer_state = checkpoint.get("normalizer_state_dict")
+  if isinstance(normalizer_state, dict) and normalizer_state.get("mean") is not None:
+    normalizer = TrajectoryNormalizer(
+      mean=normalizer_state["mean"],
+      std=normalizer_state["std"],
+    )
+    normalizer.load_state_dict(normalizer_state)
+  elif load_info.normalizer_path is not None:
+    sidecar_state = torch.load(load_info.normalizer_path, map_location="cpu")
+    if isinstance(sidecar_state, dict) and sidecar_state.get("mean") is not None:
+      normalizer = TrajectoryNormalizer(
+        mean=sidecar_state["mean"],
+        std=sidecar_state["std"],
+      )
+      normalizer.load_state_dict(sidecar_state)
+
+  model = _build_trajectory_encoder_model(
+    architecture,
+    horizon=load_info.horizon,
+    input_dim=input_dim,
+    model_config=model_config,
+    normalizer=normalizer,
+  )
+  model_state_dict = dict(checkpoint["model_state_dict"])
+  model_state_dict.pop("normalizer.epsilon", None)
+  model.load_state_dict(model_state_dict)
+  model = model.to(device).eval()
+  return EncoderOnlyModule(model).to(device).eval()
+
+
+def resolve_trajectory_encoder_load_info(
+  encoder_dir: str | Path,
+  configured_horizon: int,
+) -> TrajectoryEncoderLoadInfo:
+  encoder_path = (
+    resolve_wandb_file_path(encoder_dir)
+    if resolve_wandb_file_path is not None
+    else Path(encoder_dir)
+  )
+  metadata = _load_trajectory_encoder_sidecar_metadata(encoder_path)
+  inferred_horizon = _coerce_positive_int(metadata.get("horizon"))
+  feature_layout = metadata.get("feature_layout")
+  latent_dim = _coerce_positive_int(metadata.get("latent_dim"))
+  architecture = metadata.get("architecture")
+  input_dim = _coerce_positive_int(metadata.get("input_dim"))
+  model_config = metadata.get("model_config")
+  checkpoint_path = metadata.get("checkpoint_path")
+  normalizer_path = metadata.get("normalizer_path")
+  resolved_horizon = configured_horizon
+
+  if feature_layout not in (None, _TRACKING_ENCODER_FEATURE_LAYOUT):
+    raise ValueError(
+      "Trajectory encoder expects feature_layout="
+      f"{feature_layout!r}, but MultiMotionCommand currently provides only "
+      f"{_TRACKING_ENCODER_FEATURE_LAYOUT!r} future trajectories."
+    )
+
+  if inferred_horizon is not None:
+    if configured_horizon > 1 and configured_horizon != inferred_horizon:
+      raise ValueError(
+        "Configured motion horizon does not match trajectory encoder horizon: "
+        f"cfg.horizon={configured_horizon}, encoder_horizon={inferred_horizon}. "
+        "Set --env.commands.motion.horizon to match the encoder or omit it and "
+        "let the encoder metadata drive the value."
+      )
+    if configured_horizon <= 1:
+      resolved_horizon = inferred_horizon
+
+  if resolved_horizon <= 0:
+    raise ValueError(
+      "Trajectory encoders require a positive motion horizon. Set "
+      "--env.commands.motion.horizon explicitly or use an encoder artifact that "
+      "includes config/checkpoint metadata with horizon."
+    )
+
+  return TrajectoryEncoderLoadInfo(
+    path=encoder_path,
+    horizon=resolved_horizon,
+    inferred_horizon=inferred_horizon,
+    feature_layout=feature_layout if isinstance(feature_layout, str) else None,
+    latent_dim=latent_dim,
+    architecture=architecture if isinstance(architecture, str) else None,
+    input_dim=input_dim,
+    model_config=dict(model_config) if isinstance(model_config, dict) else None,
+    checkpoint_path=checkpoint_path if isinstance(checkpoint_path, Path) else None,
+    normalizer_path=normalizer_path if isinstance(normalizer_path, Path) else None,
+  )
+
+
+def validate_trajectory_encoder_output(
+  encoder: torch.nn.Module,
+  load_info: TrajectoryEncoderLoadInfo,
+  *,
+  device: torch.device,
+  input_dim: int = 65,
+) -> None:
+  """Run a lightweight shape check against saved encoder metadata."""
+  expected_latent_dim = load_info.latent_dim
+  if expected_latent_dim is None:
+    return
+
+  dummy_input = torch.zeros(
+    (1, load_info.horizon, input_dim), dtype=torch.float32, device=device
+  )
+  with torch.no_grad():
+    encoded = encoder(dummy_input)
+
+  if encoded.ndim != 2:
+    raise ValueError(
+      "Trajectory encoder must return a rank-2 latent tensor of shape "
+      f"(batch, latent_dim), but got shape {tuple(encoded.shape)}."
+    )
+
+  actual_latent_dim = int(encoded.shape[-1])
+  if actual_latent_dim != expected_latent_dim:
+    raise ValueError(
+      "Trajectory encoder output dimension does not match saved metadata: "
+      f"encoder_output_dim={actual_latent_dim}, expected_latent_dim={expected_latent_dim}."
+    )
 
 
 class MotionLoader:
@@ -1202,8 +1627,33 @@ class MultiMotionCommand(CommandTerm):
 
     # Load trajectory encoder
     if self.cfg.encoder_dir is not None:
-      self.trajectory_encoder = torch.jit.load(
-        self.cfg.encoder_dir, map_location=self.device
+      encoder_info = resolve_trajectory_encoder_load_info(
+        self.cfg.encoder_dir, self.cfg.horizon
+      )
+      if self.cfg.horizon != encoder_info.horizon:
+        print(
+          "[INFO] Inferred motion horizon from trajectory encoder: "
+          f"{self.cfg.horizon} -> {encoder_info.horizon}"
+        )
+      self.cfg.horizon = encoder_info.horizon
+      if encoder_info.path.suffix == ".jit":
+        self.trajectory_encoder = torch.jit.load(
+          str(encoder_info.path), map_location=self.device
+        ).eval()
+      elif encoder_info.path.suffix in {".pt", ".pth"}:
+        self.trajectory_encoder = _load_trajectory_encoder_checkpoint(
+          encoder_info,
+          device=self.device,
+        )
+      else:
+        raise ValueError(
+          "Unsupported trajectory encoder path. Expected a TorchScript encoder "
+          f"or checkpoint file, got: {encoder_info.path}"
+        )
+      validate_trajectory_encoder_output(
+        self.trajectory_encoder,
+        encoder_info,
+        device=self.device,
       )
     else:
       self.trajectory_encoder = None

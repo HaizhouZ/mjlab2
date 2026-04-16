@@ -1,5 +1,6 @@
 """Tests specific to motion tracking tasks."""
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -7,9 +8,19 @@ import torch
 
 from mjlab.asset_zoo.robots import G1_ACTION_SCALE
 from mjlab.envs.mdp.actions import JointPositionActionCfg
+from mjlab.scripts.train_trajectory_encoder import (
+  TrajectoryEncoderModelCfg,
+  build_model,
+)
 from mjlab.tasks.registry import list_tasks, load_env_cfg
 from mjlab.tasks.tracking.mdp import MotionCommandCfg, MultiMotionCommandCfg
 from mjlab.tasks.tracking.mdp import observations as tracking_observations
+from mjlab.tasks.tracking.mdp.commands import (
+  _load_trajectory_encoder_checkpoint,
+  TrajectoryEncoderLoadInfo,
+  resolve_trajectory_encoder_load_info,
+  validate_trajectory_encoder_output,
+)
 
 
 @pytest.fixture(scope="module")
@@ -175,3 +186,127 @@ def test_motion_anchor_pos_b_uses_multimotion_horizon(monkeypatch: pytest.Monkey
 
   assert fake_command.called_horizon == 3
   assert obs.shape == (2, 9)
+
+
+def test_resolve_trajectory_encoder_load_info_infers_horizon_from_config(
+  tmp_path: Path,
+) -> None:
+  encoder_path = tmp_path / "best_encoder.jit"
+  encoder_path.write_text("jit", encoding="utf-8")
+  (tmp_path / "config.yaml").write_text(
+    "horizon: 16\ninput_features: tracking\nmodel:\n  latent_dim: 128\n",
+    encoding="utf-8",
+  )
+
+  info = resolve_trajectory_encoder_load_info(encoder_path, configured_horizon=1)
+
+  assert info.path == encoder_path
+  assert info.inferred_horizon == 16
+  assert info.horizon == 16
+  assert info.feature_layout == "tracking"
+  assert info.latent_dim == 128
+
+
+def test_resolve_trajectory_encoder_load_info_uses_checkpoint_fallback(
+  tmp_path: Path,
+) -> None:
+  encoder_path = tmp_path / "best_encoder.jit"
+  encoder_path.write_text("jit", encoding="utf-8")
+  torch.save(
+    {"horizon": 24, "feature_layout": "tracking", "latent_dim": 96},
+    tmp_path / "best_model.pt",
+  )
+
+  info = resolve_trajectory_encoder_load_info(encoder_path, configured_horizon=1)
+
+  assert info.inferred_horizon == 24
+  assert info.horizon == 24
+  assert info.feature_layout == "tracking"
+  assert info.latent_dim == 96
+
+
+def test_resolve_trajectory_encoder_load_info_rejects_horizon_mismatch(
+  tmp_path: Path,
+) -> None:
+  encoder_path = tmp_path / "best_encoder.jit"
+  encoder_path.write_text("jit", encoding="utf-8")
+  (tmp_path / "config.yaml").write_text(
+    "horizon: 16\ninput_features: tracking\n",
+    encoding="utf-8",
+  )
+
+  with pytest.raises(ValueError, match="cfg.horizon=8, encoder_horizon=16"):
+    resolve_trajectory_encoder_load_info(encoder_path, configured_horizon=8)
+
+
+def test_resolve_trajectory_encoder_load_info_rejects_unsupported_feature_layout(
+  tmp_path: Path,
+) -> None:
+  encoder_path = tmp_path / "best_encoder.jit"
+  encoder_path.write_text("jit", encoding="utf-8")
+  (tmp_path / "config.yaml").write_text(
+    "horizon: 16\ninput_features: tracking_with_object\n",
+    encoding="utf-8",
+  )
+
+  with pytest.raises(ValueError, match="feature_layout='tracking_with_object'"):
+    resolve_trajectory_encoder_load_info(encoder_path, configured_horizon=1)
+
+
+def test_validate_trajectory_encoder_output_rejects_latent_dim_mismatch() -> None:
+  class FakeEncoder(torch.nn.Module):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+      return torch.zeros((x.shape[0], 32), dtype=x.dtype, device=x.device)
+
+  load_info = TrajectoryEncoderLoadInfo(
+    path=Path("/tmp/fake_encoder.jit"),
+    horizon=16,
+    inferred_horizon=16,
+    feature_layout="tracking",
+    latent_dim=64,
+  )
+
+  with pytest.raises(
+    ValueError,
+    match="encoder_output_dim=32, expected_latent_dim=64",
+  ):
+    validate_trajectory_encoder_output(
+      FakeEncoder(),
+      load_info,
+      device=torch.device("cpu"),
+    )
+
+
+def test_load_trajectory_encoder_checkpoint_restores_model_from_best_model(
+  tmp_path: Path,
+) -> None:
+  model_cfg = TrajectoryEncoderModelCfg(architecture="unet_simple", latent_dim=8)
+  model = build_model(model_cfg, horizon=16, input_dim=65)
+  checkpoint_path = tmp_path / "best_model.pt"
+  torch.save(
+    {
+      "model_state_dict": model.state_dict(),
+      "architecture": "unet_simple",
+      "latent_dim": 8,
+      "horizon": 16,
+      "input_dim": 65,
+      "feature_layout": "tracking",
+      "config": {"model": {"architecture": "unet_simple", "latent_dim": 8}},
+    },
+    checkpoint_path,
+  )
+
+  load_info = resolve_trajectory_encoder_load_info(
+    checkpoint_path,
+    configured_horizon=1,
+  )
+  restored = _load_trajectory_encoder_checkpoint(
+    load_info,
+    device=torch.device("cpu"),
+  )
+  encoded = restored(torch.zeros((1, 16, 65), dtype=torch.float32))
+
+  assert load_info.path == checkpoint_path
+  assert load_info.checkpoint_path == checkpoint_path
+  assert load_info.latent_dim == 8
+  assert tuple(encoded.shape) == (1, 8)

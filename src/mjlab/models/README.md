@@ -4,7 +4,10 @@ Multiple autoencoder architectures for compressing robot trajectory data to a la
 
 ## Overview
 
-The trajectory autoencoders compress temporal robot trajectory data (joint positions, velocities, anchor pose, object pose) into a compact latent vector and can reconstruct the full trajectory from the latent.
+The trajectory autoencoders compress temporal robot trajectory data into a compact latent vector and can reconstruct the full trajectory from the latent.
+The runtime tracking encoder path in `mjlab` uses 65 features per timestep by default:
+joint position, joint velocity, anchor position, and anchor quaternion.
+Object pose can still be included during training when needed.
 
 ## Available Architectures
 
@@ -29,11 +32,14 @@ The trajectory autoencoders compress temporal robot trajectory data (joint posit
 - **Pros**: Can capture 2D patterns in the trajectory matrix
 - **Cons**: More memory intensive
 
-### Input Features (per timestep, total 72 dimensions)
+### Input Features
+- Tracking runtime layout: 65 dimensions per timestep
 - `joint_pos`: 29 dimensions (joint positions)
 - `joint_vel`: 29 dimensions (joint velocities)
 - `anchor_pos`: 3 dimensions (robot anchor body position)
 - `anchor_quat`: 4 dimensions (robot anchor body quaternion)
+
+- Optional object-aware layout: 72 dimensions per timestep
 - `object_pos`: 3 dimensions (object position)
 - `object_quat`: 4 dimensions (object quaternion)
 
@@ -57,26 +63,26 @@ from mjlab.models import (
 # Create U-Net model
 model_unet = TrajectoryAutoencoderUNet(
     horizon=32,        # Number of timesteps in trajectory
-    input_dim=72,    # Features per timestep
+    input_dim=65,    # Features per timestep for tracking runtime
     latent_dim=128,    # Latent vector dimension
 )
 
 # Create TCN model
 model_tcn = TrajectoryAutoencoderTCN(
     horizon=32,
-    input_dim=72,
+    input_dim=65,
     latent_dim=128,
 )
 
 # Create 2D CNN model
 model_2dcnn = TrajectoryAutoencoder2DCNN(
     horizon=32,
-    input_dim=72,
+    input_dim=65,
     latent_dim=128,
 )
 
 # Use any model the same way
-trajectory = torch.randn(4, 32, 72)  # (batch_size, horizon, input_dim)
+trajectory = torch.randn(4, 32, 65)  # (batch_size, horizon, input_dim)
 latent = model_unet.encode(trajectory)    # (batch_size, latent_dim)
 reconstructed = model_unet.decode(latent)  # (batch_size, horizon, input_dim)
 
@@ -89,32 +95,33 @@ reconstructed, latent = model_unet(trajectory)
 Use the provided training script with different architectures:
 
 ```bash
-# Train U-Net (default)
-python src/mjlab/scripts/train_trajectory_autoencoder.py \
+# Train a tracking-layout encoder (default 65 features)
+train_trajectory_encoder \
     --motion-dir motions/output/difficult_sampling \
-    --architecture unet \
     --horizon 32 \
-    --latent-dim 128 \
+    --model.architecture unet_simple \
+    --model.latent-dim 128 \
     --batch-size 32 \
     --epochs 100 \
     --device cuda
 
 # Train TCN
-python src/mjlab/scripts/train_trajectory_autoencoder.py \
+train_trajectory_encoder \
     --motion-dir motions/output/difficult_sampling \
-    --architecture tcn \
+    --model.architecture tcn \
     --horizon 32 \
-    --latent-dim 128 \
+    --model.latent-dim 128 \
     --batch-size 32 \
     --epochs 100 \
     --device cuda
 
-# Train 2D CNN
-python src/mjlab/scripts/train_trajectory_autoencoder.py \
+# Train the optional object-aware 72-feature layout
+train_trajectory_encoder \
     --motion-dir motions/output/difficult_sampling \
-    --architecture 2dcnn \
+    --input-features tracking_with_object \
+    --model.architecture 2dcnn \
     --horizon 32 \
-    --latent-dim 128 \
+    --model.latent-dim 128 \
     --batch-size 32 \
     --epochs 100 \
     --device cuda
@@ -150,7 +157,7 @@ trajectory = dataset[0]  # Shape: (horizon, input_dim)
 
 ### Common Parameters (all architectures)
 - `horizon`: Number of timesteps in each trajectory window
-- `input_dim`: Dimension of features per timestep (default: 72)
+- `input_dim`: Dimension of features per timestep (65 for tracking runtime, 72 with object pose)
 - `latent_dim`: Dimension of compressed latent vector (default: 128)
 
 ### U-Net Specific
@@ -173,6 +180,5 @@ trajectory = dataset[0]  # Shape: (horizon, input_dim)
 
 - `trajectory_autoencoder.py`: Main autoencoder model
 - `trajectory_dataset.py`: Dataset loader using MultiMotionLoader
-- `train_trajectory_autoencoder.py`: Training script
+- `train_trajectory_encoder.py`: Training script
 - `test_trajectory_autoencoder.py`: Test script
-

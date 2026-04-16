@@ -1,0 +1,101 @@
+motion_dir: null
+motion_name_pattern:
+  - ".*"
+
+wandb_motion:
+  entity: null
+  project: null
+  cache_dir: null
+  artifact_type: "motions"
+
+output_dir: "logs/trajectory_encoder"
+run_name: null
+
+robot: "g1"
+body_names:
+  - "pelvis"
+  - "left_hip_roll_link"
+  - "left_knee_link"
+  - "left_ankle_roll_link"
+  - "right_hip_roll_link"
+  - "right_knee_link"
+  - "right_ankle_roll_link"
+  - "torso_link"
+  - "left_shoulder_roll_link"
+  - "left_elbow_link"
+  - "left_wrist_yaw_link"
+  - "right_shoulder_roll_link"
+  - "right_elbow_link"
+  - "right_wrist_yaw_link"
+anchor_body_name: "torso_link"
+
+input_features: "tracking"
+horizon: 32
+stride: 1
+
+batch_size: 512
+epochs: 200
+lr: 0.001
+weight_decay: 0.0
+val_split: 0.1
+scheduler: "reduce_on_plateau"
+min_lr: null
+scheduler_patience: 5
+scheduler_factor: 0.5
+
+device: "cuda"
+seed: 0
+num_workers: 4
+mixed_precision: true
+amp_dtype: "float16"
+tf32: true
+cudnn_benchmark: true
+compile_model: false
+prefetch_factor: 4
+max_normalizer_samples: 10000
+checkpoint_every: 50
+save_jit: true
+normalize: true
+
+model:
+  architecture: "unet_simple"
+  latent_dim: 128
+  encoder_channels: null
+  decoder_channels: null
+  encoder_hidden_dims: null
+  decoder_hidden_dims: null
+  num_channels: null
+  cnn_channels: null
+  use_batch_norm: true
+  dropout: 0.0
+  kernel_size: 3
+  use_residual: true
+  use_temporal_pos_encoding: true
+  use_temporal_conv: false
+  temporal_conv_dim: null
+  temporal_conv_kernel_size: 3
+  d_model: 256
+  nhead: 8
+  num_encoder_layers: 4
+  num_decoder_layers: 4
+  dim_feedforward: 1024
+  activation: "relu"
+  use_residual_connection: true
+  hidden_dim: 256
+  fsq_dim: 8
+  fsq_levels: null
+  num_temporal_layers: 2
+
+early_stopping:
+  enabled: true
+  patience: 25
+  min_delta: 0.0
+
+wandb_log:
+  enabled: false
+  entity: null
+  project: "trajectory_encoder"
+  run_name: null
+  upload_artifact: true
+  artifact_name: null
+  artifact_type: "trajectory_encoder"

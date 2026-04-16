@@ -9,6 +9,13 @@ import wandb
 from tqdm import tqdm
 
 
+def _get_wandb_artifact_root() -> Path | None:
+  artifact_root = (
+    os.environ.get("MJLAB_WANDB_CACHE_DIR") or os.environ.get("WANDB_ARTIFACT_DIR")
+  )
+  return Path(artifact_root) if artifact_root else None
+
+
 def resolve_wandb_artifact_path(path: str | Path) -> Path:
   """Resolve local artifact-style paths against the configured wandb artifact root.
 
@@ -24,14 +31,56 @@ def resolve_wandb_artifact_path(path: str | Path) -> Path:
 
   artifact_prefix = Path("artifacts")
   if raw_path == artifact_prefix or raw_path.parts[:1] == artifact_prefix.parts:
-    artifact_root = (
-      os.environ.get("MJLAB_WANDB_CACHE_DIR") or os.environ.get("WANDB_ARTIFACT_DIR")
-    )
+    artifact_root = _get_wandb_artifact_root()
     if artifact_root:
       relative_parts = raw_path.parts[1:]
-      return Path(artifact_root).joinpath(*relative_parts)
+      return artifact_root.joinpath(*relative_parts)
 
   return (Path.cwd() / raw_path).resolve()
+
+
+def resolve_wandb_file_path(path: str | Path) -> Path:
+  """Resolve a local path or a ``wandb://`` artifact URI to a local file path.
+
+  Accepted forms:
+  - absolute paths
+  - relative paths
+  - ``artifacts/...`` paths resolved via ``MJLAB_WANDB_CACHE_DIR`` / ``WANDB_ARTIFACT_DIR``
+  - ``wandb://<entity>/<project>/<artifact[:alias]>/<path/in/artifact>``
+  """
+  if not isinstance(path, str):
+    return resolve_wandb_artifact_path(path)
+
+  if not path.startswith("wandb://"):
+    return resolve_wandb_artifact_path(path)
+
+  raw = path[len("wandb://") :]
+  parts = raw.split("/", 3)
+  if len(parts) < 4 or not parts[3]:
+    raise ValueError(
+      "Invalid wandb file URI. Expected "
+      "wandb://<entity>/<project>/<artifact[:alias]>/<path/in/artifact>"
+    )
+
+  entity, project, artifact_ref, rel_path = parts
+  if ":" not in artifact_ref:
+    artifact_ref += ":latest"
+
+  api = wandb.Api()
+  artifact = api.artifact(f"{entity}/{project}/{artifact_ref}")
+  artifact_root = _get_wandb_artifact_root()
+  local_dir = (
+    Path(artifact.download(root=str(artifact_root)))
+    if artifact_root is not None
+    else Path(artifact.download())
+  )
+  local_file = local_dir / rel_path
+  if not local_file.exists():
+    raise FileNotFoundError(
+      f"Resolved wandb artifact file does not exist: {local_file} "
+      f"(from {path})"
+    )
+  return local_file
 
 
 def _get_default_wandb_motion_cache_root() -> Path:
