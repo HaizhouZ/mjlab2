@@ -30,12 +30,32 @@ class RslRlPpoActorCriticCfg:
 class RslRlReppoActorCriticCfg(RslRlPpoActorCriticCfg):
   """Config for the REPPO actor and critic networks."""
 
+  activation: str = "swish"
+  """Activation function used by the REPPO actor/critic networks."""
   ent_start: float = 0.001
   """Initial entropy temperature."""
   kl_start: float = 0.01
   """Initial KL lagrangian temperature."""
   actor_min_std: float = 0.1
   """Minimum action standard deviation added on top of the learned std."""
+  actor_hidden_dim: int = 512
+  """Fallback hidden dimension when actor_hidden_dims is not set."""
+  critic_hidden_dim: int = 512
+  """Fallback hidden dimension when critic_hidden_dims is not set."""
+  num_actor_layers: int = 3
+  """Total number of linear layers in the actor when using fallback dimensions."""
+  num_critic_encoder_layers: int = 2
+  """Total number of linear layers in the critic encoder when using fallback dimensions."""
+  num_critic_head_layers: int = 2
+  """Total number of linear layers in the critic distribution head."""
+  num_critic_pred_layers: int = 2
+  """Total number of linear layers in the critic auxiliary prediction head."""
+  use_actor_norm: bool = True
+  """Whether to use RMSNorm-style normalization on actor hidden layers."""
+  use_critic_norm: bool = True
+  """Whether to use RMSNorm-style normalization on critic hidden layers."""
+  use_encoder_norm: bool = False
+  """Whether to normalize the critic encoder output."""
   class_name: str = "ReppoPolicy"
   """REPPO policy class name."""
   critic_class_name: str = "ReppoCritic"
@@ -100,6 +120,8 @@ class RslRlReppoAlgorithmCfg(RslRlPpoAlgorithmCfg):
   actor_kl_clip_mode: Literal["full", "clipped", "value"] = "full"
   ent_target_mult: float = 0.5
   num_action_samples: int = 64
+  num_action_sample_chunk_size: int = 1
+  """Chunk size used when Monte Carlo estimating V(s_{t+1}) to control memory use."""
   class_name: str = "Reppo"
   """Ignore, required by REPPO runner configuration."""
 
