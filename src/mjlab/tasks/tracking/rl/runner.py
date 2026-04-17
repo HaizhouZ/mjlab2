@@ -42,6 +42,7 @@ def _save_tracking_policy(runner, path: str) -> None:
   filename = policy_path.split("/")[-2] + ".onnx"
   policy = runner.alg.policy
   normalizer = _get_policy_normalizer(policy)
+  logger_type = getattr(getattr(runner, "logger", None), "logger_type", None)
   export_motion_policy_as_onnx(
     runner.env.unwrapped,
     _get_exportable_policy(policy),
@@ -51,7 +52,7 @@ def _save_tracking_policy(runner, path: str) -> None:
   )
   run_name = (
     wandb.run.name
-    if getattr(runner, "logger_type", None) == "wandb" and wandb.run
+    if logger_type == "wandb" and wandb.run
     else "local"
   )
   attach_onnx_metadata(
@@ -60,7 +61,7 @@ def _save_tracking_policy(runner, path: str) -> None:
     path=policy_path,
     filename=filename,
   )
-  if getattr(runner, "logger_type", None) in ["wandb"]:
+  if logger_type in ["wandb"]:
     wandb.save(policy_path + filename, base_path=os.path.dirname(policy_path))
     if getattr(runner, "registry_name", None) is not None and wandb.run is not None:
       wandb.run.use_artifact(runner.registry_name)  # type: ignore[arg-type]
@@ -140,7 +141,7 @@ class MotionTrackingReppoRunner(ReppoRunner):
 
         self.compute_returns(obs)
 
-      loss_dict = self.update()
+      loss_dict, metric_dict = self.update()
 
       stop = time.time()
       learn_time = stop - start
@@ -153,6 +154,7 @@ class MotionTrackingReppoRunner(ReppoRunner):
         collect_time=collect_time,
         learn_time=learn_time,
         loss_dict=loss_dict,
+        metric_dict=metric_dict,
         learning_rate=self.actor_optimizer.param_groups[0]["lr"],
         action_std=self.policy.output_std,
         rnd_weight=None,

@@ -18,20 +18,21 @@ def _export_velocity_policy(runner, path: str) -> None:
     normalizer = runner.alg.policy.actor_obs_normalizer
   else:
     normalizer = None
+  logger_type = getattr(getattr(runner, "logger", None), "logger_type", None)
   export_velocity_policy_as_onnx(
     runner.alg.policy,
     normalizer=normalizer,
     path=policy_path,
     filename=filename,
   )
-  run_name = wandb.run.name if runner.logger_type == "wandb" and wandb.run else "local"
+  run_name = wandb.run.name if logger_type == "wandb" and wandb.run else "local"
   attach_onnx_metadata(
     runner.env.unwrapped,
     run_name,  # type: ignore[arg-type]
     path=policy_path,
     filename=filename,
   )
-  if runner.logger_type in ["wandb"]:
+  if logger_type in ["wandb"]:
     wandb.save(policy_path + filename, base_path=os.path.dirname(policy_path))
 
 
