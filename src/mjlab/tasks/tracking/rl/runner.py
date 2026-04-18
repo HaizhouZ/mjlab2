@@ -1,12 +1,11 @@
 import os
-import time
 from types import SimpleNamespace
 
 import torch
+import torch.nn as nn
 import wandb
 from rsl_rl.env.vec_env import VecEnv
 from rsl_rl.runners import ReppoRunner
-from rsl_rl.runners.reppo_runner import check_nan
 
 from mjlab.rl import RslRlVecEnvWrapper
 from mjlab.rl.runner import MjlabOnPolicyRunner
@@ -24,9 +23,28 @@ def _get_policy_normalizer(policy):
   return None
 
 
+class _InferenceActorWrapper(nn.Module):
+  def __init__(self, policy: nn.Module):
+    super().__init__()
+    self.policy = policy
+    self.input_dim = getattr(
+      policy, "actor_obs_dim", getattr(policy, "obs_dim", None)
+    )
+
+  def forward(self, obs: torch.Tensor) -> torch.Tensor:
+    return self.policy.act_inference(obs)
+
+
 def _get_exportable_policy(policy):
   if hasattr(policy, "as_onnx"):
     return SimpleNamespace(actor=policy.as_onnx(False), is_recurrent=False)
+  if hasattr(policy, "act_inference") and hasattr(policy, "actor"):
+    return SimpleNamespace(
+      actor=_InferenceActorWrapper(policy),
+      is_recurrent=getattr(policy, "is_recurrent", False),
+      memory_a=getattr(policy, "memory_a", None),
+      memory_s=getattr(policy, "memory_s", None),
+    )
   if hasattr(policy, "actor") or hasattr(policy, "student"):
     return policy
   return SimpleNamespace(
@@ -105,68 +123,19 @@ class MotionTrackingReppoRunner(ReppoRunner):
     super().__init__(env, train_cfg, log_dir, device)
     self.registry_name = registry_name
 
-  def learn(self, num_learning_iterations: int, init_at_random_ep_len: bool = False) -> None:
-    if init_at_random_ep_len:
-      self.env.episode_length_buf = torch.randint_like(
-        self.env.episode_length_buf, high=int(self.env.max_episode_length)
-      )
-
-    obs = self.env.get_observations().to(self.device)
-    self.train_mode()
-
-    if self.is_distributed:
-      self.broadcast_parameters()
-
-    self.logger.init_logging_writer()
-
-    start_it = self.current_learning_iteration
-    total_it = start_it + num_learning_iterations
-    for it in range(start_it, total_it):
-      start = time.time()
-      with torch.inference_mode():
-        for _ in range(self.cfg["num_steps_per_env"]):
-          actions = self.act(obs)
-          obs, rewards, dones, extras = self.env.step(actions.to(self.env.device))
-          if self.cfg.get("check_for_nan", True):
-            check_nan(obs, rewards, dones)
-          obs = obs.to(self.device)
-          rewards = rewards.to(self.device)
-          dones = dones.to(self.device)
-          self.process_env_step(obs, rewards, dones, extras)
-          self.logger.process_env_step(rewards.detach(), dones, extras)
-
-        stop = time.time()
-        collect_time = stop - start
-        start = stop
-
-        self.compute_returns(obs)
-
-      loss_dict, metric_dict = self.update()
-
-      stop = time.time()
-      learn_time = stop - start
-      self.current_learning_iteration = it
-
-      self.logger.log(
-        it=it,
-        start_it=start_it,
-        total_it=total_it,
-        collect_time=collect_time,
-        learn_time=learn_time,
-        loss_dict=loss_dict,
-        metric_dict=metric_dict,
-        learning_rate=self.actor_optimizer.param_groups[0]["lr"],
-        action_std=self.policy.output_std,
-        rnd_weight=None,
-      )
-
-      if self.gpu_global_rank == 0 and self.logger.log_dir is not None and it % self.cfg["save_interval"] == 0:
-        self.save(os.path.join(self.logger.log_dir, f"model_{it}.pt"))
-
-    if self.gpu_global_rank == 0 and self.logger.log_dir is not None:
-      self.save(os.path.join(self.logger.log_dir, f"model_{self.current_learning_iteration}.pt"))
-    self.logger.stop_logging_writer()
-
   def save(self, path: str, infos=None):
-    super().save(path, infos)
+    env_state = {"common_step_counter": self.env.unwrapped.common_step_counter}
+    super().save(path, {**(infos or {}), "env_state": env_state})
     _save_tracking_policy(self, path)
+
+  def load(
+    self, path: str, load_optimizer: bool = True, map_location: str | None = None
+  ):
+    infos = super().load(
+      path, load_optimizer=load_optimizer, map_location=map_location
+    )
+    if infos and "env_state" in infos:
+      self.env.unwrapped.common_step_counter = infos["env_state"][
+        "common_step_counter"
+      ]
+    return infos

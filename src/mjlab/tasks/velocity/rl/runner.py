@@ -1,5 +1,8 @@
 import os
+from types import SimpleNamespace
 
+import torch
+import torch.nn as nn
 import wandb
 from rsl_rl.runners import ReppoRunner
 
@@ -11,6 +14,29 @@ from mjlab.tasks.velocity.rl.exporter import (
 )
 
 
+class _InferenceActorWrapper(nn.Module):
+  def __init__(self, policy: nn.Module):
+    super().__init__()
+    self.policy = policy
+    self.input_dim = getattr(
+      policy, "actor_obs_dim", getattr(policy, "obs_dim", None)
+    )
+
+  def forward(self, obs: torch.Tensor) -> torch.Tensor:
+    return self.policy.act_inference(obs)
+
+
+def _get_exportable_policy(policy):
+  if hasattr(policy, "as_onnx"):
+    return policy
+  if hasattr(policy, "act_inference") and hasattr(policy, "actor"):
+    return SimpleNamespace(
+      actor=_InferenceActorWrapper(policy),
+      is_recurrent=getattr(policy, "is_recurrent", False),
+    )
+  return policy
+
+
 def _export_velocity_policy(runner, path: str) -> None:
   policy_path = path.split("model")[0]
   filename = os.path.basename(os.path.dirname(policy_path)) + ".onnx"
@@ -20,7 +46,7 @@ def _export_velocity_policy(runner, path: str) -> None:
     normalizer = None
   logger_type = getattr(getattr(runner, "logger", None), "logger_type", None)
   export_velocity_policy_as_onnx(
-    runner.alg.policy,
+    _get_exportable_policy(runner.alg.policy),
     normalizer=normalizer,
     path=policy_path,
     filename=filename,
@@ -49,5 +75,18 @@ class VelocityReppoRunner(ReppoRunner):
   env: RslRlVecEnvWrapper
 
   def save(self, path: str, infos=None):
-    super().save(path, infos)
+    env_state = {"common_step_counter": self.env.unwrapped.common_step_counter}
+    super().save(path, {**(infos or {}), "env_state": env_state})
     _export_velocity_policy(self, path)
+
+  def load(
+    self, path: str, load_optimizer: bool = True, map_location: str | None = None
+  ):
+    infos = super().load(
+      path, load_optimizer=load_optimizer, map_location=map_location
+    )
+    if infos and "env_state" in infos:
+      self.env.unwrapped.common_step_counter = infos["env_state"][
+        "common_step_counter"
+      ]
+    return infos

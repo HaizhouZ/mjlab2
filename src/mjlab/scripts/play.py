@@ -35,6 +35,24 @@ from mjlab.viewer import NativeMujocoViewer, ViserPlayViewer
 def _get_exportable_policy(policy):
   if hasattr(policy, "as_onnx"):
     return SimpleNamespace(actor=policy.as_onnx(False), is_recurrent=False)
+  if hasattr(policy, "act_inference") and hasattr(policy, "actor"):
+    class _InferenceActorWrapper(torch.nn.Module):
+      def __init__(self, actor_policy):
+        super().__init__()
+        self.policy = actor_policy
+        self.input_dim = getattr(
+          actor_policy, "actor_obs_dim", getattr(actor_policy, "obs_dim", None)
+        )
+
+      def forward(self, obs: torch.Tensor) -> torch.Tensor:
+        return self.policy.act_inference(obs)
+
+    return SimpleNamespace(
+      actor=_InferenceActorWrapper(policy),
+      is_recurrent=getattr(policy, "is_recurrent", False),
+      memory_a=getattr(policy, "memory_a", None),
+      memory_s=getattr(policy, "memory_s", None),
+    )
   if hasattr(policy, "actor") or hasattr(policy, "student"):
     return policy
   return SimpleNamespace(
@@ -262,7 +280,7 @@ def run_play(task_id: str, cfg: PlayConfig):
       )
     else:
       export_policy_as_onnx(
-        runner.alg.policy,
+        _get_exportable_policy(runner.alg.policy),
         normalizer=normalizer,
         path=onnx_path,
         filename=onnx_filename,
