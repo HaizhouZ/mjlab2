@@ -32,7 +32,6 @@ def yam_lift_cube_reppo_runner_cfg() -> RslRlReppoRunnerCfg:
   cfg.algorithm.kl_bound = 0.1
   cfg.algorithm.actor_kl_clip_mode = "full"
   cfg.algorithm.ent_target_mult = 0.5
-  cfg.algorithm.num_action_samples = 64
   return cfg
 
 

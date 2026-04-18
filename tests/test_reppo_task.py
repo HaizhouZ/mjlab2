@@ -53,7 +53,6 @@ def test_yam_reppo_config_matches_mjplayground_settings() -> None:
   assert cfg.algorithm.vmin == 0.0
   assert cfg.algorithm.vmax == 150.0
   assert cfg.algorithm.kl_bound == 0.1
-  assert cfg.algorithm.num_action_samples == 64
 
 
 def test_g1_velocity_reppo_config_uses_estimated_value_support() -> None:

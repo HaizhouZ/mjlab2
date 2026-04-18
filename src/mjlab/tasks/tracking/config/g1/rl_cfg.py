@@ -91,8 +91,6 @@ def unitree_g1_multitracking_reppo_runner_cfg() -> RslRlReppoRunnerCfg:
       kl_bound=0.1,
       actor_kl_clip_mode="clipped",
       ent_target_mult=0.5,
-      num_action_samples=64,
-      num_action_sample_chunk_size=1,
     ),
     experiment_name="g1_multitracking_reppo",
     save_interval=50,

@@ -71,7 +71,6 @@ def unitree_g1_reppo_runner_cfg() -> RslRlReppoRunnerCfg:
       kl_bound=0.1,
       actor_kl_clip_mode="full",
       ent_target_mult=0.5,
-      num_action_samples=64,
     ),
     experiment_name="g1_velocity_reppo",
     save_interval=50,

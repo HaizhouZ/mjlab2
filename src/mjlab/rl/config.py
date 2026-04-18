@@ -38,6 +38,10 @@ class RslRlReppoActorCriticCfg(RslRlPpoActorCriticCfg):
   """Initial KL lagrangian temperature."""
   actor_min_std: float = 0.1
   """Minimum action standard deviation added on top of the learned std."""
+  state_dependent_std: bool = True
+  """Whether REPPO uses observation-conditioned action std. Set False for PPO-style global std."""
+  reset_global_std_on_resume: bool = False
+  """Whether to reset global std back to init_noise_std after loading a checkpoint."""
   actor_hidden_dim: int = 512
   """Fallback hidden dimension when actor_hidden_dims is not set."""
   critic_hidden_dim: int = 512
@@ -119,9 +123,6 @@ class RslRlReppoAlgorithmCfg(RslRlPpoAlgorithmCfg):
   kl_bound: float = 0.1
   actor_kl_clip_mode: Literal["full", "clipped", "value"] = "full"
   ent_target_mult: float = 0.5
-  num_action_samples: int = 64
-  num_action_sample_chunk_size: int = 1
-  """Chunk size used when Monte Carlo estimating V(s_{t+1}) to control memory use."""
   class_name: str = "Reppo"
   """Ignore, required by REPPO runner configuration."""
 

@@ -31,4 +31,3 @@ agent:
     kl_bound: 0.1
     actor_kl_clip_mode: full
     ent_target_mult: 0.5
-    num_action_samples: 64
