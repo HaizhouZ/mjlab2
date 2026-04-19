@@ -10,28 +10,25 @@ def yam_lift_cube_reppo_runner_cfg() -> RslRlReppoRunnerCfg:
     max_iterations=5_000,
   )
   cfg.policy.init_noise_std = 1.0
-  cfg.policy.ent_start = 0.001
-  cfg.policy.kl_start = 0.01
-  cfg.policy.actor_min_std = 0.1
   cfg.policy.actor_obs_normalization = True
   cfg.policy.critic_obs_normalization = True
   cfg.policy.actor_hidden_dims = (512, 256, 128)
   cfg.policy.critic_hidden_dims = (512, 256, 128)
   cfg.policy.activation = "elu"
+  cfg.policy.distribution_type = "tanh"
+  cfg.policy.init_alpha_temp = 0.001
+  cfg.policy.init_alpha_kl = 0.01
+  cfg.policy.num_critic_bins = 151
+  cfg.policy.vmin = 0.0
+  cfg.policy.vmax = 150.0
   cfg.algorithm.num_learning_epochs = 4
   cfg.algorithm.num_mini_batches = 32
   cfg.algorithm.learning_rate = 3.0e-4
-  cfg.algorithm.schedule = "fixed"
   cfg.algorithm.gamma = 0.99
   cfg.algorithm.lam = 0.95
   cfg.algorithm.max_grad_norm = 0.5
-  cfg.algorithm.num_atoms = 151
-  cfg.algorithm.vmin = 0.0
-  cfg.algorithm.vmax = 150.0
-  cfg.algorithm.aux_loss_mult = 0.0
-  cfg.algorithm.kl_bound = 0.1
-  cfg.algorithm.actor_kl_clip_mode = "full"
-  cfg.algorithm.ent_target_mult = 0.5
+  cfg.algorithm.desired_kl = 0.1
+  cfg.algorithm.target_entropy = -0.5
   return cfg
 
 

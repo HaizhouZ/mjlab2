@@ -37,22 +37,22 @@ def test_yam_reppo_config_matches_mjplayground_settings() -> None:
 
   assert cfg.class_name == "ReppoRunner"
   assert cfg.experiment_name == "yam_lift_cube"
-  assert cfg.policy.class_name == "ReppoPolicy"
-  assert cfg.policy.critic_class_name == "ReppoCritic"
+  assert cfg.policy.class_name == "ActorQ"
   assert cfg.policy.actor_obs_normalization is True
   assert cfg.policy.critic_obs_normalization is True
   assert cfg.policy.actor_hidden_dims == (512, 256, 128)
   assert cfg.policy.critic_hidden_dims == (512, 256, 128)
-  assert cfg.policy.ent_start == 0.001
-  assert cfg.policy.kl_start == 0.01
-  assert cfg.algorithm.class_name == "Reppo"
+  assert cfg.policy.init_alpha_temp == 0.001
+  assert cfg.policy.init_alpha_kl == 0.01
+  assert cfg.policy.num_critic_bins == 151
+  assert cfg.policy.vmin == 0.0
+  assert cfg.policy.vmax == 150.0
+  assert cfg.algorithm.class_name == "REPPO"
   assert cfg.algorithm.num_learning_epochs == 4
   assert cfg.algorithm.num_mini_batches == 32
   assert cfg.algorithm.learning_rate == 3.0e-4
-  assert cfg.algorithm.num_atoms == 151
-  assert cfg.algorithm.vmin == 0.0
-  assert cfg.algorithm.vmax == 150.0
-  assert cfg.algorithm.kl_bound == 0.1
+  assert cfg.algorithm.desired_kl == 0.1
+  assert cfg.algorithm.target_entropy == -0.5
 
 
 def test_g1_velocity_reppo_config_uses_estimated_value_support() -> None:
@@ -80,12 +80,11 @@ def test_g1_velocity_reppo_config_uses_estimated_value_support() -> None:
 
   assert cfg.class_name == "ReppoRunner"
   assert cfg.experiment_name == "g1_velocity_reppo"
-  assert cfg.policy.class_name == "ReppoPolicy"
-  assert cfg.policy.critic_class_name == "ReppoCritic"
-  assert cfg.algorithm.class_name == "Reppo"
-  assert cfg.algorithm.num_atoms == 151
-  assert cfg.algorithm.vmin == -20.0
-  assert cfg.algorithm.vmax == 15.0
+  assert cfg.policy.class_name == "ActorQ"
+  assert cfg.algorithm.class_name == "REPPO"
+  assert cfg.policy.num_critic_bins == 151
+  assert cfg.policy.vmin == -20.0
+  assert cfg.policy.vmax == 15.0
   assert cfg.algorithm.gamma == 0.99
 
 
@@ -107,7 +106,7 @@ def test_velocity_reppo_yaml_matches_runtime_config() -> None:
   apply_config_overrides(cfg, overrides["agent"], recursive=True)
   cfg_dict = asdict(cfg)
 
-  assert cfg_dict["policy"]["class_name"] == "ReppoPolicy"
-  assert cfg_dict["algorithm"]["class_name"] == "Reppo"
-  assert cfg_dict["algorithm"]["vmin"] == -20.0
-  assert cfg_dict["algorithm"]["vmax"] == 15.0
+  assert cfg_dict["policy"]["class_name"] == "ActorQ"
+  assert cfg_dict["algorithm"]["class_name"] == "REPPO"
+  assert cfg_dict["policy"]["vmin"] == -20.0
+  assert cfg_dict["policy"]["vmax"] == 15.0

@@ -28,42 +28,30 @@ class RslRlPpoActorCriticCfg:
 
 @dataclass
 class RslRlReppoActorCriticCfg(RslRlPpoActorCriticCfg):
-  """Config for the REPPO actor and critic networks."""
+  """Config for the official REPPO ActorQ network."""
 
-  activation: str = "swish"
-  """Activation function used by the REPPO actor/critic networks."""
-  ent_start: float = 0.001
-  """Initial entropy temperature."""
-  kl_start: float = 0.01
-  """Initial KL lagrangian temperature."""
-  actor_min_std: float = 0.1
-  """Minimum action standard deviation added on top of the learned std."""
+  activation: str = "elu"
+  """Activation function used by ActorQ."""
+  num_critic_bins: int = 151
+  """Number of bins in the categorical critic support."""
+  vmin: float = -10.0
+  """Minimum value of the categorical critic support."""
+  vmax: float = 10.0
+  """Maximum value of the categorical critic support."""
   state_dependent_std: bool = True
-  """Whether REPPO uses observation-conditioned action std. Set False for PPO-style global std."""
-  reset_global_std_on_resume: bool = False
-  """Whether to reset global std back to init_noise_std after loading a checkpoint."""
-  actor_hidden_dim: int = 512
-  """Fallback hidden dimension when actor_hidden_dims is not set."""
-  critic_hidden_dim: int = 512
-  """Fallback hidden dimension when critic_hidden_dims is not set."""
-  num_actor_layers: int = 3
-  """Total number of linear layers in the actor when using fallback dimensions."""
-  num_critic_encoder_layers: int = 2
-  """Total number of linear layers in the critic encoder when using fallback dimensions."""
-  num_critic_head_layers: int = 2
-  """Total number of linear layers in the critic distribution head."""
-  num_critic_pred_layers: int = 2
-  """Total number of linear layers in the critic auxiliary prediction head."""
-  use_actor_norm: bool = True
-  """Whether to use RMSNorm-style normalization on actor hidden layers."""
-  use_critic_norm: bool = True
-  """Whether to use RMSNorm-style normalization on critic hidden layers."""
-  use_encoder_norm: bool = False
-  """Whether to normalize the critic encoder output."""
-  class_name: str = "ReppoPolicy"
-  """REPPO policy class name."""
-  critic_class_name: str = "ReppoCritic"
-  """REPPO critic class name."""
+  """Whether ActorQ predicts state-dependent action std."""
+  distribution_type: Literal["normal", "tanh"] = "tanh"
+  """Policy action distribution type."""
+  init_alpha_temp: float = 0.1
+  """Initial entropy temperature."""
+  init_alpha_kl: float = 0.1
+  """Initial KL penalty multiplier."""
+  action_lower_bound: float = -1.0
+  """Lower bound used by the tanh action distribution."""
+  action_upper_bound: float = 1.0
+  """Upper bound used by the tanh action distribution."""
+  class_name: str = "ActorQ"
+  """Official REPPO actor-critic module class name."""
 
 
 @dataclass
@@ -106,25 +94,33 @@ class RslRlPpoAlgorithmCfg:
 
 
 @dataclass
-class RslRlReppoAlgorithmCfg(RslRlPpoAlgorithmCfg):
-  """Config for the REPPO algorithm."""
+class RslRlReppoAlgorithmCfg:
+  """Config for the official REPPO algorithm."""
 
   num_learning_epochs: int = 4
+  """The number of learning epochs per update."""
   num_mini_batches: int = 32
+  """The number of mini-batches per update."""
   learning_rate: float = 3e-4
-  schedule: Literal["adaptive", "fixed"] = "fixed"
+  """The learning rate."""
   gamma: float = 0.99
+  """The discount factor."""
   lam: float = 0.95
+  """The lambda parameter for return recursion."""
   max_grad_norm: float = 0.5
-  num_atoms: int = 151
-  vmin: float = 0.0
-  vmax: float = 150.0
-  aux_loss_mult: float = 0.0
-  kl_bound: float = 0.1
-  actor_kl_clip_mode: Literal["full", "clipped", "value"] = "full"
-  ent_target_mult: float = 0.5
-  class_name: str = "Reppo"
-  """Ignore, required by REPPO runner configuration."""
+  """The maximum gradient norm."""
+  desired_kl: float = 0.1
+  """The KL bound used by REPPO."""
+  target_entropy: float = -0.5
+  """Entropy target multiplier per action dimension used by REPPO."""
+  rnd_cfg: dict | None = None
+  """Optional RND configuration."""
+  symmetry_cfg: dict | None = None
+  """Optional symmetry augmentation configuration."""
+  scale_actions: bool = False
+  """Whether to rescale actions before stepping the environment."""
+  class_name: str = "REPPO"
+  """Official REPPO algorithm class name."""
 
 
 @dataclass
