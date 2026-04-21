@@ -1,7 +1,6 @@
 from mjlab.tasks.registry import register_mjlab_task  # noqa: I001
 from mjlab.tasks.tracking.rl import (
   MotionTrackingOnPolicyRunner,
-  MotionTrackingReppoRunner,
 )
 
 from .env_cfgs import (
@@ -54,5 +53,5 @@ register_mjlab_task(
   env_cfg=unitree_g1_flat_multitracking_env_cfg(),
   play_env_cfg=unitree_g1_flat_multitracking_env_cfg(play=True),
   rl_cfg=unitree_g1_multitracking_reppo_runner_cfg(),
-  runner_cls=MotionTrackingReppoRunner,
+  runner_cls=MotionTrackingOnPolicyRunner,
 )

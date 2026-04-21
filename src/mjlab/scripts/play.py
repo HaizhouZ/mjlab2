@@ -8,10 +8,9 @@ from types import SimpleNamespace
 from typing import Literal, Optional
 
 import torch
-from rsl_rl.runners import OnPolicyRunner
 
 from mjlab.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
-from mjlab.rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
+from mjlab.rl import MjlabOnPolicyRunner, RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
 from mjlab.tasks.tracking.mdp import MotionCommandCfg, MultiMotionCommandCfg
 from mjlab.tasks.tracking.rl.exporter import (
@@ -36,6 +35,7 @@ def _get_exportable_policy(policy):
   if hasattr(policy, "as_onnx"):
     return SimpleNamespace(actor=policy.as_onnx(False), is_recurrent=False)
   if hasattr(policy, "act_inference") and hasattr(policy, "actor"):
+
     class _InferenceActorWrapper(torch.nn.Module):
       def __init__(self, actor_policy):
         super().__init__()
@@ -251,7 +251,7 @@ def run_play(task_id: str, cfg: PlayConfig):
 
       policy = PolicyRandom()
   else:
-    runner_cls = load_runner_cls(task_id) or OnPolicyRunner
+    runner_cls = load_runner_cls(task_id) or MjlabOnPolicyRunner
     runner = runner_cls(env, asdict(agent_cfg), device=device)
     runner.load(str(resume_path), map_location=device)
     policy = runner.get_inference_policy(device=device)

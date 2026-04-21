@@ -307,6 +307,37 @@ W&B encoder artifacts are checkpoint-based by default and include `best_model.pt
 exports are still supported for ad-hoc deployment, but they are no longer the
 canonical artifact uploaded to W&B.
 
+#### Multi-track REPPO
+
+The multitracking REPPO task is `Mjlab-MultiTracking-Flat-Unitree-G1-REPPO`.
+REPPO runs through the standard on-policy runner path (`class_name: OnPolicyRunner`)
+while selecting the official REPPO algorithm (`algorithm.class_name: REPPO`) and
+`ActorQ` policy. Keep REPPO implementation details in the locked `rsl-rl-lib`
+dependency, and use `scripts/update_rsl_rl_lib.sh` after pushing `rsl_rl` changes
+so `uv.lock` records the intended commit.
+
+A conservative launch for LaFAN multitracking with a trajectory encoder is:
+
+```bash
+uv run train Mjlab-MultiTracking-Flat-Unitree-G1-REPPO \
+  --motion-dir artifacts/lafan_dataset:v0 \
+  --env.commands.motion.encoder-dir \
+    logs/trajectory_encoder/<run>/best_model.pt \
+  env.scene.num_envs=4096 \
+  agent.max_iterations=30000 \
+  agent.algorithm.num_mini_batches=4 \
+  agent.algorithm.desired_kl=0.01 \
+  agent.algorithm.target_entropy=-0.5 \
+  agent.policy.distribution_type=normal \
+  agent.policy.noise_std_type=log
+```
+
+`target_entropy` is configured per action dimension. The current `rsl-rl-lib`
+REPPO implementation treats negative target-entropy values by magnitude, so
+`-0.5` means a total target entropy of `0.5 * num_actions`. When using an
+unbounded normal policy, `noise_std_type=log` is the most conservative choice for
+keeping standard deviations positive and well-scaled during early training.
+
 For tracking tasks, the default W&B project follows the task type:
 - single-motion tracking tasks -> `single_track`
 - multi-motion tracking tasks -> `multi_track`

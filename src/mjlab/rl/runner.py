@@ -1,12 +1,46 @@
 from __future__ import annotations
 
 import copy
+import importlib.util
+from pathlib import Path
 
+import rsl_rl
 import torch
-from rsl_rl.runners import OnPolicyRunner
+from rsl_rl.algorithms.reppo import REPPO
+from rsl_rl.extensions import resolve_rnd_config, resolve_symmetry_config
+from rsl_rl.storage.reppo_rollout_storage import ReppoRolloutStorage
+from rsl_rl.utils import resolve_callable, resolve_obs_groups
+from rsl_rl.utils.logger import Logger
+
+from mjlab.rl.vecenv_wrapper import RslRlVecEnvWrapper
+
+
+def _load_runner_class(module_name: str, class_name: str):
+  module_path = (
+    Path(rsl_rl.__file__)
+    .resolve()
+    .parent.joinpath(*module_name.split(".")[1:])
+    .with_suffix(".py")
+  )
+  if not module_path.exists():
+    raise ImportError(f"Could not locate runner module at {module_path}.")
+  module_spec = importlib.util.spec_from_file_location(
+    f"mjlab._compat_{module_name.rsplit('.', 1)[-1]}",
+    module_path,
+  )
+  if module_spec is None or module_spec.loader is None:
+    raise ImportError(f"Could not load module spec for {module_name!r}.")
+  module = importlib.util.module_from_spec(module_spec)
+  module_spec.loader.exec_module(module)
+  return getattr(module, class_name)
+
+
+OnPolicyRunner = _load_runner_class("rsl_rl.runners.on_policy_runner", "OnPolicyRunner")
 
 try:
-  from rsl_rl.runners import OffPolicyRunner
+  OffPolicyRunner = _load_runner_class(
+    "rsl_rl.runners.off_policy_runner", "OffPolicyRunner"
+  )
 except ImportError:
 
   class OffPolicyRunner:  # type: ignore[no-redef]
@@ -14,8 +48,6 @@ except ImportError:
       raise ImportError(
         "OffPolicyRunner is not available in the installed rsl_rl package."
       )
-
-from mjlab.rl.vecenv_wrapper import RslRlVecEnvWrapper
 
 
 class MjlabOnPolicyRunner(OnPolicyRunner):
@@ -30,12 +62,30 @@ class MjlabOnPolicyRunner(OnPolicyRunner):
     log_dir: str | None = None,
     device: str = "cpu",
   ) -> None:
-    super().__init__(env, self._translate_train_cfg(train_cfg), log_dir, device)
-    # Preserve the legacy access pattern used by mjlab2 code and tests.
-    self.alg.policy = self.alg.actor  # type: ignore[attr-defined]
+    if self._uses_reppo(train_cfg):
+      self._init_reppo(env, train_cfg, log_dir, device)
+    else:
+      super().__init__(env, self._translate_train_cfg(train_cfg), log_dir, device)
+      # Preserve the legacy access pattern used by mjlab2 code and tests.
+      self.alg.policy = self.alg.actor  # type: ignore[attr-defined]
 
   def save(self, path: str, infos=None):
     env_state = {"common_step_counter": self.env.unwrapped.common_step_counter}
+    if isinstance(self.alg, REPPO):
+      saved_dict = {
+        "policy_state_dict": self.alg.policy.state_dict(),
+        "optimizer_state_dict": self.alg.optimizer.state_dict(),
+        "iter": self.current_learning_iteration,
+        "infos": {**(infos or {}), "env_state": env_state},
+      }
+      if self.alg.rnd:
+        saved_dict["rnd_state_dict"] = self.alg.rnd.state_dict()
+        saved_dict["rnd_optimizer_state_dict"] = self.alg.rnd_optimizer.state_dict()
+      torch.save(saved_dict, path)
+      if hasattr(self.logger, "writer") and self.logger.writer is not None:
+        self.logger.save_model(path, self.current_learning_iteration)
+      return
+
     saved_dict = self.alg.save()
     saved_dict["iter"] = self.current_learning_iteration
     saved_dict["infos"] = {**(infos or {}), "env_state": env_state}
@@ -47,6 +97,24 @@ class MjlabOnPolicyRunner(OnPolicyRunner):
     self, path: str, load_optimizer: bool = True, map_location: str | None = None
   ):
     loaded_dict = torch.load(path, weights_only=False, map_location=map_location)
+    if isinstance(self.alg, REPPO):
+      self.alg.policy.load_state_dict(loaded_dict["policy_state_dict"], strict=True)
+      if load_optimizer and "optimizer_state_dict" in loaded_dict:
+        self.alg.optimizer.load_state_dict(loaded_dict["optimizer_state_dict"])
+      if self.alg.rnd and "rnd_state_dict" in loaded_dict:
+        self.alg.rnd.load_state_dict(loaded_dict["rnd_state_dict"], strict=True)
+        if load_optimizer and "rnd_optimizer_state_dict" in loaded_dict:
+          self.alg.rnd_optimizer.load_state_dict(
+            loaded_dict["rnd_optimizer_state_dict"]
+          )
+      infos = loaded_dict.get("infos") or {}
+      if infos and "env_state" in infos:
+        self.env.unwrapped.common_step_counter = infos["env_state"][
+          "common_step_counter"
+        ]
+      self.current_learning_iteration = loaded_dict.get("iter", 0)
+      return infos
+
     if "actor_state_dict" in loaded_dict or "critic_state_dict" in loaded_dict:
       load_cfg = {
         "actor": True,
@@ -79,6 +147,90 @@ class MjlabOnPolicyRunner(OnPolicyRunner):
     if load_iteration:
       self.current_learning_iteration = loaded_dict["iter"]
     return infos
+
+  def get_inference_policy(self, device: str | None = None):
+    if isinstance(self.alg, REPPO):
+      self.alg.policy.eval()
+      return self.alg.policy.to(device)
+    return super().get_inference_policy(device)
+
+  @staticmethod
+  def _uses_reppo(train_cfg: dict) -> bool:
+    algorithm_cfg = train_cfg.get("algorithm", {})
+    return algorithm_cfg.get("class_name") == "REPPO"
+
+  def _init_reppo(
+    self,
+    env: RslRlVecEnvWrapper,
+    train_cfg: dict,
+    log_dir: str | None,
+    device: str,
+  ) -> None:
+    self.env = env
+    self.cfg = copy.deepcopy(train_cfg)
+    self.device = device
+
+    self._configure_multi_gpu()
+
+    obs = self.env.get_observations()
+    self.alg = self._construct_reppo_algorithm(obs, self.env, self.cfg, self.device)
+    self.alg.train_mode = self._reppo_train_mode  # type: ignore[attr-defined]
+    self.alg.eval_mode = self._reppo_eval_mode  # type: ignore[attr-defined]
+    self.alg.get_policy = self._reppo_get_policy  # type: ignore[attr-defined]
+    self.logger = Logger(
+      log_dir=log_dir,
+      cfg=self.cfg,
+      env_cfg=self.env.cfg,
+      num_envs=self.env.num_envs,
+      is_distributed=self.is_distributed,
+      gpu_world_size=self.gpu_world_size,
+      gpu_global_rank=self.gpu_global_rank,
+      device=self.device,
+    )
+    self.current_learning_iteration = 0
+
+  def _construct_reppo_algorithm(self, obs, env, cfg: dict, device: str) -> REPPO:
+    alg_class: type[REPPO] = resolve_callable(cfg["algorithm"].pop("class_name"))  # type: ignore[assignment]
+    policy_class = resolve_callable(cfg["policy"].pop("class_name"))
+
+    default_sets = ["policy", "critic"]
+    if cfg["algorithm"].get("rnd_cfg") is not None:
+      default_sets.append("rnd_state")
+    cfg["obs_groups"] = resolve_obs_groups(obs, cfg["obs_groups"], default_sets)
+    cfg["algorithm"] = resolve_rnd_config(cfg["algorithm"], obs, cfg["obs_groups"], env)
+    cfg["algorithm"] = resolve_symmetry_config(cfg["algorithm"], env)
+
+    policy = policy_class(obs, cfg["obs_groups"], env.num_actions, **cfg["policy"]).to(
+      device
+    )
+    storage = ReppoRolloutStorage(
+      "rl",
+      env.num_envs,
+      cfg["num_steps_per_env"],
+      obs,
+      [env.num_actions],
+      device,
+    )
+    return alg_class(
+      policy,
+      storage,
+      device=device,
+      **cfg["algorithm"],
+      multi_gpu_cfg=cfg["multi_gpu"],
+    )
+
+  def _reppo_train_mode(self) -> None:
+    self.alg.policy.train()
+    if self.alg.rnd:
+      self.alg.rnd.train()
+
+  def _reppo_eval_mode(self) -> None:
+    self.alg.policy.eval()
+    if self.alg.rnd:
+      self.alg.rnd.eval()
+
+  def _reppo_get_policy(self):
+    return self.alg.policy
 
   def _translate_train_cfg(self, train_cfg: dict) -> dict:
     cfg = copy.deepcopy(train_cfg)

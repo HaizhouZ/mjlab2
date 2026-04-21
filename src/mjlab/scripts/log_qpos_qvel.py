@@ -6,10 +6,9 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from rsl_rl.runners import OnPolicyRunner
 
 from mjlab.envs import ManagerBasedRlEnv
-from mjlab.rl import RslRlVecEnvWrapper
+from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
 
 # Import PlayConfig from play.py
 from mjlab.scripts.play import PlayConfig
@@ -207,7 +206,7 @@ def run_log_qpos_qvel(task: str, cfg: PlayConfig, output_file: str | None = None
         env, asdict(agent_cfg), log_dir=str(log_dir), device=device
       )
     else:
-      runner = OnPolicyRunner(
+      runner = MjlabOnPolicyRunner(
         env, asdict(agent_cfg), log_dir=str(log_dir), device=device
       )
     runner.load(str(resume_path), map_location=device)
@@ -310,6 +309,7 @@ def main():
   import mjlab.tasks  # noqa: F401
 
   all_tasks = list_tasks()
+
   @dataclass(frozen=True)
   class LogConfig(PlayConfig):
     output_file: str | None = None

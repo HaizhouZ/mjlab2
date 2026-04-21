@@ -4,7 +4,6 @@ from types import SimpleNamespace
 import torch
 import torch.nn as nn
 import wandb
-from rsl_rl.runners import ReppoRunner
 
 from mjlab.rl import RslRlVecEnvWrapper
 from mjlab.rl.runner import MjlabOnPolicyRunner
@@ -18,9 +17,7 @@ class _InferenceActorWrapper(nn.Module):
   def __init__(self, policy: nn.Module):
     super().__init__()
     self.policy = policy
-    self.input_dim = getattr(
-      policy, "actor_obs_dim", getattr(policy, "obs_dim", None)
-    )
+    self.input_dim = getattr(policy, "actor_obs_dim", getattr(policy, "obs_dim", None))
 
   def forward(self, obs: torch.Tensor) -> torch.Tensor:
     return self.policy.act_inference(obs)
@@ -71,22 +68,5 @@ class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
     _export_velocity_policy(self, path)
 
 
-class VelocityReppoRunner(ReppoRunner):
-  env: RslRlVecEnvWrapper
-
-  def save(self, path: str, infos=None):
-    env_state = {"common_step_counter": self.env.unwrapped.common_step_counter}
-    super().save(path, {**(infos or {}), "env_state": env_state})
-    _export_velocity_policy(self, path)
-
-  def load(
-    self, path: str, load_optimizer: bool = True, map_location: str | None = None
-  ):
-    infos = super().load(
-      path, load_optimizer=load_optimizer, map_location=map_location
-    )
-    if infos and "env_state" in infos:
-      self.env.unwrapped.common_step_counter = infos["env_state"][
-        "common_step_counter"
-      ]
-    return infos
+class VelocityReppoRunner(VelocityOnPolicyRunner):
+  pass

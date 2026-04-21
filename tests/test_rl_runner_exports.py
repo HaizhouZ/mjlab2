@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+from mjlab.tasks.registry import load_runner_cls
 from mjlab.tasks.tracking.rl.runner import _save_tracking_policy
 from mjlab.tasks.velocity.rl.runner import _export_velocity_policy
 
@@ -82,7 +83,9 @@ def test_export_velocity_policy_uses_logger_logger_type(monkeypatch) -> None:
   monkeypatch.setattr(velocity_runner, "export_velocity_policy_as_onnx", fake_export)
   monkeypatch.setattr(velocity_runner, "attach_onnx_metadata", fake_attach)
   monkeypatch.setattr(velocity_runner.wandb, "save", fake_save)
-  monkeypatch.setattr(velocity_runner.wandb, "run", SimpleNamespace(name="velocity-run"))
+  monkeypatch.setattr(
+    velocity_runner.wandb, "run", SimpleNamespace(name="velocity-run")
+  )
 
   runner = SimpleNamespace(
     logger=SimpleNamespace(logger_type="wandb"),
@@ -94,3 +97,9 @@ def test_export_velocity_policy_uses_logger_logger_type(monkeypatch) -> None:
 
   assert calls["attach"]["run_name"] == "velocity-run"
   assert calls["wandb_save"]["path"] == "/tmp/velocity_run/velocity_run.onnx"
+
+
+def test_multitracking_reppo_uses_on_policy_runner() -> None:
+  runner_cls = load_runner_cls("Mjlab-MultiTracking-Flat-Unitree-G1-REPPO")
+  assert runner_cls is not None
+  assert runner_cls.__name__ == "MotionTrackingOnPolicyRunner"

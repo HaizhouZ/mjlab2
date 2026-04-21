@@ -172,8 +172,8 @@ class RslRlOnPolicyRunnerCfg(RslRlBaseRunnerCfg):
 
 @dataclass
 class RslRlReppoRunnerCfg(RslRlOnPolicyRunnerCfg):
-  class_name: str = "ReppoRunner"
-  """The runner class name. Default is ReppoRunner."""
+  class_name: str = "OnPolicyRunner"
+  """The runner class name. REPPO now runs through the on-policy runner path."""
   policy: RslRlReppoActorCriticCfg = field(default_factory=RslRlReppoActorCriticCfg)
   """The REPPO policy configuration."""
   algorithm: RslRlReppoAlgorithmCfg = field(default_factory=RslRlReppoAlgorithmCfg)

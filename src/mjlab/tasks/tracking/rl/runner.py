@@ -5,7 +5,6 @@ import torch
 import torch.nn as nn
 import wandb
 from rsl_rl.env.vec_env import VecEnv
-from rsl_rl.runners import ReppoRunner
 
 from mjlab.rl import RslRlVecEnvWrapper
 from mjlab.rl.runner import MjlabOnPolicyRunner
@@ -27,9 +26,7 @@ class _InferenceActorWrapper(nn.Module):
   def __init__(self, policy: nn.Module):
     super().__init__()
     self.policy = policy
-    self.input_dim = getattr(
-      policy, "actor_obs_dim", getattr(policy, "obs_dim", None)
-    )
+    self.input_dim = getattr(policy, "actor_obs_dim", getattr(policy, "obs_dim", None))
 
   def forward(self, obs: torch.Tensor) -> torch.Tensor:
     return self.policy.act_inference(obs)
@@ -68,11 +65,7 @@ def _save_tracking_policy(runner, path: str) -> None:
     path=policy_path,
     filename=filename,
   )
-  run_name = (
-    wandb.run.name
-    if logger_type == "wandb" and wandb.run
-    else "local"
-  )
+  run_name = wandb.run.name if logger_type == "wandb" and wandb.run else "local"
   attach_onnx_metadata(
     runner.env.unwrapped,
     run_name,  # type: ignore[arg-type]
@@ -104,38 +97,3 @@ class MotionTrackingOnPolicyRunner(MjlabOnPolicyRunner):
     """Save the model and training information."""
     super().save(path, infos)
     _save_tracking_policy(self, path)
-
-
-class MotionTrackingReppoRunner(ReppoRunner):
-  env: RslRlVecEnvWrapper
-
-  def __init__(
-    self,
-    env: VecEnv,
-    train_cfg: dict,
-    log_dir: str | None = None,
-    device: str = "cpu",
-    registry_name: str | None = None,
-  ):
-    algorithm_cfg = train_cfg.setdefault("algorithm", {})
-    algorithm_cfg.setdefault("rnd_cfg", None)
-    algorithm_cfg.setdefault("symmetry_cfg", None)
-    super().__init__(env, train_cfg, log_dir, device)
-    self.registry_name = registry_name
-
-  def save(self, path: str, infos=None):
-    env_state = {"common_step_counter": self.env.unwrapped.common_step_counter}
-    super().save(path, {**(infos or {}), "env_state": env_state})
-    _save_tracking_policy(self, path)
-
-  def load(
-    self, path: str, load_optimizer: bool = True, map_location: str | None = None
-  ):
-    infos = super().load(
-      path, load_optimizer=load_optimizer, map_location=map_location
-    )
-    if infos and "env_state" in infos:
-      self.env.unwrapped.common_step_counter = infos["env_state"][
-        "common_step_counter"
-      ]
-    return infos
