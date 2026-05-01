@@ -1,10 +1,10 @@
 """Regression tests for the Yam task REPPO config."""
 
+import sys
+import types
 from dataclasses import asdict
 from importlib import util
 from pathlib import Path
-import sys
-import types
 
 import yaml
 
@@ -21,7 +21,9 @@ def _load_module(module_name: str, path: Path):
 def test_yam_reppo_config_matches_mjplayground_settings() -> None:
   """The Yam REPPO config should mirror the MuJoCo playground example."""
   repo_root = Path(__file__).resolve().parents[1]
-  rl_config = _load_module("mjlab_test_rl_config", repo_root / "src" / "mjlab" / "rl" / "config.py")
+  rl_config = _load_module(
+    "mjlab_test_rl_config", repo_root / "src" / "mjlab" / "rl" / "config.py"
+  )
 
   fake_rl = types.ModuleType("mjlab.rl")
   fake_rl.RslRlReppoRunnerCfg = rl_config.RslRlReppoRunnerCfg
@@ -30,12 +32,19 @@ def test_yam_reppo_config_matches_mjplayground_settings() -> None:
 
   yam_rl_cfg = _load_module(
     "mjlab_test_yam_rl_cfg",
-    repo_root / "src" / "mjlab" / "tasks" / "manipulation" / "config" / "yam" / "rl_cfg.py",
+    repo_root
+    / "src"
+    / "mjlab"
+    / "tasks"
+    / "manipulation"
+    / "config"
+    / "yam"
+    / "rl_cfg.py",
   )
 
   cfg = yam_rl_cfg.yam_lift_cube_reppo_runner_cfg()
 
-  assert cfg.class_name == "ReppoRunner"
+  assert cfg.class_name == "OnPolicyRunner"
   assert cfg.experiment_name == "yam_lift_cube"
   assert cfg.policy.class_name == "ActorQ"
   assert cfg.policy.actor_obs_normalization is True
@@ -53,6 +62,8 @@ def test_yam_reppo_config_matches_mjplayground_settings() -> None:
   assert cfg.algorithm.learning_rate == 3.0e-4
   assert cfg.algorithm.desired_kl == 0.1
   assert cfg.algorithm.target_entropy == -0.5
+  assert cfg.algorithm.actor_route == "reppo"
+  assert cfg.algorithm.clip_param == 0.2
 
 
 def test_g1_velocity_reppo_config_uses_estimated_value_support() -> None:
@@ -78,7 +89,7 @@ def test_g1_velocity_reppo_config_uses_estimated_value_support() -> None:
 
   cfg = velocity_rl_cfg.unitree_g1_reppo_runner_cfg()
 
-  assert cfg.class_name == "ReppoRunner"
+  assert cfg.class_name == "OnPolicyRunner"
   assert cfg.experiment_name == "g1_velocity_reppo"
   assert cfg.policy.class_name == "ActorQ"
   assert cfg.algorithm.class_name == "REPPO"

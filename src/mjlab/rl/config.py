@@ -113,6 +113,18 @@ class RslRlReppoAlgorithmCfg:
   """The KL bound used by REPPO."""
   target_entropy: float = -0.5
   """Entropy target multiplier per action dimension used by REPPO."""
+  clip_param: float = 0.2
+  """PPO-style ratio clipping parameter used by REPPO hybrid/PPO-only actor routes."""
+  actor_route: Literal["reppo", "hybrid", "ppo_only"] = "reppo"
+  """Actor objective route: original REPPO, cosine-gated hybrid, or PPO-only with ActorQ/HL-Gauss."""
+  ppo_advantage_normalization: bool = True
+  """Whether to normalize the REPPO PPO-style residual advantages per mini-batch."""
+  cosine_weight_min: float = 0.0
+  """Minimum REPPO weight for the hybrid actor route."""
+  cosine_weight_max: float = 1.0
+  """Maximum REPPO weight for the hybrid actor route."""
+  cosine_weight_power: float = 1.0
+  """Power applied to clamped positive cosine before mapping it to the REPPO hybrid weight."""
   rnd_cfg: dict | None = None
   """Optional RND configuration."""
   symmetry_cfg: dict | None = None
