@@ -53,6 +53,7 @@ def test_yam_reppo_config_matches_mjplayground_settings() -> None:
   assert cfg.policy.critic_hidden_dims == (512, 256, 128)
   assert cfg.policy.init_alpha_temp == 0.001
   assert cfg.policy.init_alpha_kl == 0.01
+  assert cfg.policy.use_value_head is False
   assert cfg.policy.num_critic_bins == 151
   assert cfg.policy.vmin == 0.0
   assert cfg.policy.vmax == 150.0

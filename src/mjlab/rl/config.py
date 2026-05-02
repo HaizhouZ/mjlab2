@@ -50,6 +50,8 @@ class RslRlReppoActorCriticCfg(RslRlPpoActorCriticCfg):
   """Lower bound used by the tanh action distribution."""
   action_upper_bound: float = 1.0
   """Upper bound used by the tanh action distribution."""
+  use_value_head: bool = False
+  """Whether ActorQ adds a PPO-style scalar V(s) head for PPO-style actor routes."""
   class_name: str = "ActorQ"
   """Official REPPO actor-critic module class name."""
 
