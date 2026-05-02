@@ -64,7 +64,8 @@ def test_yam_reppo_config_matches_mjplayground_settings() -> None:
   assert cfg.algorithm.target_entropy == -0.5
   assert cfg.algorithm.actor_route == "reppo"
   assert cfg.algorithm.clip_param == 0.2
-  assert cfg.algorithm.ppo_entropy_coef == 0.005
+  assert cfg.algorithm.ppo_entropy_coef == 0.01
+  assert cfg.algorithm.ppo_value_loss_coef == 1.0
   assert cfg.algorithm.ppo_schedule == "adaptive"
 
 

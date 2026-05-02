@@ -119,8 +119,10 @@ class RslRlReppoAlgorithmCfg:
   """Actor objective route: original REPPO, cosine-gated hybrid, or PPO-only with ActorQ/HL-Gauss."""
   ppo_advantage_normalization: bool = False
   """Whether to normalize PPO-style advantages per mini-batch instead of once per rollout."""
-  ppo_entropy_coef: float = 0.005
-  """Fixed entropy coefficient used by the PPO-only actor route."""
+  ppo_entropy_coef: float = 0.01
+  """Fixed entropy coefficient used by PPO-style hybrid/PPO-only update routes."""
+  ppo_value_loss_coef: float = 1.0
+  """Value-loss coefficient used by PPO-style hybrid/PPO-only update routes."""
   ppo_schedule: Literal["adaptive", "fixed"] = "adaptive"
   """Learning-rate schedule used by the PPO-only actor route."""
   cosine_weight_min: float = 0.0
