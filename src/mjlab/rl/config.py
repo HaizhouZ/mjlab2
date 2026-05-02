@@ -117,8 +117,12 @@ class RslRlReppoAlgorithmCfg:
   """PPO-style ratio clipping parameter used by REPPO hybrid/PPO-only actor routes."""
   actor_route: Literal["reppo", "hybrid", "ppo_only"] = "reppo"
   """Actor objective route: original REPPO, cosine-gated hybrid, or PPO-only with ActorQ/HL-Gauss."""
-  ppo_advantage_normalization: bool = True
-  """Whether to normalize the REPPO PPO-style residual advantages per mini-batch."""
+  ppo_advantage_normalization: bool = False
+  """Whether to normalize PPO-style advantages per mini-batch instead of once per rollout."""
+  ppo_entropy_coef: float = 0.005
+  """Fixed entropy coefficient used by the PPO-only actor route."""
+  ppo_schedule: Literal["adaptive", "fixed"] = "adaptive"
+  """Learning-rate schedule used by the PPO-only actor route."""
   cosine_weight_min: float = 0.0
   """Minimum REPPO weight for the hybrid actor route."""
   cosine_weight_max: float = 1.0
