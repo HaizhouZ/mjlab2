@@ -289,6 +289,69 @@ MJLAB_MOTION_HORIZON=1 uv run train Mjlab-MultiTracking-Flat-Unitree-G1 \
   env.scene.num_envs=4096
 ```
 
+#### Train a Trajectory Encoder
+
+Trajectory encoders compress future reference trajectories for multitracking
+observations. The default encoder input layout is `tracking`, which matches the
+runtime `trajectory_encoding` observation: joint position, joint velocity,
+anchor position, and anchor orientation. For the G1 tracking body set this is a
+65-dimensional feature vector per future timestep.
+
+Train from a local multi-motion dataset:
+
+```bash
+uv run train_trajectory_encoder \
+  --motion-dir artifacts/lafan_dataset:v0 \
+  --run-name lafan_unet_simple_h16_l128_e50 \
+  --horizon 16 \
+  --model.architecture unet_simple \
+  --model.latent-dim 128 \
+  --model.encoder-hidden-dims 512 256 128 \
+  --model.decoder-hidden-dims 128 256 512 \
+  --epochs 50 \
+  --batch-size 512 \
+  --device cuda \
+  --wandb-log.enabled \
+  --wandb-log.project trajectory_encoder \
+  --wandb-log.artifact-name g1_future_traj_encoder_h16_l128
+```
+
+Or train from W&B motion artifacts instead of a local directory:
+
+```bash
+uv run train_trajectory_encoder \
+  --wandb-motion.entity mim-atari \
+  --wandb-motion.project g1-multitracking \
+  --run-name lafan_unet_simple_h16_l128_e50 \
+  --horizon 16 \
+  --model.architecture unet_simple \
+  --model.latent-dim 128 \
+  --epochs 50 \
+  --wandb-log.enabled \
+  --wandb-log.project trajectory_encoder
+```
+
+Outputs are written to:
+
+```text
+logs/trajectory_encoder/<run-name>/<date>/<time>/
+```
+
+Important files:
+- `best_model.pt`: canonical encoder checkpoint for training and sharing.
+- `last_model.pt`: final checkpoint.
+- `config.yaml`: exact training config and metadata.
+- `normalizer.pt`: fitted trajectory normalizer, when `normalize=true`.
+- `best_encoder.jit`: optional TorchScript encoder export for ad-hoc deployment.
+
+When W&B logging is enabled, the script uploads a checkpoint-based artifact by
+default. Prefer sharing `best_model.pt` from that artifact rather than relying on
+the local JIT export:
+
+```text
+wandb://<entity>/trajectory_encoder/<artifact-name>:best/best_model.pt
+```
+
 To train multitracking with a trajectory encoder, point the motion command at the
 saved encoder checkpoint. The runtime infers the encoder horizon from the encoder
 artifact metadata, so you normally do not need to pass `env.commands.motion.horizon`
@@ -325,6 +388,7 @@ uv run train Mjlab-MultiTracking-Flat-Unitree-G1-REPPO \
     logs/trajectory_encoder/<run>/best_model.pt \
   env.scene.num_envs=4096 \
   agent.max_iterations=30000 \
+  agent.algorithm.actor_route=reppo \
   agent.algorithm.num_mini_batches=4 \
   agent.algorithm.desired_kl=0.01 \
   agent.algorithm.target_entropy=-0.5 \
